@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "services/**"
+      - "apps/**"
+      - "testing/**"
+      - "pytest.ini"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "services/**"
+      - "apps/**"
+      - "testing/**"
+      - "pytest.ini"
+      - ".github/workflows/ci.yml"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Python backend (uv + pytest)
+  # ---------------------------------------------------------------------------
+  python:
+    name: Python (pytest)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "services/uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        working-directory: services
+        run: uv sync --extra dev
+
+      - name: Run pytest (m0_1, m0_2 struct-only, m0_3)
+        working-directory: services
+        run: |
+          uv run pytest ../testing/m0_1/ ../testing/m0_3/ -v
+        # NOTE: m0_2 tests require a running sidecar (integration tests).
+        # They are intentionally excluded from CI until a service fixture is added.
+        # See: testing/m0_2/test_tauri_ipc.py
+
+      - name: Lint (ruff)
+        working-directory: services
+        run: uv run ruff check .
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Frontend (pnpm + vitest)
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: Frontend (vitest)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --filter @coos/desktop
+
+      - name: Run vitest
+        run: pnpm --filter @coos/desktop test

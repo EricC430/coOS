@@ -9,8 +9,9 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+from alembic import context
 
 # services/ 目錄加入 sys.path，讓 config 可被匯入
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
