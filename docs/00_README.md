@@ -1,4 +1,4 @@
-# Life OS 文件索引 (Documentation Index)
+# coOS 文件索引 (Documentation Index)
 
 > 此檔案是 `docs/` 目錄的地圖。Claude Code 任何時候迷路了,先回到這裡。
 

@@ -1,4 +1,4 @@
-# Life OS
+# coOS
 
 一款結合多智能體 AI、遊戲化與薩提爾冰山心理模型的個人目標管理系統。
 
@@ -37,8 +37,8 @@ claude --version
 # 2. VS Code 安裝 "Claude Code" extension (publisher: anthropic)
 
 # 3. 取得這個專案
-git clone <your-repo-url> lifeos
-cd lifeos
+git clone <your-repo-url> coOS
+cd coOS
 
 # 4. 設定環境變數
 cp .env.example .env
@@ -55,7 +55,7 @@ code .
 ## 專案結構
 
 ```
-lifeos/
+coOS/
 ├── CLAUDE.md                ★ Claude Code 每次 session 必讀
 ├── .claude/
 │   └── skills/              ★ 三個自訂技能

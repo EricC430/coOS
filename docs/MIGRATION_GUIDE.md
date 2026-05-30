@@ -20,7 +20,7 @@
 ### 本套件新增的關鍵文件 (這就是「遷移到 VS Code 需要的所有東西」)
 
 ```
-lifeos/
+coOS/
 ├── CLAUDE.md                         ← 鐵則,Claude Code 每次必讀
 ├── README.md                         ← 給人類的入口
 ├── .claude/skills/                   ← 三個自動觸發的 skill
@@ -205,19 +205,19 @@ uvx install mcp-server-sqlite  # 或 pip install mcp-server-sqlite
 
 **macOS / Linux:**
 ```bash
-mkdir lifeos && cd lifeos
+mkdir coOS && cd coOS
 # 把這個 ZIP 解壓進來
-unzip ~/Downloads/lifeos_package.zip
+unzip ~/Downloads/coos_package.zip
 ls
 # 確認看到: CLAUDE.md, README.md, docs/, .claude/, .mcp.json
 ```
 
 **Windows (PowerShell):**
 ```powershell
-mkdir lifeos
-cd lifeos
+mkdir coOS
+cd coOS
 # 把這個 ZIP 解壓進來 (請根據您實際的 ZIP 檔案路徑與名稱調整)
-Expand-Archive -Path "$env:USERPROFILE\Downloads\lifeos_package.zip" -DestinationPath .
+Expand-Archive -Path "$env:USERPROFILE\Downloads\coos_package.zip" -DestinationPath .
 dir
 # 確認看到: CLAUDE.md, README.md, docs/, .claude/, .mcp.json
 ```
@@ -269,7 +269,7 @@ claude auth
 
 ```bash
 code .
-# 重要:開啟整個 lifeos/ 資料夾,不是單一檔案
+# 重要:開啟整個 coOS/ 資料夾,不是單一檔案
 ```
 
 ### 步驟 6: 第一次對話測試 (10 分鐘)

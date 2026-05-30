@@ -10,9 +10,9 @@
 
 ```bash
 # 完成定義
-- [ ] git init, .gitignore 建好
-- [ ] CLAUDE.md + docs/ 全部 commit
-- [ ] .claude/skills/ 三個 skill 全部建好
+- [x] git init, .gitignore 建好
+- [x] CLAUDE.md + docs/ 全部 commit
+- [x] .claude/skills/ 三個 skill 全部建好
 - [ ] pnpm + uv 環境,monorepo 結構
 - [ ] CI 跑得起來 (pytest + vitest 空殼)
 - [ ] 三個 MCP server 在 .mcp.json 配置完成

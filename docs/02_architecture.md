@@ -1,4 +1,4 @@
-# Life OS 系統架構 (Architecture)
+# coOS 系統架構 (Architecture)
 
 **版本**:1.0
 

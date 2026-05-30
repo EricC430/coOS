@@ -1,6 +1,6 @@
 ---
 name: implement-module
-description: Use this skill whenever the user asks to implement a Life OS module identified by a Mx.y code (e.g. "實作 M4.2", "build the M3.3.3 reflection modal"). This skill enforces the read-before-code protocol: read research → check risks → read SPEC → write tests → write code. Trigger this for any module implementation task.
+description: Use this skill whenever the user asks to implement a coOS module identified by a Mx.y code (e.g. "實作 M4.2", "build the M3.3.3 reflection modal"). This skill enforces the read-before-code protocol: read research → check risks → read SPEC → write tests → write code. Trigger this for any module implementation task.
 ---
 
 # Skill: Implement Module

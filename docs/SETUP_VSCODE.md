@@ -49,11 +49,11 @@ VS Code 設定建議:
 
 ```bash
 # 建立你的專案
-mkdir lifeos && cd lifeos
+mkdir coOS && cd coOS
 git init
 
-# 把 docs/ 包複製進來 (假設你把 ZIP 解壓在 ~/Downloads/lifeos-docs)
-cp -r ~/Downloads/lifeos-docs/. .
+# 把 docs/ 包複製進來 (假設你把 ZIP 解壓在 ~/Downloads/coos-docs)
+cp -r ~/Downloads/coos-docs/. .
 
 # 確認結構
 ls -la
@@ -121,11 +121,11 @@ EOF
 `.mcp.json` 已經建好,只需修改路徑:
 
 ```bash
-# 編輯 .mcp.json,把 /path/to/lifeos-project 改為實際路徑
+# 編輯 .mcp.json,把 /path/to/coos-project 改為實際路徑
 # macOS/Linux:
-sed -i '' "s|/path/to/lifeos-project|$(pwd)|g" .mcp.json
+sed -i '' "s|/path/to/coos-project|$(pwd)|g" .mcp.json
 # Linux:
-sed -i "s|/path/to/lifeos-project|$(pwd)|g" .mcp.json
+sed -i "s|/path/to/coos-project|$(pwd)|g" .mcp.json
 ```
 
 驗證 MCP server 跑得起來:
