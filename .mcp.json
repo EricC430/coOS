@@ -1,0 +1,62 @@
+{
+  "_comment_priority": "Keep active MCP servers to 2-3 max — each loads tool definitions into context at session start. See: https://smithhorngroup.substack.com/p/choosing-between-skills-subagents",
+
+  "mcpServers": {
+    "filesystem": {
+      "_comment": "本機檔案存取。Claude Code 預設已可讀寫專案目錄,但 filesystem MCP 提供更精細的權限控制。MVP 階段建議啟用。",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:/Users/chent/Desktop/我的資料夾/學校/大學/三下/生成式人工智慧導論/lifeos"
+      ]
+    },
+
+    "sqlite-local": {
+      "_comment": "讓 Claude Code 可以直接查 raw_tracking_logs 與 chat_transcripts。除錯時極有用。但若擔心隱私即使本地也要避免 LLM 看到,可禁用。",
+      "command": "uvx",
+      "args": [
+        "mcp-server-sqlite",
+        "--db-path",
+        "./data/lifeos.db"
+      ],
+      "_when_to_disable": "若 chat_transcripts 含敏感對話且不想 Claude Code 看到時"
+    },
+
+    "_disabled_github": {
+      "_comment": "進階階段啟用。讓 Claude Code 直接讀 PR、寫 commit、建 issue。MVP 初期保持 git CLI 即可。",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${env:GITHUB_TOKEN}"
+      }
+    },
+
+    "_disabled_postgres": {
+      "_comment": "進階階段啟用,連 Supabase PostgreSQL。可讓 Claude Code 查 users/ai_experts 表狀態。注意:授予 LLM 直接的 DB 存取有風險,僅讀取角色,絕不寫入。",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": {
+        "POSTGRES_CONNECTION_STRING": "${env:SUPABASE_READONLY_URL}"
+      }
+    },
+
+    "_disabled_neo4j": {
+      "_comment": "Phase 6 啟用,debug 薩提爾圖譜時極有用。Claude Code 可以執行 Cypher 查詢視覺化圖。",
+      "command": "npx",
+      "args": ["-y", "@knowall-ai/mcp-neo4j-cypher"],
+      "env": {
+        "NEO4J_URI": "${env:NEO4J_URI}",
+        "NEO4J_USER": "${env:NEO4J_USER}",
+        "NEO4J_PASSWORD": "${env:NEO4J_PASSWORD}"
+      }
+    }
+  },
+
+  "_recommendation": {
+    "phase_0_to_5_MVP": ["filesystem", "sqlite-local"],
+    "phase_6_advanced": ["filesystem", "sqlite-local", "github"],
+    "debugging_graphs": ["filesystem", "neo4j"],
+    "max_simultaneous": 3
+  }
+}

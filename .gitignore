@@ -1,0 +1,10 @@
+.env
+.env.local
+node_modules/
+__pycache__/
+*.pyc
+target/        # Rust
+dist/
+build/
+.DS_Store
+data/*.db      # SQLite
