@@ -339,9 +339,10 @@ await logger.emit(
 
 實作前必須與使用者拍板的問題:
 
-- [ ] **日誌保留策略**: 30 天自動歸檔是否合適?AUDIT 等級是否永久保留?
-- [ ] **開發模式下是否同時輸出至 stdout?** 還是只寫 SQLite?
-- [ ] **correlation_id 的生成策略**: 由 Tauri IPC 層在請求進入時生成 (類似 HTTP Request ID),還是由各模組自行管理?
+- [x] **日誌保留策略**: (決策：MVP 階段採用 30 天自動清理，`AUDIT` 等級與 `daily_reflections` 等核心反思數據設為永久保留。後續進階階段（Phase 6）實作 Wrapped 報告時，再重構為雙層保留策略（Raw Logs 保留 14~30 天，Summary Metrics 表永久保留），以兼顧資料庫大小與長期行為分析的需求。)
+- [x] **開發模式下是否同時輸出至 stdout?** (決策：採用雙寫策略。在開發模式下 (`debug = True`)，日誌除背景非同步寫入 SQLite 外，同時透過 Python Logger 格式化且著色輸出至 stdout。這能顯著提升開發時的即時狀態觀測性與 Debug 效率。)
+- [x] **correlation_id 的生成策略**: (決策：採用全鏈路追蹤（Distributed Tracing）策略。由 Tauri IPC 層在前端發起請求時生成 correlation_id (UUID)，並透過 Headers 傳入後端；FastAPI Middleware 自動捕獲並放入 Request context，使同一業務流程的所有日誌（包含 LLM 呼叫、SQL 寫入）能共享相同的追蹤 ID。背景自發性任務（如 Cron）則在啟動時自行生成並綁定。)
+
 
 ---
 

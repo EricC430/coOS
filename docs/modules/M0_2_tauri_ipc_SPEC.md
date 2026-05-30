@@ -290,9 +290,10 @@ async def health():
 
 實作前必須與使用者拍板的問題:
 
-- [ ] **Tauri sidecar 是否使用 Tauri 內建的 sidecar 機制 (`tauri.conf.json` externalBin)?** 還是用 Rust `Command::new` 手動 spawn? 前者有進程管理優勢,後者更靈活。
-- [ ] **前端 SSE 重連失敗超過 max retries 後,是否彈出 modal 強制使用者手動重啟?** 還是靜默退化為手動 refresh?
-- [ ] **是否需要在 Rust 層做 API 請求的認證 (JWT/session)?** MVP 階段因為 sidecar 只在 localhost,可能不需要。但進階階段若走雲端部署則必須。
+- [x] **Tauri sidecar 是否使用 Tauri 內建的 sidecar 機制 (`tauri.conf.json` externalBin)?** (決策：MVP 階段使用 Rust `Command::new` 手動 spawn 本地虛擬環境的 `uv` 執行 `uvicorn`，以獲得極佳的開發熱重載體驗與輕量體積。Rust 層將負責綁定 OS 級 Job Object/Process Group 以確保 lifecycle 的生命週期管理與埠口釋放。)
+- [x] **前端 SSE 重連失敗超過 max retries 後,是否彈出 modal 強制使用者手動重啟?** (決策：採用混合策略。在重連期間（前 5 次，約 15 秒）在 UI 邊角顯示狀態指示器背景重試，不干擾用戶流；若超過限制仍失敗則彈出 Modal 提示連線中斷並提供「重新連線」按鈕以維護狀態明確性。)
+- [x] **是否需要在 Rust 層做 API 請求的認證 (JWT/session)?** (決策：採用本地 Secret Token 認證。Tauri 啟動 sidecar 時產生 UUID 作為環境變數傳入，前端發送請求時在 Header 中帶上 `X-API-Token`。這能建立深度防禦，防範本機其他程式惡意存取 sidecar，同時為將來跨裝置架構預留空間。)
+
 
 ---
 

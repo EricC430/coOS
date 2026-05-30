@@ -1,0 +1,14 @@
+{
+  "name": "coos",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @coos/desktop dev",
+    "dev:backend": "uv run --directory services uvicorn main:app --reload --port 8000",
+    "dev:all": "concurrently \"pnpm dev\" \"pnpm dev:backend\"",
+    "test": "pnpm --filter @coos/desktop test && uv run --directory services pytest testing/ -v",
+    "lint": "pnpm --filter @coos/desktop lint && uv run --directory services ruff check ."
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

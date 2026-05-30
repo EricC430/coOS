@@ -368,9 +368,9 @@ async def lifespan(app):
 
 實作前必須與使用者拍板的問題:
 
-- [ ] **MVP 階段是否所有雲端 credential 都設為 optional?** 純本地開發時 (無 Supabase / Neo4j),是否允許啟動並只使用 SQLite? 還是強制要求所有 credential 都填?
-- [ ] **Alembic migration 檔名是否帶時間戳?** (`alembic revision --rev-id` 的格式: 流水號 `001` vs 時間戳 `20260530_1200`)
-- [ ] **是否需要 `alembic downgrade` 的自動化腳本?** 或者 downgrade 永遠由使用者手動執行?
+- [x] **MVP 階段是否所有雲端 credential 都設為 optional?** (決策：所有雲端相關的 credential 都設為 optional。純本地開發時，應用可以成功啟動並僅使用 SQLite，完全不與外部雲端服務互動。只有在明確需要 Supabase、Neo4j 或 GitHub 功能時，才需要填入對應的環境變數。)
+- [x] **Alembic migration 檔名是否帶時間戳?** (決策：使用時間戳格式，例如 `20260530_1200_create_raw_tracking_logs.py`。這能確保即使兩位開發者在同一天建立 migration，時間戳也幾乎不可能完全相同，有效避免版本碰撞。流水號格式如 `001`, `002` 在團隊協作時風險較高。)
+- [x] **是否需要 `alembic downgrade` 的自動化腳本?** (決策：不需要。Downgrade 操作通常是手動執行的，因為需要仔細檢查每個 migration 檔的 `downgrade` 邏輯。自動化的 `alembic downgrade` 腳本容易產生破壞性操作，且在 CI/CD 中使用風險較高。)
 
 ---
 

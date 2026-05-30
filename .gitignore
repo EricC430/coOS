@@ -1,11 +1,45 @@
+# 環境變數 (含 API key，L1 隱私，絕不 commit)
 .env
 .env.local
-node_modules/
+.env.*.local
+
+# 本地資料庫 (L1 明文資料，絕不上雲)
+data/*.db
+*.db
+
+# Python
 __pycache__/
-*.pyc
-target/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.uv/
+*.egg-info/
 dist/
 build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+.turbo/
+
+# Rust / Cargo
+target/
+apps/desktop/src-tauri/target/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
-data/*.db
+Thumbs.db
+
+# VS Code workspace file (個人設定，不 commit)
 coOS.code-workspace
