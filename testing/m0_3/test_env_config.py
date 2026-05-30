@@ -28,7 +28,7 @@ def test_env_example_exists():
         "GEMINI_API_KEY",
         "IPAD_AI_LOCAL_HOST",
         "SUPABASE_URL",
-        "SUPABASE_KEY",
+        "SUPABASE_DB_URL",   # Phase 1.5: renamed from SUPABASE_KEY to SUPABASE_DB_URL
         "NEO4J_URI",
         "NEO4J_USER",
         "NEO4J_PASSWORD",

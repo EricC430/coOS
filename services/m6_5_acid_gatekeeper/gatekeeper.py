@@ -1,13 +1,21 @@
 """
-M6.5 -- XP Gatekeeper: ACID transaction logic (service layer)
+M6.5 v1.1 -- XP Gatekeeper: ACID transaction logic (service layer)
 
-SPEC: docs/modules/M6_5_acid_gatekeeper_SPEC.md §7.1-7.3
+SPEC: docs/modules/M6_5_acid_gatekeeper_SPEC.md v1.1
 Research:
-  [R08 §六.1] IKEA effect: is_reviewed=True is the gate for XP settlement
+  [R08 §六.1] IKEA effect: is_reviewed=True gates XP settlement (now at segment level)
   [R01 §alpha-DPO] stake refund must be atomic (rollback on failure)
 Risk mitigation:
-  RISK-01: settle_earned_xp() enforces is_reviewed + user_feeling before any write
+  RISK-01: settle_segment_xp() enforces segment.is_reviewed + user_feeling
   RISK-07: stake_xp() blocks edge ZPD tasks to prevent compound frustration
+  RISK-13: soft-delete guard -- is_active check before any XP settlement
+  RISK-14: settle_segment_xp() updates BOTH current_xp AND lifetime_xp atomically
+
+v1.1 changes:
+  - settle_segment_xp() replaces settle_earned_xp() as primary XP settlement method
+  - settle_earned_xp() kept for backward compatibility (delegates to segment flow)
+  - All XP earn operations increment lifetime_xp (RISK-14)
+  - Gacha/stake deductions do NOT decrement lifetime_xp (level cannot fall)
 
 Design note: this module operates on an injected store interface so it can be
 tested in-memory (FakeStore) and also wired to a real SQLAlchemy session
@@ -71,7 +79,71 @@ class XPGatekeeper:
         self._store = store
 
     # ------------------------------------------------------------------
-    # Earned XP settlement
+    # Segment-level XP settlement (v1.1 primary API)
+    # ------------------------------------------------------------------
+
+    def settle_segment_xp(
+        self,
+        segment_id: uuid.UUID,
+        user_id: uuid.UUID,
+        amount: int,
+    ) -> TransactionResult:
+        """
+        [RISK-01, RISK-13, RISK-14] Atomically settle XP for an approved segment card.
+
+        Guard order:
+        1. Segment exists AND is_active=True (RISK-13 soft-delete guard)
+        2. is_draft=False AND is_reviewed=True AND user_feeling non-empty (RISK-01)
+        3. xp_settled=False (prevent double-settlement)
+        4. Relative XP increment on current_xp AND lifetime_xp (RISK-14)
+        5. Write ledger entry with segment_id linkage
+        6. Mark segment xp_settled=True
+        """
+        segment = self._store.segments.get(segment_id)
+        if segment is None or not segment.is_active:
+            return TransactionResult(False, "GATEKEEPER_000", "segment_not_found")
+
+        # [RISK-01] Core gate
+        if (segment.is_draft
+                or not segment.is_reviewed
+                or not segment.user_feeling
+                or not segment.user_feeling.strip()):
+            return TransactionResult(False, "GATEKEEPER_001", "segment_not_approved")
+
+        if segment.xp_settled:
+            return TransactionResult(False, "GATEKEEPER_002", "already_settled")
+
+        user = self._store.users.get(user_id)
+        if user is None:
+            return TransactionResult(False, "GATEKEEPER_000", "user_not_found")
+
+        # [anti-pattern §8] Relative increment, never absolute overwrite
+        # [RISK-14] Both current_xp (spendable) and lifetime_xp (level basis) increase
+        user.current_xp += amount
+        if hasattr(user, "lifetime_xp"):
+            user.lifetime_xp += amount
+
+        # Ledger entry with full segment context
+        reflection = self._store.reflections.get(getattr(segment, "reflection_id", None))
+        self._store.ledger.append(_make_ledger(
+            user_id=user_id,
+            role_id=getattr(reflection, "role_id", None) if reflection else None,
+            amount=amount,
+            xp_type="earned",
+            reason=f"segment_reflection_approved_{segment_id}",
+            source_module="M4.5",
+            segment_id=segment_id,
+        ))
+
+        # Mark settled
+        segment.xp_settled = True
+        segment.xp_settled_at = datetime.now(UTC)
+        segment.earned_xp = amount
+
+        return TransactionResult(True)
+
+    # ------------------------------------------------------------------
+    # Earned XP settlement (v1.0 API -- backward compat, delegates to segment)
     # ------------------------------------------------------------------
 
     def settle_earned_xp(

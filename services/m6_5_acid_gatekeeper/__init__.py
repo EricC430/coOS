@@ -8,3 +8,4 @@ Research: [R08 §六.1] IKEA effect, [R01 §alpha-DPO] atomic refund
 from .gatekeeper import GATEKEEPER_CODES, TransactionResult, XPGatekeeper
 
 __all__ = ["XPGatekeeper", "TransactionResult", "GATEKEEPER_CODES"]
+# v1.1: settle_segment_xp() is the new primary API (segment-level XP settlement)
