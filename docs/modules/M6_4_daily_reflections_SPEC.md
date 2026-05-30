@@ -1,12 +1,21 @@
 # M6.4 — 每日反思資料表 (Daily Reflections Table)
 
-**標籤**:`[MVP]`
-**版本**:`1.0` / `draft`
-**最後更新**:2026-05-30
+**標籤**:`[MVP]` → `[MVP-Refinement v1.1]`
+**版本**:`1.0` → `1.1` / `draft`
+**最後更新**:2026-05-30 → 2026-05-31
 
 ## 1. Purpose (目的)
 
-定義 `daily_reflections` 資料表的完整 schema,作為「草稿與核准」(Draft & Approve) 機制的核心數據載體。此表儲存 AI 自動生成的客觀行為描述 (草稿) 與使用者必須手動填寫的主觀反思 (核准),確保 XP 發放的守門員邏輯有明確的 `is_draft` / `is_reviewed` 欄位可依賴。
+定義 `daily_reflections` (父表) 與 `daily_reflection_segments` (子表) 的完整 schema。
+
+**v1.1 變動**：自 v1.0 單一表設計升級為雙表設計。父表作為「日反思容器與整日統計」，子表作為「時段卡片與 XP 結算單位」。
+- 父表 `daily_reflections`：用來儲存 AI 整日總覽、狀態指標 (`is_completed`, `total_activity_minutes`, `streak_multiplier`)
+- 子表 `daily_reflection_segments`：用來儲存「單時段的行為指標、使用者反思、核准狀態」，**此表是 XP 結算的粒度單位**
+
+此設計確保：
+1. XP 發放粒度從「日級」細化為「時段級」，精度更高
+2. 使用者可部分核准（某些時段核准，其他暫不）而不失去「至少一個核准」的完成條件
+3. 統計維度擴展（可按時段、專案、AI 專家維度聚合統計）
 
 ## 2. References (引用研究)
 

@@ -572,6 +572,162 @@ grep -E "(M4\.2|M4\.3|M4\.8)" docs/05_integration_risk_audit.md
 git commit -m "feat(M4.8+M4.2.4): 隱性狀態注入 Persona [R02 §REMT, RISK-03 緩解]"
 ```
 
+## RISK-13:每日反思 Segment 刪除 → 反思無法完成
+
+**觸發組合**:`M6.4 (Segment 子表化) + M6.5 (ACID 交易) + 資料清理 / 使用者刪除`
+
+**失效機制**:
+
+M6.4 Refinement 將 `daily_reflections` 分解為父表 + 多個 `daily_reflection_segments` 子表。父表 `is_completed` 標記為「至少一個 segment 被核准」。若:
+1. 使用者核准了 Segment A
+2. 父表標記為 `is_completed = true`，XP 已結算
+3. 後續 Segment A 被使用者或系統刪除（如清理重複）
+
+則父表失去「完成」的根據，卻已發放 XP → XP 記錄與狀態不一致。
+
+**研究衝突點**:R08 §六.1 (IKEA 效應 XP 發放原子性) vs 使用者修正權
+
+**緩解策略**:
+
+採用**軟刪除 + 狀態鎖定**:
+
+```sql
+-- 修改 daily_reflection_segments
+ALTER TABLE daily_reflection_segments 
+ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE,
+ADD COLUMN deleted_at TIMESTAMPTZ;
+
+-- 刪除時標記為軟刪除，但不真正移除
+UPDATE daily_reflection_segments 
+SET is_active = FALSE, deleted_at = NOW() 
+WHERE id = :segment_id;
+
+-- 查詢時過濾活躍 segment
+SELECT * FROM daily_reflection_segments 
+WHERE reflection_id = :id AND is_active = TRUE;
+
+-- 若已結算 segment 被軟刪除，audit log 記錄
+INSERT INTO audit_log(table_name, operation, segment_id, old_is_active, new_is_active)
+VALUES('daily_reflection_segments', 'soft_delete', :segment_id, TRUE, FALSE);
+
+-- M6.5 settle 時，檢查結算 segment 是否被刪除
+-- 若被刪除後欲完全撤銷，需人工審核（不允許自動回滾 XP）
+```
+
+**驗收測試**:
+
+```python
+def test_segment_soft_delete_prevents_unwind():
+    """RISK-13: 已結算 segment 軟刪除後無法撤銷 XP"""
+    segment = create_segment(reflection_id=..., user_feeling="...", ...)
+    settle_segment_xp(segment.id, user.id, 50)
+    assert user.current_xp == 50
+    
+    # 軟刪除 segment
+    soft_delete_segment(segment.id)
+    segment_after = get_segment(segment.id)
+    assert segment_after.is_active is False
+    
+    # XP 不能自動回滾，保持 50
+    assert user.current_xp == 50
+    
+    # Audit log 記錄刪除事實
+    audit = get_audit_log(segment_id=segment.id)
+    assert audit.operation == "soft_delete"
+```
+
+---
+
+## RISK-14:Lifetime XP 與 Current XP 同步失敗 → 等級倒退或幻覺升級
+
+**觸發組合**:`M6.2 (users 表 lifetime_xp 欄位) + M6.5 (ACID 交易) + 並發操作`
+
+**失效機制**:
+
+M6 Refinement 新增 `users.lifetime_xp` 作為生涯累計總值，以防止消費 XP（Gacha、質押）導致等級倒退。同時保留 `users.current_xp` 作為可用餘額。
+
+若 M6.5 在 settle 時**僅更新 current_xp 而忘記更新 lifetime_xp**，或兩次更新之間發生 crash，則:
+- current_xp += 50, lifetime_xp 未變 → 等級計算錯誤 → 幻覺升級或倒退
+- 消費時：current_xp -= 30, lifetime_xp 也 -= 30（錯誤）→ 等級失真
+
+**研究衝突點**:R08 §六.1 (XP 發放原子性) vs 稿費用平衡（lifetime 單向增長）
+
+**緩解策略**:
+
+在 M6.5 所有 XP 異動時，**同時更新 current_xp 與 lifetime_xp**:
+
+```python
+# services/m6_5_acid_gatekeeper/gatekeeper.py
+
+async def settle_segment_xp(self, segment_id, user_id, amount):
+    """[RISK-14] 同時更新 current_xp (可用餘額) 與 lifetime_xp (生涯累計)"""
+    async with self._session.begin():
+        user = await self._session.execute(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+        user = user.scalar_one()
+        
+        # [RISK-14] 同一交易中同時更新兩個欄位
+        user.current_xp += amount       # 可用餘額增加
+        user.lifetime_xp += amount      # 生涯累計增加（唯增不減）
+        
+        # 記帳
+        ledger = XPLedger(...)
+        self._session.add(ledger)
+        # 交易結束時同步提交，無中間狀態
+        
+        return TransactionResult(True)
+
+async def deduct_xp_for_gacha(self, user_id, cost_xp):
+    """[RISK-14] Gacha 扣費：current_xp -= cost，lifetime_xp 保持不變"""
+    async with self._session.begin():
+        user = await self._session.execute(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+        user = user.scalar_one()
+        
+        # [RISK-14] 扣費時只減 current_xp，lifetime_xp 唯增不減
+        if user.current_xp < cost_xp:
+            return TransactionResult(False, "GATEKEEPER_004", "insufficient_xp")
+        
+        user.current_xp -= cost_xp      # 餘額減少
+        # lifetime_xp 保持不變（記錄生涯最高成就）
+        
+        return TransactionResult(True, ...)
+```
+
+**驗收測試**:
+
+```python
+def test_lifetime_xp_never_decreases():
+    """RISK-14: 消費 XP 時 lifetime_xp 不減少"""
+    user.current_xp = 100
+    user.lifetime_xp = 100
+    
+    deduct_xp_for_gacha(user.id, cost_xp=30)
+    
+    assert user.current_xp == 70   # 可用餘額減少
+    assert user.lifetime_xp == 100 # 生涯累計不變
+
+def test_earned_xp_updates_both_columns():
+    """RISK-14: 獲得 XP 時同時更新 current 與 lifetime"""
+    settle_segment_xp(segment.id, user.id, amount=50)
+    
+    assert user.current_xp == 50   # 可用餘額增加
+    assert user.lifetime_xp == 50  # 生涯累計增加
+    
+    # 消費再獲得：lifetime 應持續增長
+    deduct_xp_for_gacha(user.id, 30)
+    assert user.current_xp == 20
+    assert user.lifetime_xp == 50  # 仍是生涯總值
+    
+    settle_segment_xp(segment2.id, user.id, amount=60)
+    assert user.current_xp == 80   # 20 + 60
+    assert user.lifetime_xp == 110 # 50 + 60
+```
+
+---
+
 ## 新增風險的流程
 
 當實作過程中發現新的「合併後變差」模式:
