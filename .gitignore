@@ -3,8 +3,9 @@
 node_modules/
 __pycache__/
 *.pyc
-target/        # Rust
+target/
 dist/
 build/
 .DS_Store
-data/*.db      # SQLite
+data/*.db
+coOS.code-workspace

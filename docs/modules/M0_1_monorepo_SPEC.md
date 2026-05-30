@@ -218,9 +218,9 @@ coOS/
 
 實作前必須與使用者拍板的問題:
 
-- [ ] **Monorepo 是否引入 Turborepo 或 Nx 做 build orchestration?** 還是 pnpm workspace + 手動 scripts 就夠? (MVP 階段建議先不引入)
-- [ ] **`testing/` 目錄是否統一放在根目錄,還是各 workspace 各自放?** (目前設計為根目錄統一)
-- [ ] **CI 系統用 GitHub Actions 還是其他?** 影響 `pnpm install --frozen-lockfile` 與 `uv sync --locked` 的寫法
+- [x] **Monorepo 是否引入 Turborepo 或 Nx 做 build orchestration?** 還是 pnpm workspace + 手動 scripts 就夠? (決策：MVP 階段先使用 pnpm workspace + 手動 scripts 即可)
+- [x] **`testing/` 目錄是否統一放在根目錄,還是各 workspace 各自放?** (決策：統一放在根目錄，底下依模組與架構分層結構)
+- [x] **CI 系統用 GitHub Actions 還是其他?** (決策：使用 GitHub Actions，採用快取與路徑過濾機制以節省每月額度)
 
 ---
 
