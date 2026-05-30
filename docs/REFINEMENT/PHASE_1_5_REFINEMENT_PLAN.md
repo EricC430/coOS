@@ -348,11 +348,11 @@ pg_dump "$SUPABASE_DB_URL" > backup_20260531.sql
 
 **在執行 Day 1 前，請確認**：
 
-- [ ] 已讀此計畫文件（PHASE_1_5_REFINEMENT_PLAN.md）
-- [ ] 已讀評估報告（REFINEMENT_ASSESSMENT_M6.md）
-- [ ] 已讀新增 RISK（05_integration_risk_audit.md RISK-13, 14）
-- [ ] Supabase 環境變數確認無誤
-- [ ] 已備份 Supabase 現有 schema（建議）
+- [x] 已讀此計畫文件（PHASE_1_5_REFINEMENT_PLAN.md）
+- [x] 已讀評估報告（REFINEMENT_ASSESSMENT_M6.md）(疑問:這裡的phase後續使用06_implementation_phases文件時會被讀取到嗎)
+- [x] 已讀新增 RISK（05_integration_risk_audit.md RISK-13, 14）
+- [x] Supabase 環境變數確認無誤
+- [x] 已備份 Supabase 現有 schema（建議）
 - [ ] pytest + ruff 本地環境就緒
 
 ---

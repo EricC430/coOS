@@ -1,5 +1,4 @@
 {
-  "_comment_priority": "Keep active MCP servers to 2-3 max — each loads tool definitions into context at session start. See: https://smithhorngroup.substack.com/p/choosing-between-skills-subagents",
   "mcpServers": {
     "filesystem": {
       "_comment": "本機檔案存取。Claude Code 預設已可讀寫專案目錄,但 filesystem MCP 提供更精細的權限控制。MVP 階段建議啟用。",
@@ -54,22 +53,10 @@
         "NEO4J_USER": "${env:NEO4J_USER}",
         "NEO4J_PASSWORD": "${env:NEO4J_PASSWORD}"
       }
+    },
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=eajmmzxxfsarmbejpqik&features=database%2Cdevelopment%2Cfunctions%2Cdocs"
     }
-  },
-  "_recommendation": {
-    "phase_0_to_5_MVP": [
-      "filesystem",
-      "sqlite-local"
-    ],
-    "phase_6_advanced": [
-      "filesystem",
-      "sqlite-local",
-      "github"
-    ],
-    "debugging_graphs": [
-      "filesystem",
-      "neo4j"
-    ],
-    "max_simultaneous": 3
   }
 }
