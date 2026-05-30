@@ -1,8 +1,25 @@
 # M6.1 — 本地 SQLite Schema 定義 (Local SQLite Schemas)
 
-**標籤**:`[MVP]`
-**版本**:`1.0` / `draft`
-**最後更新**:2026-05-30
+**標籤**:`[MVP-Refinement v1.1]`
+**版本**:`1.1` / `released`
+**最後更新**:2026-05-31
+
+**v1.1 變動**（Phase 1.5 Refinement Sprint）：
+
+| 項目 | v1.0 | v1.1 |
+|------|------|------|
+| `chat_transcripts` | 基礎欄 | 新增 `project`, `audio_path`, `paralinguistic_metadata` |
+| `role_implicit_states` | `label`, `confidence` | 新增 `valence`, `arousal`, `raw_triggers` |
+
+- `project` — GraphRAG 過濾用的專案標籤，支援跨時段語境關聯
+- `audio_path` — [L1 local-only] 語音附件本地路徑，**永不上雲**
+- `paralinguistic_metadata` — JSON，存 `{tempo, pitch_variance, stress_index}`，M4.2 語調狀態機輸入
+- `valence / arousal` — [R03 §6] Valence-Arousal 情緒圓環模型，[-1.0, 1.0]，供 M2.2 邊緣推論使用
+- `raw_triggers` — JSON 陣列，觸發情緒狀態的遙測事件清單
+
+**新增 Pydantic models**：`services/m6_1_sqlite/models.py`（`ChatTranscriptRead/Create`、`RoleImplicitStateRead/Create` 完整覆蓋）
+
+**Migrations**：`alembic/versions/20260531_1000`（chat_transcripts）、`20260531_1200`（role_implicit_states v1.1）
 
 ## 1. Purpose (目的)
 

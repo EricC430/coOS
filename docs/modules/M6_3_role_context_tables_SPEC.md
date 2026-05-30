@@ -1,8 +1,20 @@
 # M6.3 — 角色情境資料表 (Role Context Tables)
 
-**標籤**:`[MVP]`
-**版本**:`1.0` / `draft`
-**最後更新**:2026-05-30
+**標籤**:`[MVP-Refinement v1.1]`
+**版本**:`1.1` / `released`
+**最後更新**:2026-05-31
+
+**v1.1 變動**（Phase 1.5 Refinement Sprint）：
+
+- `role_projects.inferred_by_ai` — Boolean，標記由 M2.2 邊緣推論自動發現（非使用者手建）
+- `role_projects.alias_keywords` — JSON 字串陣列，專案別名關鍵字，供 GraphRAG 語意匹配使用
+- `role_settings.weekly_target_minutes` — 週專注時長目標（分鐘），預設 0（無目標）
+- `role_implicit_states.valence` / `arousal` — [R03 §6] Valence-Arousal 情緒圓環，各 [-1.0, 1.0]
+- `role_implicit_states.raw_triggers` — JSON 陣列，觸發此情緒狀態的遙測事件清單
+
+**注意**：`role_implicit_states` 為本地 SQLite 專屬（L2，永不上雲）。雲端 migrations 不可觸碰此表。
+
+**Migrations**：`alembic_cloud/versions/20260531_1100`（role_projects/role_settings 擴充）、`alembic/versions/20260531_1200`（role_implicit_states Valence-Arousal）
 
 ## 1. Purpose (目的)
 

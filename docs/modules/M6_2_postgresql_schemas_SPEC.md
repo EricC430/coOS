@@ -1,8 +1,29 @@
 # M6.2 — 雲端 PostgreSQL Schema 定義 (Cloud PostgreSQL Schemas)
 
-**標籤**:`[MVP]`
-**版本**:`1.0` / `draft`
-**最後更新**:2026-05-30
+**標籤**:`[MVP-Refinement v1.1]`
+**版本**:`1.1` / `released`
+**最後更新**:2026-05-31
+
+**v1.1 變動**（Phase 1.5 Refinement Sprint）：
+
+| 項目 | v1.0 | v1.1 |
+|------|------|------|
+| `users` | `current_xp`, `level`... | 新增 `lifetime_xp` [RISK-14] |
+| `roles` | `display_name`... | 新增 `avatar_url` |
+| `xp_ledger` | `user_id`, `amount`... | 新增 FK: `expert_id`, `project`, `segment_id`, `task_id` |
+| `role_projects` | 基礎欄 | 新增 `inferred_by_ai`, `alias_keywords` |
+| `role_settings` | 基礎欄 | 新增 `weekly_target_minutes` |
+| RLS | 無 | 全表啟用 Row Level Security（`auth.uid()` 隔離）|
+
+- `lifetime_xp` — [RISK-14] 唯增不減，等級計算依據；`current_xp` 為可花費餘額
+- `avatar_url` — UI 角色頭像渲染，最長 512 字元
+- `expert_id` / `project` / `segment_id` — xp_ledger 統計維度，支援按時段/專案/專家聚合
+- `inferred_by_ai` — 標記由 M2.2 邊緣推論自動發現的專案
+- RLS — 10 張表全部啟用，使用者僅能讀寫自己的資料（`auth.uid()`）
+
+**新增 Pydantic models**：`services/m6_2_postgresql/models.py`（全 L3 表完整覆蓋）
+
+**Migrations**：`alembic_cloud/versions/20260531_1100`（schema 擴充）、`20260531_1200`（RLS）
 
 ## 1. Purpose (目的)
 

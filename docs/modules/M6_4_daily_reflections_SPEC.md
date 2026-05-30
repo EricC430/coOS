@@ -1,8 +1,8 @@
 # M6.4 — 每日反思資料表 (Daily Reflections Table)
 
-**標籤**:`[MVP]` → `[MVP-Refinement v1.1]`
-**版本**:`1.0` → `1.1` / `draft`
-**最後更新**:2026-05-30 → 2026-05-31
+**標籤**:`[MVP-Refinement v1.1]`
+**版本**:`1.1` / `released`
+**最後更新**:2026-05-31
 
 ## 1. Purpose (目的)
 

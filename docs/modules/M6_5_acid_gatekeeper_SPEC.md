@@ -1,8 +1,34 @@
 # M6.5 — ACID 交易守門員 (ACID Transaction Gatekeeper)
 
-**標籤**:`[MVP]`
-**版本**:`1.0` / `draft`
-**最後更新**:2026-05-30
+**標籤**:`[MVP-Refinement v1.1]`
+**版本**:`1.1` / `released`
+**最後更新**:2026-05-31
+
+**v1.1 變動**（Phase 1.5 Refinement Sprint）：
+
+| 項目 | v1.0 | v1.1 |
+|------|------|------|
+| 結算單位 | `settle_earned_xp(reflection_id)` | `settle_segment_xp(segment_id)` |
+| 鎖定目標 | `SELECT FOR UPDATE` 鎖 `daily_reflections` | 鎖 `daily_reflection_segments` |
+| XP 寫入 | 僅更新 `current_xp` | 同步更新 `current_xp` **和** `lifetime_xp` [RISK-14] |
+| 守門檢查 | `reflection.is_reviewed` | `segment.is_reviewed AND is_active AND user_feeling` |
+| Ledger 記錄 | 無 `segment_id` | 寫入 `xp_ledger.segment_id` 供統計 |
+
+**新增守門規則**：
+
+- [RISK-13] `segment.is_active = False`（軟刪除）→ 拒絕結算（`GATEKEEPER_000`）
+- [RISK-14] earn 路徑必須同步遞增 `lifetime_xp`；Gacha/Stake spend 路徑**只減** `current_xp`
+- 向後相容：舊 `settle_earned_xp()` 保留為 deprecated wrapper，委派至 `settle_segment_xp()`
+
+**Error codes 新增**：
+
+| Code | 觸發條件 |
+|------|---------|
+| `GATEKEEPER_000` | segment 不存在 或 `is_active = False` |
+| `GATEKEEPER_001` | `is_draft = True` 或 `is_reviewed = False` 或缺 `user_feeling` |
+| `GATEKEEPER_002` | `xp_settled = True`（重複結算）|
+
+**Migrations**：無新增（schema 變動在 M6.4 migration `20260531_1000` 與 M6.2 migration `20260531_1100`）
 
 ## 1. Purpose (目的)
 
