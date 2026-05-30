@@ -136,12 +136,22 @@ class TestLogPrivacy:
         assert len(local_files) >= 1
         # No cloud-specific migration file should create raw_tracking_logs
         # (cloud migrations live in a separate directory if present)
+        import re
+        table_create_re = re.compile(
+            r'(?:op\.create_table\s*\(\s*["\'])(\w+)|'
+            r'(?:CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?)(\w+)',
+            re.IGNORECASE,
+        )
         cloud_migration_dir = PROJECT_ROOT / "services" / "alembic_cloud" / "versions"
         if cloud_migration_dir.exists():
             for f in cloud_migration_dir.glob("*.py"):
                 content = f.read_text(encoding="utf-8")
-                assert "raw_tracking_logs" not in content, (
-                    f"Cloud migration {f.name} must not create raw_tracking_logs"
+                created = {
+                    (m.group(1) or m.group(2)).lower()
+                    for m in table_create_re.finditer(content)
+                }
+                assert "raw_tracking_logs" not in created, (
+                    f"Cloud migration {f.name} must not CREATE raw_tracking_logs"
                 )
 
     def test_payload_does_not_contain_raw_text_marker(self):

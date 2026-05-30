@@ -52,7 +52,7 @@ def test_module_naming_convention():
       - .venv/    — uv virtualenv
     """
     # 框架強制固定名稱，不受模組命名規則約束
-    FRAMEWORK_DIRS = {"alembic", ".venv", "__pycache__"}
+    FRAMEWORK_DIRS = {"alembic", "alembic_cloud", ".venv", "__pycache__"}
 
     services_dir = PROJECT_ROOT / "services"
     if services_dir.exists():
