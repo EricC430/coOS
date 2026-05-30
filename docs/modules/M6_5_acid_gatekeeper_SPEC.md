@@ -342,9 +342,9 @@ class XPGatekeeper:
 
 實作前必須與使用者拍板的問題:
 
-- [ ] **MVP 階段是否需要 XP 質押 (M4.13)?** 質押屬 `[進階]` 模組,但 ACID 守門員需預留介面。是否在 MVP 中只實作 `settle_earned_xp()` 和 `deduct_xp_for_gacha()`?
-- [ ] **Earned XP 的計算公式由誰決定?** 守門員只負責原子性操作,XP 金額由 M4.5 傳入。M4.5 的計算公式是否需要另外 SPEC?
-- [ ] **Gacha 抽卡是否在 MVP 範圍內?** `06_implementation_phases.md` 將 M3.11 列為進階模組。若不在 MVP,本模組的 `deduct_xp_for_gacha()` 可延後實作。
+- [x] **MVP 階段是否需要 XP 質押 (M4.13)?** (決策：MVP 階段暫不實作前端的質押功能，但 M6.5 資料庫層會保留 `stake_xp` 介面，為後續進階階段做準備。)
+- [x] **Earned XP 的計算公式由誰決定?** (決策：由 M4.5 模組 (Python 層) 決定公式並將算好的數值傳入守門員，M6.5 只負責安全的原子性扣款與發放，不涉及業務公式，維持職責分離。)
+- [x] **Gacha 抽卡是否在 MVP 範圍內?** (決策：與 XP 質押相同，MVP 暫不實作前端抽卡 UI，但 M6.5 守門員保留 `deduct_xp_for_gacha` 交易介面以利擴充。)
 
 ---
 

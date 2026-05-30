@@ -269,9 +269,9 @@ CREATE TABLE user_badges (
 
 實作前必須與使用者拍板的問題:
 
-- [ ] **`users.email` 是否必填?** MVP 階段是否只支援本地單裝置 (無需 email)?
-- [ ] **`ai_experts` 的初始種子資料由誰提供?** (預設 Persona 清單: Robert, Beth, ...) 是寫在 migration 中還是另外的 seed script?
-- [ ] **`xp_ledger` 是否需要按月分區 (table partitioning)?** Supabase Free tier 500MB 下預估多久會滿?
+- [x] **`users.email` 是否必填?** (決策：設為可選 (optional) 但介面上可以先收集與保存，為未來的跨裝置登入與雲端備份機制鋪路。)
+- [x] **`ai_experts` 的初始種子資料由誰提供?** (決策：三層機制——(1) **內建種子 (Seed data)**：透過 seed script 或 initial migration 預載幾個標準 Persona (如 Robert 等)，確保開箱即用；(2) **自然名稱產生模組**：新建 Persona 時，系統呼叫 LLM 產生自然且不重複的專家名稱 (不可每個都叫同名)，搭配 `UNIQUE INDEX idx_ae_role_name` 確保角色內唯一；(3) **主題偵測配對模組**：在 AI 聊天過程中偵測到新的學科/領域主題時，系統建議使用者配對（或新建）一位該領域的專家 Persona，經使用者同意後動態生成 `personality_prompt` 與 `backstory` 寫入 `ai_experts` 表。上述 (2)(3) 的 SPEC 細節歸屬 M4.1 路由 / M4.2 Persona 模組，此處僅定義資料表結構。)
+- [x] **`xp_ledger` 是否需要按月分區 (table partitioning)?** (決策：MVP 階段暫不需要分區，保持架構簡單。Supabase Free tier 500MB 足以應付初期測試，資料量成長後再做歸檔或分區。)
 
 ---
 

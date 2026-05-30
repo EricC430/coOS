@@ -261,9 +261,9 @@ async def init_sqlite(db_path: str) -> aiosqlite.Connection:
 
 實作前必須與使用者拍板的問題:
 
-- [ ] **`chat_transcripts` 是否需要加密靜態存儲?** (例如 SQLCipher) 或者作業系統層級加密 (BitLocker/FileVault) 已足夠?
-- [ ] **`edge_event_buffer` 中已上推成功的記錄是否立即刪除?** 還是保留 N 天以便 NSVIF 二次驗證?
-- [ ] **是否需要 `raw_tracking_logs` 的 TTL 觸發器 (SQLite trigger)?** 還是交由 Python 排程在應用啟動時清理?
+- [x] **`chat_transcripts` 是否需要加密靜態存儲?** (決策：MVP 階段依賴作業系統層級加密 (BitLocker/FileVault) 以及檔案權限管控即可，暫不引入 SQLCipher 以免增加打包與編譯的複雜度。)
+- [x] **`edge_event_buffer` 中已上推成功的記錄是否立即刪除?** (決策：保留 7 天，以便在網路不穩或 NSVIF 需要二次驗證時有緩衝，過期後由排程清理。)
+- [x] **是否需要 `raw_tracking_logs` 的 TTL 觸發器 (SQLite trigger)?** (決策：由 Python 背景排程 (Cron) 在應用啟動時清理過期日誌即可，不需要寫複雜的 SQLite trigger，降低維護成本。)
 
 ---
 

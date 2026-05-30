@@ -273,9 +273,9 @@ class RoleImplicitState(BaseModel):
 
 實作前必須與使用者拍板的問題:
 
-- [ ] **`role_implicit_states` 是存在雲端 PostgreSQL 還是本地 SQLite?** 隱性狀態 label (如 "anxiety") 是否算 L1/L2 隱私資料?若是,應改為本地 SQLite。
-- [ ] **每角色最多幾個 Project?** 是否需要限制?
-- [ ] **`role_settings.daily_report_time` 是 UTC 還是使用者本地時區?** 跨裝置同步時時區如何處理?
+- [x] **`role_implicit_states` 是存在雲端 PostgreSQL 還是本地 SQLite?** (決策：放在本地 SQLite。隱性狀態（如焦慮、心流）屬高度即時且私密的 L2 狀態，跨裝置不需要同步這些短期狀態，切換裝置時讓推論重新開始即可。)
+- [x] **每角色最多幾個 Project?** (決策：不限制數量。Project 的概念類似於標籤 (Label)，不設硬性上限。AI 在聊天 session 中會自動偵測當前對話主題，判斷是匹配現有 Project 還是建議使用者建立新 Project 並標籤化；多個 session 可以共用同一個 Project 標籤。Project 的進階功能（如進度追蹤、Kanban 等）留待未來研議。)
+- [x] **`role_settings.daily_report_time` 是 UTC 還是使用者本地時區?** (決策：資料庫統一儲存為 UTC，前後端互動時再轉換為使用者的本地時區，這是處理跨時區最穩健的標準作法。)
 
 ---
 

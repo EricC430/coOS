@@ -4,7 +4,7 @@
 
 > 此檔案是「下一步做什麼」的唯一權威來源。每完成一個 Phase 必須產出對應的 Closure Report。
 
-## Phase 0: 專案基礎 (預估 1 週)
+## Phase 0: 專案基礎 (預估 1 週) ✅ 已完成
 
 **目標**:讓 Claude Code 能在 VS Code 開始幹活。
 
@@ -13,12 +13,14 @@
 - [x] git init, .gitignore 建好
 - [x] CLAUDE.md + docs/ 全部 commit
 - [x] .claude/skills/ 三個 skill 全部建好
-- [ ] pnpm + uv 環境,monorepo 結構
-- [ ] CI 跑得起來 (pytest + vitest 空殼)
-- [ ] 三個 MCP server 在 .mcp.json 配置完成
+- [x] pnpm + uv 環境,monorepo 結構
+- [x] CI 跑得起來 (pytest + vitest 空殼)
+- [x] 三個 MCP server 在 .mcp.json 配置完成
 ```
 
 **驗收**:在 VS Code 開啟專案 → Claude Code panel 啟動 → 輸入「請列出所有 MVP 模組」→ 它能回出 24 個模組。
+
+> **完成日期**:2026-05-30
 
 ---
 

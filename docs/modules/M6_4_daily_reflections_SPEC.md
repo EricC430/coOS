@@ -337,9 +337,9 @@ class DailyReflectionResponse(BaseModel):
 
 實作前必須與使用者拍板的問題:
 
-- [ ] **`daily_reflections` 存在雲端 PostgreSQL 還是本地 SQLite?** `user_feeling` 包含使用者心理狀態描述,可能屬 L1 明文。若上雲,需要明確分類。
-- [ ] **已核准的反思是否可以事後修改?** 還是核准後就鎖定 (immutable)?若允許修改,XP 是否需要重新計算?
-- [ ] **`mood_score` 是否必填?** 目前設計為可選 (nullable),但 M3.8 Wrapped 需要此欄位做統計。若經常為 NULL 會影響 Wrapped 品質。
+- [x] **`daily_reflections` 存在雲端 PostgreSQL 還是本地 SQLite?** (決策：存在雲端以支援跨裝置瀏覽。由於 `user_feeling` 包含心理狀態，將被視為 L3 的高度敏感業務資料，需在隱私同意書中向使用者說明。這是為了便利性所做的合理折衷。)
+- [x] **已核准的反思是否可以事後修改?** (決策：允許事後修改文字內容，但修改後不影響已經結算的 XP，維持 XP ledger 的不可變性與記帳單純性。)
+- [x] **`mood_score` 是否必填?** (決策：維持可選填 (nullable)。前端與 M3.8 Wrapped 統計時會處理 NULL 情況，不強迫使用者每次都評分，降低摩擦力。)
 
 ---
 
