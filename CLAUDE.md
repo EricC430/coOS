@@ -69,6 +69,39 @@
 
 所有跨模組互動必須寫入 `raw_tracking_logs` (M0.4 定義的結構化日誌)。除錯時先 grep `raw_tracking_logs`,而不是猜。
 
+## 減少 Token 消耗與除錯最佳實踐
+
+每次執行測試、除錯與開發時，**必須**遵循以下規則以節省 Token 並提高效率：
+
+1. **Windows 環境 ASCII 限制**：編寫 `.ini`、`pyproject.toml`、`alembic` 配置時，所有檔案必須只用純 ASCII。如遇 `UnicodeDecodeError`，立即執行以下命令診斷非 ASCII 字元，不要讓整段 stack trace 讀入 context：
+   ```bash
+   python -c "content = open('file.ini', encoding='utf-8').read(); [print(f'pos {i}: {repr(c)}') for i,c in enumerate(content) if ord(c)>127]"
+   ```
+2. **pytest 失敗僅帶尾部進 Context**：當測試失敗時，禁止直接讀取完整 stdout/stderr。請先使用 `tail` 截取最後 20-30 行：
+   ```bash
+   # ✅ 推薦作法
+   pytest -v 2>&1 | tail -20
+   # 失敗時若需展開特定錯誤：
+   pytest -v 2>&1 | grep -A 10 "FAILED"
+   ```
+3. **ModuleNotFoundError 診斷**：遇到 Python import 錯誤時，優先確認 `sys.path`，不要猜測：
+   ```bash
+   python -c "import sys; print('\n'.join(sys.path))"
+   ```
+4. **環境隔離與組態設定 Check-list**：
+   - *monkeypatch.delenv 無效*：若 Pydantic 讀取 `.env` 檔案而非環境變數，初始化 Settings 時傳入 `_env_file=None`。
+   - *InterpolationMissingOptionError*：`configparser` 會嘗試插值 `%(KEY)s`。`.ini` 設定檔中不可使用 `%(...)s`，改在 `env.py` 中進行置換。
+   - *UnicodeDecodeError: cp950*：Windows 環境下 locale 為 cp950，設定檔與代碼若有非 ASCII 字元會報錯。應使用純 ASCII。
+5. **Ruff 本地先修**：每次 commit 前在本地先執行 `uv run ruff check . --fix`，不要等到 CI 流程才發現 lint 錯誤。
+6. **Sidecar 依賴測試標記**：測試若依賴啟動 sidecar FastAPI (如 `testing/m0_2/test_tauri_ipc.py`)，必須在檔案頂部加上 skip marker，以防 CI 或本地 sidecar 未啟動時誤報：
+   ```python
+   import pytest
+   pytestmark = pytest.mark.skipif(
+       not _sidecar_reachable(), # 探測 127.0.0.1:8000
+       reason="sidecar not running"
+   )
+   ```
+
 ## 技術棧 (固定,不要建議替代品)
 
 - 桌面殼: **Tauri 2.x (Rust)**

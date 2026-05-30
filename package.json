@@ -6,7 +6,8 @@
     "dev:backend": "uv run --directory services uvicorn main:app --reload --port 8000",
     "dev:all": "concurrently \"pnpm dev\" \"pnpm dev:backend\"",
     "test": "pnpm --filter @coos/desktop test && uv run --directory services pytest testing/ -v",
-    "lint": "pnpm --filter @coos/desktop lint && uv run --directory services ruff check ."
+    "lint": "pnpm --filter @coos/desktop lint && uv run --directory services ruff check . && npm run check:ascii",
+    "check:ascii": "python scripts/check_non_ascii.py services/alembic_local.ini services/alembic_cloud.ini services/pyproject.toml"
   },
   "devDependencies": {
     "concurrently": "^9.0.0"

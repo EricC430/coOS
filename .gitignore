@@ -43,3 +43,4 @@ Thumbs.db
 
 # VS Code workspace file (個人設定，不 commit)
 coOS.code-workspace
+docs/dev_logs/*.jsonl
