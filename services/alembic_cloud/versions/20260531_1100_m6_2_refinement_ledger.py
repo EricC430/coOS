@@ -40,7 +40,7 @@ def upgrade() -> None:
     ))
 
     # --- xp_ledger: add FK columns for statistics dimensions ---
-    op.add_column("xp_ledger", sa.Column("role_id", sa.UUID(), nullable=True))
+    # Note: role_id already added in M6.2 (20260530_1300), so skip it
     op.add_column("xp_ledger", sa.Column("expert_id", sa.UUID(), nullable=True))
     op.add_column("xp_ledger", sa.Column("project", sa.Text(), nullable=True))
     op.add_column("xp_ledger", sa.Column("segment_id", sa.UUID(), nullable=True))
@@ -48,9 +48,7 @@ def upgrade() -> None:
     op.add_column("xp_ledger", sa.Column("task_id", sa.UUID(), nullable=True))
 
     # FK constraints for xp_ledger new cols
-    op.create_foreign_key(
-        "fk_xl_role", "xp_ledger", "roles", ["role_id"], ["id"],
-    )
+    # Note: fk_xl_role already added in M6.2 (20260530_1300), so skip it
     op.create_foreign_key(
         "fk_xl_expert", "xp_ledger", "ai_experts", ["expert_id"], ["id"],
     )
@@ -82,34 +80,13 @@ def upgrade() -> None:
         "weekly_target_minutes", sa.Integer(), nullable=False, server_default="0",
     ))
 
-    # --- role_implicit_states: Valence-Arousal emotion model ---
-    # Valence: -1.0 (negative) to 1.0 (positive)
-    # Arousal: -1.0 (calm) to 1.0 (excited)
-    op.add_column("role_implicit_states", sa.Column(
-        "valence", sa.Float(), nullable=True,
-    ))
-    op.add_column("role_implicit_states", sa.Column(
-        "arousal", sa.Float(), nullable=True,
-    ))
-    op.add_column("role_implicit_states", sa.Column(
-        "raw_triggers", sa.Text(), nullable=True,  # JSON array of telemetry event types
-    ))
-    op.create_check_constraint(
-        "ck_ris_valence", "role_implicit_states",
-        "valence IS NULL OR (valence >= -1.0 AND valence <= 1.0)",
-    )
-    op.create_check_constraint(
-        "ck_ris_arousal", "role_implicit_states",
-        "arousal IS NULL OR (arousal >= -1.0 AND arousal <= 1.0)",
-    )
+    # Note: role_implicit_states is intentionally LOCAL-ONLY (SQLite, §隱私三層原則)
+    # Do NOT add columns to it here in cloud migration.
+    # Valence-Arousal emotion model lives in alembic_local only.
 
 
 def downgrade() -> None:
-    op.drop_constraint("ck_ris_valence", "role_implicit_states", type_="check")
-    op.drop_constraint("ck_ris_arousal", "role_implicit_states", type_="check")
-    op.drop_column("role_implicit_states", "raw_triggers")
-    op.drop_column("role_implicit_states", "arousal")
-    op.drop_column("role_implicit_states", "valence")
+    # Note: role_implicit_states is LOCAL-ONLY, no columns to drop
 
     op.drop_column("role_settings", "weekly_target_minutes")
     op.drop_column("role_projects", "alias_keywords")
@@ -118,15 +95,15 @@ def downgrade() -> None:
     op.drop_index("idx_xl_task", "xp_ledger")
     op.drop_index("idx_xl_project", "xp_ledger")
     op.drop_index("idx_xl_expert", "xp_ledger")
-    op.drop_index("idx_xl_role", "xp_ledger")
+    # Note: idx_xl_role not dropped -- added in M6.2 (20260530_1300)
     op.drop_constraint("fk_xl_segment", "xp_ledger", type_="foreignkey")
     op.drop_constraint("fk_xl_expert", "xp_ledger", type_="foreignkey")
-    op.drop_constraint("fk_xl_role", "xp_ledger", type_="foreignkey")
+    # Note: fk_xl_role not dropped -- added in M6.2 (20260530_1300)
     op.drop_column("xp_ledger", "task_id")
     op.drop_column("xp_ledger", "segment_id")
     op.drop_column("xp_ledger", "project")
     op.drop_column("xp_ledger", "expert_id")
-    op.drop_column("xp_ledger", "role_id")
+    # Note: role_id not dropped -- added in M6.2 (20260530_1300)
 
     op.drop_column("roles", "avatar_url")
     op.drop_column("users", "lifetime_xp")
