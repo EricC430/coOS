@@ -45,14 +45,27 @@ def test_pnpm_workspace_config():
 
 
 def test_module_naming_convention():
-    """驗收條件 5: services/ 下的子目錄遵循 mX_Y_name 命名規則"""
+    """驗收條件 5: services/ 下的子目錄遵循 mX_Y_name 命名規則
+
+    例外（框架強制固定名稱，不可重命名）:
+      - alembic/  — Alembic 工具要求的固定目錄名
+      - .venv/    — uv virtualenv
+    """
+    # 框架強制固定名稱，不受模組命名規則約束
+    FRAMEWORK_DIRS = {"alembic", ".venv", "__pycache__"}
+
     services_dir = PROJECT_ROOT / "services"
     if services_dir.exists():
         for child in services_dir.iterdir():
-            if child.is_dir() and not child.name.startswith(("_", ".", "__")):
-                assert re.match(r"m\d+_\d+_\w+", child.name), (
-                    f"目錄 {child.name} 不符合 mX_Y_name 命名規則"
-                )
+            if not child.is_dir():
+                continue
+            if child.name.startswith(("_", ".", "__")):
+                continue
+            if child.name in FRAMEWORK_DIRS:
+                continue
+            assert re.match(r"m\d+_\d+_\w+", child.name), (
+                f"目錄 {child.name} 不符合 mX_Y_name 命名規則"
+            )
 
 
 def test_gitignore_covers_secrets():
