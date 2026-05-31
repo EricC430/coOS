@@ -68,7 +68,7 @@ coOS/
 │   ├── 01_product_vision.md
 │   ├── 02_architecture.md
 │   ├── 03_research_index.md ★ 10 篇研究索引
-│   ├── 04_module_research_matrix.md ★ 模組-研究矩陣
+│   ├── 04_module_registry.md ★ 完整模組登記冊 (子模組+研究+風險)
 │   ├── 05_integration_risk_audit.md ★ 整合風險稽核
 │   ├── 06_implementation_phases.md
 │   └── modules/

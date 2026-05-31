@@ -33,9 +33,10 @@ Do **not** start coding without a SPEC.
 
 ### Step 2: Read the research citations
 
-From the SPEC's `## References` section, identify all `Rxx` papers. Read the relevant sections in `docs/03_research_index.md`:
+From the SPEC's `## References` section, identify all `Rxx` papers. You can also cross-reference `docs/04_module_registry.md` for the module's full list of research and risk tags:
 
 ```
+grep -A 50 "^### Mx.y" docs/04_module_registry.md
 grep -A 30 "^## Rxx" docs/03_research_index.md
 ```
 

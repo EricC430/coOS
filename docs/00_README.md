@@ -10,7 +10,7 @@ docs/
 ├── 01_product_vision.md      ← 產品願景與六大支柱
 ├── 02_architecture.md        ← 系統架構 (四層、邊緣-雲端協同)
 ├── 03_research_index.md      ★ 10 篇研究論文索引,引用源頭
-├── 04_module_research_matrix.md  ★ 模組 ↔ 研究映射矩陣
+├── 04_module_registry.md      ★ 完整模組登記冊 (子模組 + 研究 + 風險)
 ├── 05_integration_risk_audit.md  ★ 整合風險稽核 (12 條已知陷阱)
 ├── 06_implementation_phases.md   ← Phase 1~5 MVP 建構順序
 └── modules/
@@ -32,7 +32,7 @@ docs/
 實作任一模組的順序固定為:
 
 1. 讀 `CLAUDE.md` (專案根目錄,session 啟動會自動讀)
-2. 讀 `docs/04_module_research_matrix.md` 找到該模組對應的研究編號
+2. `grep -A 50 "^### Mx.y" docs/04_module_registry.md` 取得該模組的子模組清單、研究引用、風險標記
 3. 讀 `docs/03_research_index.md` 中該研究的細節
 4. 讀 `docs/05_integration_risk_audit.md` 中與此模組相關的所有警告 (用 grep 模組編號)
 5. 讀 `docs/modules/Mx_y_SPEC.md`

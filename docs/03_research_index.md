@@ -522,6 +522,6 @@ async def safe_log_voice_memo(transcript: str):
 
 1. 編號為 `R11`
 2. 在本文件末追加完整條目 (沿用相同 schema)
-3. 更新 `04_module_research_matrix.md`
+3. 更新 `04_module_registry.md` 中對應模組的 Research 欄
 4. 若觸發任何新風險,追加至 `05_integration_risk_audit.md`
 5. 若改變某模組的引用,更新該模組的 SPEC.md References 區塊

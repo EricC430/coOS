@@ -12,10 +12,10 @@
 
 實作任一模組 `Mx.y` 前,**必須**依序執行:
 
-1. `view docs/04_module_research_matrix.md` — 找出此模組對應的研究論文編號 (R01~R10)
-2. `view docs/03_research_index.md` 對應段落 — 理解該模組必須遵守的學術約束
+1. `grep -A 50 "^### Mx.y" docs/04_module_registry.md` — 取得此模組的完整職責、子模組清單、研究引用、整合風險
+2. `view docs/03_research_index.md` 對應段落 — 深入理解該模組引用的研究章節
 3. `view docs/05_integration_risk_audit.md` — 檢查此模組與已實作模組之間是否有「合併後效果變差」的已知風險
-4. `view docs/modules/Mx_y_SPEC.md` — 讀完整模組契約
+4. `view docs/modules/Mx_y_SPEC.md` — 讀完整模組契約 (若已撰寫)
 
 **不准跳過任一步驟。** 跳過會導致違反隱私約束 (洩漏意圖向量明文) 或破壞核心心理機制 (例如自動寫入日報摧毀 IKEA 效應)。
 

@@ -28,7 +28,7 @@ What exactly are you about to claim? Reduce to a single sentence:
 
 ### Step 2: Find the source
 
-Open `docs/03_research_index.md` and find the paper that supports the claim. The mapping table at the top of each entry tells you which modules consume each research.
+Open `docs/03_research_index.md` and find the paper that supports the claim. You can also cross-reference `docs/04_module_registry.md` to check which research papers are already assigned to the module you're working on.
 
 If you cannot find a supporting paper:
 

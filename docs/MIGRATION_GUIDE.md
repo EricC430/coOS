@@ -33,7 +33,7 @@ coOS/
     ├── 01_product_vision.md          ← 產品定位
     ├── 02_architecture.md            ← 技術架構
     ├── 03_research_index.md          ← ★ 10 篇研究的標準引用索引
-    ├── 04_module_research_matrix.md  ← ★ 模組 ↔ 研究映射矩陣
+    ├── 04_module_registry.md       ← ★ 完整模組登記冊 (子模組+研究+風險)
     ├── 05_integration_risk_audit.md  ← ★ 12 條整合風險稽核 (回答你問的「合併效果變差」)
     ├── 06_implementation_phases.md   ← MVP 建構順序
     ├── SETUP_VSCODE.md               ← VS Code 設置完整步驟
@@ -367,7 +367,7 @@ M0.1 沒有對應的 SPEC (屬基礎設施),所以可以略過 Step 1-2,但 Step
 ```
 1. 在 docs/03_research_index.md 末尾新增 R11
 2. 用相同 schema (全名、技術詞彙、主要模組、章節索引、範例)
-3. 更新 docs/04_module_research_matrix.md
+3. 更新 docs/04_module_registry.md 中對應模組的 Research 欄
 4. 若觸發新風險,新增 RISK-13
 ```
 
