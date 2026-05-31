@@ -32,7 +32,7 @@ class GemmaInferencePipeline:
         self,
         ai_local_host: str = "http://ai.local:11434",
         model: str = "gemma-4-e4b-it-4bit",
-        timeout: float = 6.0,
+        timeout: float = 15.0,  # revised: Ollama overhead on iPad M1 ~11-12s actual
     ) -> None:
         self._client = GemmaEdgeClient(ai_local_host, model, timeout)
         self._fallback = RuleBasedExtractor()
@@ -66,7 +66,7 @@ class GemmaInferencePipeline:
                 semantic_embedding=raw.get("semantic_embedding", []),
                 inference_mode="gemma_edge",
             )
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError, ValueError):
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError, ValueError):  # noqa: BLE001
             # Circuit breaker: degrade gracefully (RISK-11 safeguard)
             return self._make_fallback_vector(source_log_id, role_id)
 

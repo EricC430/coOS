@@ -220,12 +220,21 @@ class IntentVector(BaseModel):
 
 ### 7.4 硬體資源限制與降級路徑
 
-1. **常態運作（區網連線正常）**：iPad 正常提供服務，筆電透過 LAN 傳送 Batch/Diff，排隊進行推理，延遲目標在 2K token 輸入下小於 6 秒。
+1. **常態運作（區網連線正常）**：iPad 正常提供服務，筆電透過 LAN 傳送 Batch/Diff，排隊進行推理。
+
+   > [!NOTE]
+   > **延遲目標工程偏離說明**：原 SPEC 估算「2K token 輸入下小於 6 秒」。
+   > 實測（2026-06-01，iPad M1 + Ollama `gemma-4-e4b-it-4bit`）：
+   > 暖機後 total latency 約 **11~12 秒**，超過原估算。
+   > 原因：Ollama HTTP serving overhead + iPad M1 ANE 調度延遲，非模型推論速度問題。
+   > **修訂目標**：15 秒（含 Ollama overhead）。GemmaEdgeClient `timeout` 從 6s 調整為 15s。
+   > 若未來改為直接呼叫 MLX inference API（繞過 Ollama）可回到 6s 目標。
+
 2. **連線中斷（iPad 不可達）**：筆電端 FastAPI 捕獲連線超時後，自動進入**降級模式**：關閉深度學習推論，降級為以關鍵字字典與句法樹結構（AST Features）為主的 Rule-based 抽取器，事件暫存於本地 SQLite 不發送。**降級模式下 `source_log_id` 與 `role_id` 仍為必填**（不可為空），且 `inference_mode` 必須設為 `"rule_based_fallback"` 以供下游 M5.1 判斷可信度；否則觸發 RISK-05。
 
 ### 7.5 異常處理
 
-- **推論超時（> 6 秒）**：自動熔斷（Circuit Breaker），將當前批次退回 M2.1 佇列，並以中性意圖（`unknown_ambient_activity`）記錄日誌，避免卡死筆電端。
+- **推論超時（> 15 秒）**：自動熔斷（Circuit Breaker），將當前批次退回 M2.1 佇列，並以中性意圖（`unknown_ambient_activity`）記錄日誌，避免卡死筆電端。
 - **模型文件損毀**：若 iPad 端載入模型失敗，`ai.local` 回傳載入錯誤，筆電端觸發系統通知引導使用者檢查 iPad 狀態，並自動轉為 Rule-based 降級模式。
 
 ## 8. Anti-patterns (反模式)

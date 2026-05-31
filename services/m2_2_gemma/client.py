@@ -5,7 +5,7 @@ SPEC: docs/modules/M2_2_gemma_edge_inference_SPEC.md v1.1 §7.1, §7.2
 
 Endpoint: POST {ai_local_host}/api/chat
 Model: gemma-4-e4b-it-4bit (Ollama-compatible)
-Timeout: 6s (SPEC §7.4 latency target)
+Timeout: 15s (SPEC §7.4 revised; Ollama overhead on iPad M1 ~11-12s actual)
 """
 
 from __future__ import annotations
