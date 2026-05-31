@@ -1,0 +1,7 @@
+# .eguardignore -- Eguard override paths
+# Matched source_paths only produce WARNING audit level, not BLOCKED.
+# Syntax: one glob pattern per line under paths:
+paths:
+  - "tests/security/**"
+  - "scripts/pentest/**"
+  - "testing/m2_3/**"

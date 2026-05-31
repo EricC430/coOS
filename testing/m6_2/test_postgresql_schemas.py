@@ -156,34 +156,38 @@ class TestCloudTableCreation:
 
     def test_users_table_exists(self, cloud_db):
         """AC-1: users table exists after cloud migration."""
-        result = cloud_db.execute(
+        from sqlalchemy import text
+        result = cloud_db.execute(text(
             "SELECT EXISTS (SELECT FROM information_schema.tables "
             "WHERE table_name = 'users')"
-        )
+        ))
         assert result.fetchone()[0] is True
 
     def test_ai_experts_table_exists(self, cloud_db):
         """AC-2: ai_experts table exists."""
-        result = cloud_db.execute(
+        from sqlalchemy import text
+        result = cloud_db.execute(text(
             "SELECT EXISTS (SELECT FROM information_schema.tables "
             "WHERE table_name = 'ai_experts')"
-        )
+        ))
         assert result.fetchone()[0] is True
 
     def test_xp_ledger_table_exists(self, cloud_db):
         """AC-3: xp_ledger table exists."""
-        result = cloud_db.execute(
+        from sqlalchemy import text
+        result = cloud_db.execute(text(
             "SELECT EXISTS (SELECT FROM information_schema.tables "
             "WHERE table_name = 'xp_ledger')"
-        )
+        ))
         assert result.fetchone()[0] is True
 
     def test_no_l1_tables_in_cloud(self, cloud_db):
         """AC-7: L1 tables must not be present in cloud DB."""
-        result = cloud_db.execute(
+        from sqlalchemy import text
+        result = cloud_db.execute(text(
             "SELECT table_name FROM information_schema.tables "
             "WHERE table_schema = 'public'"
-        )
+        ))
         table_names = {row[0] for row in result.fetchall()}
         l1_tables = {"raw_tracking_logs", "chat_transcripts", "edge_event_buffer"}
         assert l1_tables.isdisjoint(table_names), (

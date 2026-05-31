@@ -1,0 +1,213 @@
+"""M2.2 GemmaInferencePipeline 驗收測試
+
+SPEC: docs/modules/M2_2_gemma_edge_inference_SPEC.md v1.1 §6
+[R07: POST §4.3] local SLM semantic compression -- never send plaintext to cloud
+RISK-05: source_log_id mandatory even in fallback mode
+
+Acceptance criteria:
+  1. compress_to_intent_vector_schema  -- output matches IntentVector schema
+  2. inference_latency_limit          -- < 6s on real hardware (skip if offline)
+  3. risk_05_source_log_binding       -- source_log_id always set
+  4. priority_inference_queueing      -- chat priority beats telemetry priority
+  5. role_id_present                  -- role_id always propagated
+  6. fallback_preserves_source_log_id -- RISK-05 in fallback mode
+  7. valence_arousal_bounds           -- Pydantic rejects out-of-range values
+"""
+
+import socket
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SERVICES_DIR = PROJECT_ROOT / "services"
+
+import sys
+sys.path.insert(0, str(SERVICES_DIR))
+
+from m2_2_gemma.pipeline import GemmaInferencePipeline
+from m2_2_gemma.schema import IntentVector
+from m2_2_gemma.queue import InferencePriorityQueue, InferenceTask
+
+
+# ---------------------------------------------------------------------------
+# Helper: detect if iPad ai.local is reachable
+# ---------------------------------------------------------------------------
+
+def _edge_reachable() -> bool:
+    try:
+        s = socket.create_connection(("ai.local", 11434), timeout=1)
+        s.close()
+        return True
+    except OSError:
+        return False
+
+
+skip_if_edge_offline = pytest.mark.skipif(
+    not _edge_reachable(),
+    reason="iPad ai.local not reachable -- edge inference tests skipped",
+)
+
+
+# ---------------------------------------------------------------------------
+# 驗收條件 1: 壓縮輸出符合 IntentVector Schema
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_compress_to_intent_vector_schema():
+    """AC1: fallback mode still produces valid IntentVector"""
+    pipeline = GemmaInferencePipeline()
+    pipeline.simulate_edge_offline()
+
+    result = await pipeline.compress(
+        "def check_user(user_id): return db.query(User).filter_by(id=user_id)",
+        source_log_id="local_sqlite_001",
+        role_id="role_csie_001",
+    )
+
+    assert isinstance(result, IntentVector)
+    assert result.intent_label  # not empty
+    assert result.source_log_id == "local_sqlite_001"
+    assert result.role_id == "role_csie_001"
+    assert result.inference_mode == "rule_based_fallback"
+    # De-identification: concrete function names must NOT appear in intent_label
+    assert "check_user" not in result.intent_label
+    assert "db.query" not in result.context_summary
+
+
+# ---------------------------------------------------------------------------
+# 驗收條件 2: 推論延遲 < 6 秒 (需 ai.local)
+# ---------------------------------------------------------------------------
+
+@skip_if_edge_offline
+@pytest.mark.asyncio
+async def test_inference_latency_limit():
+    """AC2: real Gemma inference must complete within 6s for 2K token input"""
+    import time
+    pipeline = GemmaInferencePipeline()
+
+    start = time.monotonic()
+    result = await pipeline.compress(
+        "I am working on calculus assignment",
+        source_log_id="latency_test_001",
+        role_id="role_csie",
+    )
+    latency = time.monotonic() - start
+
+    assert latency < 6.0, f"Inference took {latency:.2f}s, exceeds 6s limit"
+    assert result.inference_mode == "gemma_edge"
+
+
+# ---------------------------------------------------------------------------
+# 驗收條件 3: RISK-05 source_log_id 必須存在
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_risk_05_source_log_binding():
+    """AC3 (RISK-05): IntentVector must carry source_log_id for local counter-abductive validation"""
+    pipeline = GemmaInferencePipeline()
+    pipeline.simulate_edge_offline()
+
+    result = await pipeline.compress(
+        "Some work logs",
+        source_log_id="local_sqlite_123",
+        role_id="role_csie",
+    )
+    assert result.source_log_id == "local_sqlite_123"
+
+
+# ---------------------------------------------------------------------------
+# 驗收條件 4: 優先佇列 -- chat (1) 先於 telemetry (3)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_priority_inference_queueing():
+    """AC4: High-priority chat task must be dequeued before low-priority telemetry"""
+    import asyncio
+
+    queue = InferencePriorityQueue()
+    execution_order: list[str] = []
+
+    await queue.put(InferenceTask(priority=3, tag="low_telemetry"))
+    await queue.put(InferenceTask(priority=3, tag="low_telemetry_2"))
+    await queue.put(InferenceTask(priority=1, tag="high_chat"))
+
+    for _ in range(3):
+        task = await queue.get()
+        execution_order.append(task.tag)
+
+    assert execution_order[0] == "high_chat", (
+        f"high_chat must be first; got {execution_order}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 驗收條件 5: role_id 必須透傳至 IntentVector
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_role_id_present_in_intent_vector():
+    """AC5: IntentVector must carry role_id for M5.1 role-dimensional graph edges"""
+    pipeline = GemmaInferencePipeline()
+    pipeline.simulate_edge_offline()
+
+    result = await pipeline.compress(
+        "Working on homework",
+        source_log_id="local_sqlite_456",
+        role_id="role_csie_001",
+    )
+    assert result.role_id == "role_csie_001"
+
+
+# ---------------------------------------------------------------------------
+# 驗收條件 6: RISK-05 降級模式下 source_log_id 仍非空
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_fallback_preserves_source_log_id():
+    """AC6 (RISK-05): source_log_id must be non-empty even in rule_based_fallback"""
+    pipeline = GemmaInferencePipeline()
+    pipeline.simulate_edge_offline()
+
+    result = await pipeline.compress(
+        "debug session",
+        source_log_id="local_sqlite_789",
+        role_id="role_csie_001",
+    )
+    assert result.inference_mode == "rule_based_fallback"
+    assert result.source_log_id == "local_sqlite_789", (
+        "source_log_id must be preserved in fallback mode (RISK-05)"
+    )
+    assert result.role_id == "role_csie_001"
+
+
+# ---------------------------------------------------------------------------
+# 驗收條件 7: valence 與 arousal 超界觸發 ValidationError
+# ---------------------------------------------------------------------------
+
+def test_valence_arousal_bounds():
+    """AC7: Pydantic must reject out-of-range valence/arousal values"""
+    with pytest.raises(ValidationError):
+        IntentVector(
+            source_log_id="x",
+            role_id="r",
+            intent_label="l",
+            context_summary="s",
+            semantic_embedding=[],
+            stripped_entities_count=0,
+            valence=2.0,   # out of range [-1.0, 1.0]
+            arousal=0.5,
+        )
+
+    with pytest.raises(ValidationError):
+        IntentVector(
+            source_log_id="x",
+            role_id="r",
+            intent_label="l",
+            context_summary="s",
+            semantic_embedding=[],
+            stripped_entities_count=0,
+            valence=0.0,
+            frustration_level=1.5,  # out of range [0.0, 1.0]
+        )

@@ -23,11 +23,26 @@ class Settings(BaseSettings):
     # === 邊緣推論 (T1 本地) ===
     ipad_ai_local_host: str = Field(
         default="192.168.0.42:11434",
-        description="iPad M1 ai.local 位址",
+        description="iPad M1 ai.local 位址（IP:port，不含 scheme）",
+    )
+    ai_local_host: str = Field(
+        default="http://ai.local:11434",
+        description="iPad Ollama HTTP 基礎 URL（含 scheme），M2.2/M2.3 直接使用",
+    )
+    gemma_model: str = Field(
+        default="gemma-4-e4b-it-4bit",
+        description="Gemma 邊緣模型名稱，對應 Ollama 已載入的模型",
+    )
+
+    # === 任務佇列 (T1 本地 Redis) ===
+    redis_url: str = Field(
+        default="redis://localhost:6379",
+        description="arq 任務佇列 Redis 連線 URL（M2.1 離線重試用）",
     )
 
     # === 雲端 LLM (T3 optional) ===
     gemini_api_key: str = Field(default="", description="Gemini API Key（optional）")
+    google_api_key: str = Field(default="", description="Google API Key（optional）")
 
     # === PostgreSQL @ Supabase (T3 optional) ===
     supabase_url: str = Field(default="", description="Supabase REST URL（optional）")

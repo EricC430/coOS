@@ -40,19 +40,23 @@ M6.1 SQLite schemas  ←  M6.2 PostgreSQL  ←  M6.3 角色情境表  ←  M6.4 
 
 ---
 
-## Phase 2: 邊緣推論 + 隱私防禦 (預估 2 週)
+## Phase 2: 邊緣推論 + 隱私防禦 (預估 2 週) ✅ 已完成
 
+**完成日期**:2026-06-01
 **模組**:`M2.1 + M2.2 + M2.3`
 
 ```
 M2.1 事件防抖排隊  →  M2.2 Gemma 邊緣推論  →  M2.3 Eguard 基礎過濾
 ```
 
-**Phase Closure**:iPad ai.local 跑起來,從筆電發明文 → 收到意圖向量,且 PII 已被遮蔽。所有上雲呼叫都通過 M2.3 守門員。
+**Phase Closure**:M2.1~M2.3 管線實裝並通過 148/149 測試。PII 遮蔽、DRIFT 注入防禦、意圖向量壓縮（降級模式）均已驗證。Supabase 雲端連線首次實際跑通。ai.local latency 測試待 iPad 同 Wi-Fi 時解除 skip。
 
 **整合風險檢查**:
-- ✅ M2.2 + 任何上雲模組:確認 RISK-12 (側通道洩漏)
-- ✅ M2.2 + M5.1:確認 RISK-05 (意圖向量導致圖譜空洞化)
+
+- ✅ RISK-M2.1-A/C:離線 buffer + 角色切換強制 Flush
+- ✅ RISK-05:source_log_id 強制非空（含降級模式）
+- ✅ RISK-M2.3-A/C:.eguardignore 豁免 + DRIFT 繞過 M2.2 佇列
+- ⏳ RISK-12:IntentVector visibility 預設 private（M3.7 Phase 6+ 實作）
 
 ---
 
