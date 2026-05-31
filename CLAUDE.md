@@ -108,7 +108,7 @@
 - 前端: **React + Vite + Zustand + Tailwind + Framer Motion**
 - 後端: **Python 3.11+ FastAPI + LangGraph + Pydantic v2**
 - 邊緣推論: **Gemma 4 E4B (4-bit MLX 量化) @ iPad M1 via ai.local**
-- 雲端 LLM: **Gemini 3.5 Pro (走 Google AI Developer Program $10 額度)**
+- 雲端 LLM: **Gemini 3.5 Flash** / **Gemini 3.1 Flash Lite** (暫時使用)  (未來確實獲得資源使用**Gemini 3.5 Pro (走 Google AI Developer Program $10 額度)** )
 - 本地 DB: **SQLite + SQLAlchemy 2.0**
 - 雲端關聯 DB: **PostgreSQL @ Supabase / Render**
 - 圖譜 DB: **Neo4j AuraDB Free**

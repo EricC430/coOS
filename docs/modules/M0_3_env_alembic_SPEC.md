@@ -194,7 +194,7 @@ class Settings(BaseSettings):
     """
 
     # === Cloud LLM ===
-    gemini_api_key: str = Field(..., description="Gemini 3.5 Pro API Key")
+    gemini_api_key: str = Field(..., description="Gemini API Key")
 
     # === Edge Inference ===
     ipad_ai_local_host: str = Field(

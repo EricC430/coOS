@@ -59,6 +59,7 @@
 | `xp_ledger` 寫入 (M6.2) | DB INSERT | `{amount: 50, xp_type: "earned", ...}` |
 | `users.current_xp` 更新 (M6.2) | DB UPDATE | `current_xp += 50` |
 | `daily_reflections.xp_settled` 更新 (M6.4) | DB UPDATE | `xp_settled = true, xp_settled_at = NOW()` |
+| `user_collections` 寫入 | DB INSERT [進階] | Gacha 成功時將解鎖的道具關聯寫入收藏 |
 | 交易失敗回應 | `XPTransactionFailed` | `{reason: "draft_not_approved", code: "GATEKEEPER_001"}` |
 
 ## 4. Dependencies
@@ -350,7 +351,42 @@ class XPGatekeeper:
 - 死鎖 (兩個並發交易互相鎖定) → SQLAlchemy 偵測並拋 `OperationalError`; 重試 1 次
 - Supabase Free tier 連線池耗盡 → 佇列等待 5 秒; 超時返回 503
 
-## 8. Anti-patterns (反模式)
+## 8. 進階與未來擴充規格 [進階 / Future Phase 5]
+
+以下資料表與交易行為屬於後續 Phase 5 遊戲化（Gacha 抽卡與收藏品）的範疇。當前 Phase 1.5 遷移引擎 (Alembic) 暫不實作此部分。
+
+### 8.1 遊戲道具字典表 (items_dictionary)
+
+```sql
+-- 遊戲道具定義（如主題背景、特殊徽章等），預計於 Phase 5 啟用
+CREATE TABLE items_dictionary (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                VARCHAR(100) UNIQUE NOT NULL,  -- 道具名稱 (如 "番茄鐘大師"、"深夜咖啡館背景")
+    rarity              VARCHAR(20) NOT NULL CHECK (rarity IN ('common', 'rare', 'epic', 'legendary')),
+    image_url           VARCHAR(512),                  -- 素材圖片網址
+    category            VARCHAR(30) NOT NULL,          -- 'badge' (徽章), 'theme' (背景主題), ...
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### 8.2 使用者收藏關聯表 (user_collections)
+
+```sql
+-- 使用者已擁有的抽卡道具收藏關聯，預計於 Phase 5 啟用
+CREATE TABLE user_collections (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id             UUID NOT NULL,
+    item_id             UUID NOT NULL,
+    acquired_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id) REFERENCES items_dictionary(id) ON DELETE CASCADE,
+    UNIQUE (user_id, item_id)                          -- 不重複擁有相同道具
+);
+
+CREATE INDEX idx_uc_user ON user_collections(user_id);
+```
+
+## 9. Anti-patterns (反模式)
 
 - ❌ **不要繞過 `XPGatekeeper` 直接操作 `users.current_xp` 或 `xp_ledger`**。所有 XP 異動必須走 gatekeeper,否則無法保證原子性。
   理由:直接操作可能在 crash 後產生 XP 與 ledger 不一致。
@@ -364,7 +400,7 @@ class XPGatekeeper:
 - ❌ **不要用 `UPDATE users SET current_xp = 新值` (絕對值覆蓋)**。必須用 `current_xp = current_xp + 差值` (相對增減)。
   理由:絕對值覆蓋在並發時會覆蓋其他交易的結果。
 
-## 9. Open Questions
+## 10. Open Questions
 
 實作前必須與使用者拍板的問題:
 
@@ -382,5 +418,5 @@ class XPGatekeeper:
 - [x] §4 依賴是真實模組編號
 - [x] §5 已 grep `05_integration_risk_audit.md`,有 RISK-01, RISK-07 對應
 - [x] §6 測試先於程式碼
-- [x] §8 列出 4 條反模式
-- [x] §9 列出 3 個開放問題
+- [x] §9 列出 4 條反模式
+- [x] §10 列出 3 個開放問題

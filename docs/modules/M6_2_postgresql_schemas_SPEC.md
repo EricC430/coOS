@@ -55,6 +55,8 @@
 | `roles` 資料表 | 見 §7.3 | 角色定義 (CSIE, FAMILY, ...) |
 | `xp_ledger` 資料表 | 見 §7.4 | XP 異動流水帳 |
 | `badges` 資料表 | 見 §7.5 | 徽章定義與解鎖紀錄 |
+| `expert_homepages` 資料表 | 見 §8.1 [進階] | 專家個人首頁背景與解鎖功能 |
+| `zpd_tasks` 資料表 | 見 §8.2 [進階] | 隨機挑戰任務池 |
 
 ## 4. Dependencies
 
@@ -272,7 +274,47 @@ CREATE TABLE user_badges (
 - UUID 衝突 (極低機率) → PostgreSQL `gen_random_uuid()` 衝突時 retry 一次
 - `personality_prompt` 超過 4096 字元 → 拒絕寫入, 提示縮減提示詞
 
-## 8. Anti-patterns (反模式)
+## 8. 進階與未來擴充規格 [進階 / Future Phase]
+
+以下資料表屬於後續進階 Phase 的範疇（如 Phase 4 隨機挑戰或專家首頁解鎖）。當前 Phase 1.5 遷移引擎 (Alembic) 暫不實作此部分。
+
+### 8.1 `expert_homepages` (L3 — 專家首頁背景與解鎖功能)
+
+```sql
+-- 專家個人化的主頁佈局與已解鎖功能，預計於 Phase 4 啟用
+CREATE TABLE expert_homepages (
+    expert_id           UUID PRIMARY KEY,
+    background_image_url VARCHAR(512),
+    unlocked_features   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (expert_id) REFERENCES ai_experts(id) ON DELETE CASCADE
+);
+```
+
+### 8.2 `zpd_tasks` (L3 — 隨機挑戰任務池)
+
+```sql
+-- 認知最近發展區 (ZPD) 生成的客製化隨機挑戰，預計於 Phase 4 / Phase 6+ 啟用
+CREATE TABLE zpd_tasks (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id             UUID NOT NULL,
+    task_text           VARCHAR(255) NOT NULL,
+    difficulty          VARCHAR(20) NOT NULL CHECK (difficulty IN ('easy', 'medium', 'hard', 'edge')),
+    xp_reward           INTEGER NOT NULL DEFAULT 0,
+    asset_url           VARCHAR(512),                  -- 解鎖挑戰後贈予的圖案/徽章網址
+    status              VARCHAR(20) NOT NULL DEFAULT 'available'
+                        CHECK (status IN ('available', 'accepted', 'completed', 'failed')),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_zt_user ON zpd_tasks(user_id);
+CREATE INDEX idx_zt_status ON zpd_tasks(status);
+```
+
+## 9. Anti-patterns (反模式)
 
 - ❌ **不要在雲端 PostgreSQL 中建立 `raw_tracking_logs` 或 `chat_transcripts`**。這些是 L1 明文資料,只能存在於本地 SQLite (M6.1)。
   理由:架構文件 §3 隱私三層分類。
@@ -286,7 +328,7 @@ CREATE TABLE user_badges (
 - ❌ **不要跳過 `xp_ledger.source_module` 欄位**。每筆 XP 異動必須可追溯到是哪個模組發放/扣除的。
   理由:當 RISK-01 發生時 (XP 提前發放), 需要能快速定位是 M4.5 繞過了 M3.3.3。
 
-## 9. Open Questions
+## 10. Open Questions
 
 實作前必須與使用者拍板的問題:
 
@@ -304,5 +346,5 @@ CREATE TABLE user_badges (
 - [x] §4 依賴是真實模組編號
 - [x] §5 已 grep `05_integration_risk_audit.md`,有 RISK-12 對應
 - [x] §6 測試先於程式碼
-- [x] §8 列出 4 條反模式
-- [x] §9 列出 3 個開放問題
+- [x] §9 列出 4 條反模式
+- [x] §10 列出 3 個開放問題

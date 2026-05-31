@@ -36,7 +36,7 @@
 │   - 技術: Python 3.11 + FastAPI + LangGraph         │
 │   - 職責: 業務邏輯 + Persona 對話 + 排程            │
 └─────────────────────────────────────────────────────┘
-              │ Gemini 3.5 Pro API (僅在 PRISM 路由放行時)
+              │ Gemini API (僅在 PRISM 路由放行時)
               ▼
 ┌─────────────────────────────────────────────────────┐
 │ Layer 4: 深層認知與動態圖譜層 (GraphRAG)             │
@@ -137,7 +137,7 @@ arq==0.25.*    # 排程
 
 ### 邊緣 (iPad M1)
 
-- `ai.local` (Ollama-style 區網 API)
+- `ai.local` (Ollama-style 區網 API) [Documentation](https://ai-local.brunowernimont.me/docs/)
 - Model: `mlx-community/gemma-4-e4b-it-4bit`
 - 模型載入後 RAM 佔用約 2.8GB
 - Inference latency target: < 6s for 2K token input
@@ -146,7 +146,8 @@ arq==0.25.*    # 排程
 
 | 服務 | 用途 | 方案 | 額度 |
 | ---- | ---- | ---- | ---- |
-| Gemini 3.5 Pro API | 雲端 LLM | Google Dev Program | $10/月 |
+| Gemini 3.5 Flash / Gemini 3.1 Flash Lite | 雲端 LLM | Google AI Pro | 限時免費 |
+| Gemini 3.5 Pro API | 雲端 LLM | Google Dev Program | $10/月 (尚未開通) |
 | Supabase | PostgreSQL | Free tier | 500MB |
 | Neo4j AuraDB | 圖譜 DB | Free tier | 20 萬節點 |
 | Pollinations.ai | 生圖 (MVP) | 無 | 免費 |

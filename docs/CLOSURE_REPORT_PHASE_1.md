@@ -95,7 +95,7 @@
 ### ⏳ 需確認
 
 1. **iPad M1 ai.local 連線** — Gemma 4 E4B MLX 量化模型部署確認
-2. **Google AI 金鑰** — `GOOGLE_API_KEY` 配額檢查 (Gemini 3.5 Pro)
+2. **Google AI 金鑰** — `GOOGLE_API_KEY` 配額檢查 (Gemini 3.5 Flash / Gemini 3.1 Flash Lite / Gemini 3.5 Pro)
 3. **Redis / BullMQ** — 任務佇列基礎設施（Phase 2 M2.1 event dedup 需用）
 
 ### 後續模組清單 (Phase 2, 3...)

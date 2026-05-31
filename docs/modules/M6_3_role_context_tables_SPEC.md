@@ -45,6 +45,7 @@
 | `role_projects` 資料表 | 見 §7.1 | 角色綁定的專案/課程清單 |
 | `role_settings` 資料表 | 見 §7.2 | 角色特定的設定 (通知偏好、UI 主題) |
 | `role_implicit_states` 資料表 | 見 §7.3 | 每個角色獨立的隱性狀態快取 |
+| `role_context_aggregates` 資料表 | 見 §8.1 [進階] | 角色與多種 context 實體的多對多關聯 |
 
 ## 4. Dependencies
 
@@ -267,7 +268,35 @@ class RoleImplicitState(BaseModel):
 - Foreign Key 違反 → `IntegrityError`, 前端提示「角色已被刪除」
 - 超過 10 個角色上限 → `422 Unprocessable Entity`
 
-## 8. Anti-patterns (反模式)
+## 8. 進階與未來擴充規格 [進階 / Future Phase]
+
+以下結構屬於後續進階 Phase 的範疇（如 M3.2.3 橫向 Bento Grid 中的 CSIE 角色短期記憶喚醒區，需整合 Projects / Promises / Goals）。當前 Phase 1.5 遷移引擎 (Alembic) 暫不實作此部分。
+
+### 8.1 角色情境聚合關係 (role_context_aggregates) — 預計於 Phase 4 啟用
+
+在 MVP 中，`role_projects` 已經直接透過外鍵關聯到 `roles`。在進階設計中，當引入口頭承諾（Promises，如「明天中午前完成簡報」）與長遠目標（Goals，如「學會 React」）時，我們將建立關係表以實現多對多綁定或統一的角色情境聚合查詢。
+
+```sql
+-- 角色與多種 context 實體的多對多關聯聚合（概念 DDL）
+CREATE TABLE role_context_aggregates (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    role_id             UUID NOT NULL,
+    entity_type         VARCHAR(20) NOT NULL CHECK (entity_type IN ('project', 'promise', 'goal')),
+    entity_id           UUID NOT NULL,                 -- 指向對應實體表的主鍵
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+    UNIQUE (role_id, entity_type, entity_id)
+);
+
+CREATE INDEX idx_rca_lookup ON role_context_aggregates(role_id, entity_type);
+```
+
+### 8.2 承諾表 (promises) 與 目標表 (goals) — 預計於 Phase 4 啟用
+未來將新增與 `roles` 綁定的輕量化實體表，提供給 Bento Grid 進行短期與長期記憶喚醒：
+*   `promises`：記錄與特定角色專家對話中做出的口頭承諾（如 `{id, role_id, text, deadline, status}`）。
+*   `goals`：記錄該角色的核心推進里程碑（如 `{id, role_id, title, progress, target_date}`）。
+
+## 9. Anti-patterns (反模式)
 
 - ❌ **不要在角色切換時把上一個角色的 `role_implicit_states` 複製到新角色**。切換後若新角色無狀態,回傳 `PersonaContext.neutral_default()`,不可繼承。
   理由:RISK-06 (跨角色資料洩漏)。
@@ -281,7 +310,7 @@ class RoleImplicitState(BaseModel):
 - ❌ **不要在 `role_settings` 中儲存使用者的工作內容偏好** (如「常用程式語言」「常開的網站」)。這些屬行為特徵 (L1),不可上雲。
   理由:RISK-12 (側通道洩漏)。
 
-## 9. Open Questions
+## 10. Open Questions
 
 實作前必須與使用者拍板的問題:
 
@@ -299,5 +328,5 @@ class RoleImplicitState(BaseModel):
 - [x] §4 依賴是真實模組編號
 - [x] §5 已 grep `05_integration_risk_audit.md`,有 RISK-06 對應
 - [x] §6 測試先於程式碼
-- [x] §8 列出 4 條反模式
-- [x] §9 列出 3 個開放問題
+- [x] §9 列出 4 條反模式
+- [x] §10 列出 3 個開放問題
