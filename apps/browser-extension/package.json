@@ -1,0 +1,13 @@
+{
+  "name": "coos-browser-extension",
+  "version": "0.1.0",
+  "description": "M1.3.2 — coOS Browser Extension: tab focus & reading behavior telemetry",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^1.2.0"
+  }
+}

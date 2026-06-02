@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "coOS Browser Telemetry",
+  "version": "0.1.0",
+  "description": "M1.3.2 — Tab focus & reading behavior telemetry for coOS",
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "permissions": [
+    "tabs",
+    "idle",
+    "nativeMessaging"
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "coos_extension@coos.local"
+    }
+  }
+}
