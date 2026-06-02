@@ -8,6 +8,7 @@ coOS FastAPI Sidecar — 主入口
          docs/modules/M2_3_eguard_crypto_filter_SPEC.md v1.1
          docs/modules/M1_4_git_workflow_telemetry_SPEC.md v1.2
          docs/modules/M1_1_os_telemetry_daemon_SPEC.md v1.2
+         docs/modules/M1_2_breakpoint_detection_SPEC.md v1.1
 """
 import asyncio
 import logging
@@ -21,6 +22,7 @@ from fastapi.responses import StreamingResponse
 
 from config import get_settings
 from m0_4_logging.schema import LogEvent
+from m1_2_breakpoint.breakpoint_engine import BreakpointEngine
 from m1_4_github.oauth import router as m1_4_oauth_router
 from m1_4_github.webhooks import router as m1_4_webhook_router
 from m2_1_event_debouncer.debouncer import EventDebouncer
@@ -35,11 +37,12 @@ from m2_3_eguard.schema import RawTextPayload, SanitizedPayload
 logger = logging.getLogger(__name__)
 _start_time = time.time()
 
-# --- M2 module singletons (initialized in lifespan) ---
+# --- module singletons (initialized in lifespan) ---
 _debouncer: EventDebouncer | None = None
 _gemma_pipeline: GemmaInferencePipeline | None = None
 _eguard_filter: EguardFilter | None = None
 _drift_shield: DriftShield | None = None
+_breakpoint_engine: BreakpointEngine | None = None
 
 
 @asynccontextmanager
@@ -57,8 +60,9 @@ async def lifespan(app: FastAPI):
     if not settings.ipad_ai_local_host:
         logger.warning("[M0.3] IPAD_AI_LOCAL_HOST 未設定，邊緣推論功能將不可用")
 
-    # Initialize M2 singletons
-    global _gemma_pipeline, _eguard_filter, _drift_shield, _debouncer
+    # Initialize module singletons
+    global _gemma_pipeline, _eguard_filter, _drift_shield, _debouncer, _breakpoint_engine
+    _breakpoint_engine = BreakpointEngine()
 
     _gemma_pipeline = GemmaInferencePipeline(
         ai_local_host=settings.ai_local_host,
@@ -128,6 +132,37 @@ async def m1_1_event(event: LogEvent) -> dict[str, Any]:
         correlation_id=event.correlation_id,
     )
     return {"status": "ok", "event_id": event.id}
+
+
+# ---------------------------------------------------------------------------
+# M1.2 — 斷點偵測引擎事件接收端點
+# ---------------------------------------------------------------------------
+
+def _get_breakpoint_engine() -> BreakpointEngine:
+    """Lazy init — returns singleton or creates one if lifespan hasn't run (tests)."""
+    global _breakpoint_engine
+    if _breakpoint_engine is None:
+        _breakpoint_engine = BreakpointEngine()
+    return _breakpoint_engine
+
+
+@app.post("/api/m1_2/event")
+async def m1_2_event(event: LogEvent) -> dict[str, Any]:
+    """[M1.2 SPEC §3] Feed M1.1 TelemetryEvent into the BreakpointEngine.
+
+    Accepts the same M0.4 LogEvent schema as /api/m1_1/event.
+    The engine processes the event and may emit BREAKPOINT_DETECTED.
+
+    [R08: §二] Defer-to-Breakpoint: only notify at natural cognitive gaps.
+    [R08: §三, RISK-04] Three-tier notification gate enforced in engine.
+    """
+    engine = _get_breakpoint_engine()
+    await engine.feed({
+        "module": event.module,
+        "action": event.action,
+        "payload": event.payload,
+    })
+    return {"status": "ok", "state": engine.current_state}
 
 
 # ---------------------------------------------------------------------------
