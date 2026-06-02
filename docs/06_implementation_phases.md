@@ -49,7 +49,7 @@ M6.1 SQLite schemas  ←  M6.2 PostgreSQL  ←  M6.3 角色情境表  ←  M6.4 
 M2.1 事件防抖排隊  →  M2.2 Gemma 邊緣推論  →  M2.3 Eguard 基礎過濾
 ```
 
-**Phase Closure**:M2.1~M2.3 管線實裝並通過 148/149 測試。PII 遮蔽、DRIFT 注入防禦、意圖向量壓縮（降級模式）均已驗證。Supabase 雲端連線首次實際跑通。ai.local latency 測試待 iPad 同 Wi-Fi 時解除 skip。
+**Phase Closure**:M2.1~M2.3 管線實裝並通過 149/149 測試。PII 遮蔽、DRIFT 注入防禦、意圖向量壓縮（含降級模式）均已驗證。Supabase 雲端連線實測跑通。ai.local latency 測試已成功以 IP `192.168.1.65` 直連解鎖並通過測試。
 
 **整合風險檢查**:
 
@@ -65,7 +65,7 @@ M2.1 事件防抖排隊  →  M2.2 Gemma 邊緣推論  →  M2.3 Eguard 基礎�
 **模組**:`M1.1 + M1.2 + M1.3 + M1.4`
 
 ```
-M1.1 OS 級遙測  →  M1.2 斷點偵測  →  M1.3 IDE/Browser 擴充  →  M1.4 GitHub Webhook
+M1.1 OS 級遙測  →  M1.2 斷點偵測  →  M1.3 IDE/Browser 擴充  →  M1.4 Git 與工作流遙測 (本地 Git + Webhook)
 ```
 
 **Phase Closure**:筆電上 VS Code 打 30 分鐘程式碼 → `raw_tracking_logs` 出現完整事件 → M1.2 在切換到瀏覽器時派發 BREAKPOINT 事件。

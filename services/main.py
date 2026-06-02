@@ -6,6 +6,7 @@ coOS FastAPI Sidecar — 主入口
          docs/modules/M2_1_event_debouncing_SPEC.md v1.1
          docs/modules/M2_2_gemma_edge_inference_SPEC.md v1.1
          docs/modules/M2_3_eguard_crypto_filter_SPEC.md v1.1
+         docs/modules/M1_4_git_workflow_telemetry_SPEC.md v1.2
 """
 import asyncio
 import logging
@@ -18,6 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from config import get_settings
+from m1_4_github.webhooks import router as m1_4_webhook_router
+from m1_4_github.oauth import router as m1_4_oauth_router
 from m2_1_event_debouncer.debouncer import EventDebouncer
 from m2_1_event_debouncer.schema import EventBatch, RawTelemetryEvent
 from m2_2_gemma.pipeline import GemmaInferencePipeline
@@ -91,6 +94,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# M1.4 routers
+app.include_router(m1_4_webhook_router)
+app.include_router(m1_4_oauth_router)
 
 
 # ---------------------------------------------------------------------------

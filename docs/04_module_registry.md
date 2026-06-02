@@ -91,11 +91,11 @@
 | ---- | ---- |
 | M1.1.1 | UIAutomation API 橋接:抓取 Word / Notion 視窗標題與純文字 |
 | M1.1.2 | 全域鍵鼠防抖監聽器:計算 WPM、即時去識別化 |
-| M1.1.3 | 焦點視窗活躍時間記錄器:背景持續記錄頁面焦點變化 (如閱讀技術文件 30 分鐘) |
+| M1.1.3 | 焦點視窗活躍時間記錄器 + **行為狀態八態分類器 (ActivityStateClassifier)**:背景持續記錄頁面焦點變化,並根據多信號融合判定 DEEP_FOCUS/ACTIVE/PASSIVE_CONSUMPTION/DOOM_SCROLLING/CONTEXT_SWITCHING/RESEARCH_READING/MEETING_CALL/IDLE 八種狀態 |
 | M1.1.4 | 隱私硬體禁用約束:系統層強制屏除攝影機/麥克風/定位等實體追蹤 |
 
 **Deps**:M0.2, M0.4, M6.1
-**Criteria**:30 分鐘活躍時段正確分桶記錄;任何 PII 不會原文落盤。
+**Criteria**:30 分鐘活躍時段正確分桶記錄;任何 PII 不會原文落盤;ActivityState 八態分類正確率 ≥80%。
 **Research**:`[R02: 計算心理語言學 §1]` `[R06: 數位表型 §2.1]`
 **Risks**:無
 
@@ -109,9 +109,9 @@
 
 | 編號 | 職責 |
 | ---- | ---- |
-| M1.2.1 | 多模態斷點偵測:游標停頓、App Switching、語音停頓、IDE 焦點離開 |
-| M1.2.2 | 深度工作防擾鎖定器:高認知負荷時強制攔截系統音效與通知 |
-| M1.2.3 | 斷點事件派發器:向 Tauri 廣播 `BREAKPOINT_DETECTED` 事件 (極低視覺干擾) |
+| M1.2.1 | 多模態斷點偵測:游標停頓、App Switching、語音停頓、IDE 焦點離開 + M1.1 ActivityState 信號 |
+| M1.2.2 | 深度工作防擾鎖定器:高認知負荷時強制攔截系統音效與通知 (Windows SetNotificationMode);離開時自動恢復 |
+| M1.2.3 | 斷點事件派發器 + **錯開調度器**:向 Tauri 廣播 `BREAKPOINT_DETECTED` 事件;管理 cooldown;多 Persona L2 通知以隨機延遲 1~60s 錯開釋放 |
 
 **Deps**:M1.1
 **Consumed by**:M3.9 (通知儀表板)、M4.4 (反思草稿觸發)、M1.5 (微 nudges)
@@ -130,29 +130,30 @@
 | 編號 | 職責 |
 | ---- | ---- |
 | M1.3.1 | VS Code AST 攔截器:計算「源碼變更熵」(Shannon Entropy) 與停留時間,Local Socket 回傳 Tauri |
-| M1.3.2 | 瀏覽器擴充 (Chrome MV3):頁面焦點變化、閱讀停留時間 |
+| M1.3.2 | 瀏覽器擴充 (Chrome, Firefox, Edge MV3):頁面焦點變化、閱讀停留時間 |
 
-**Deps**:M1.1
-**Criteria**:正確上報任一檔案 commit-to-commit 的編輯量。
-**Research**:`[R02: 源碼變更熵 §1.1]` `[R02: 時間動力學 §1.2]`
+**Deps**:M0.2, M0.4 (M1.1 為並列感測器層,非直接上游依賴)
+**Criteria**:M1.3.1 正確上報 5 分鐘視窗內的源碼變更熵與停留時間;M1.3.2 正確上報瀏覽器分頁停留時間與 domain_bucket 分類;兩者均在 Socket/NativeMessaging 斷線後能 buffer 重傳。
+**Research**:`[R02: 源碼變更熵 §1.1]` `[R02: 時間動力學 §1.2]` `[R06: 數位表型 §2.1]`
 **Risks**:無
 
 ---
 
-### M1.4 外部自動化工作流接收器 (FastAPI) `[MVP]`
+### M1.4 Git 與工作流遙測接收器 (Git & Workflow Telemetry) `[MVP]`
 
-**Purpose**:接收 GitHub Webhook 等外部事件並轉為結構化日誌。
+**Purpose**:雙軌模式感知開發活動 — 本地 Git 掃描（離線即時）+ GitHub Webhook（雲端推送）。
 
 **子模組**:
 
 | 編號 | 職責 |
 | ---- | ---- |
 | M1.4.1 | OAuth 2.0 授權流程:連接 GitHub 取得 Access Token |
-| M1.4.2 | Webhook Endpoints:解析 GitHub Commit Push Payload |
+| M1.4.2 | Webhook Endpoints:解析 GitHub Commit Push / PR / Issues Payload |
+| M1.4.3 | **本地 Git 偵測器**:定期掃描本機 `.git` 目錄,偵測離線 commit 活動,100% 離線運作 |
 
-**Deps**:M0.3
-**Criteria**:commit 後 5 秒內出現在 `raw_tracking_logs`。
-**Research**:`[R06: 版本控制紀錄 §2.1]`
+**Deps**:M0.2, M0.3 (MVP Webhook 連通用 `gh webhook forward`；Cloudflare Tunnel 為 Phase 6+ 選項)
+**Criteria**:Webhook commit 後 5 秒內出現在 `raw_tracking_logs`;本地 commit 後 60 秒內出現在 `raw_tracking_logs`。
+**Research**:`[R06: 版本控制紀錄 §2.1]` `[R02: 時間動力學 §1.2]`
 **Risks**:無
 
 ---
