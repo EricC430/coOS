@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "apps/desktop/src-tauri",
+    "services/m1_1_telemetry_daemon",
+]
+resolver = "2"

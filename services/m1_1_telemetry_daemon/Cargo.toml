@@ -1,0 +1,32 @@
+[package]
+name = "m1_1_telemetry_daemon"
+version = "0.1.0"
+edition = "2021"
+description = "coOS M1.1 OS Telemetry Daemon — focus/keystroke/window events"
+
+[[bin]]
+name = "m1_1_telemetry_daemon"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", features = ["json"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input",
+    "Win32_UI_Accessibility",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Input_KeyboardAndMouse",
+] }
+
+[dev-dependencies]
+tokio-test = "0.4"

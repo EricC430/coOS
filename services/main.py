@@ -7,6 +7,7 @@ coOS FastAPI Sidecar — 主入口
          docs/modules/M2_2_gemma_edge_inference_SPEC.md v1.1
          docs/modules/M2_3_eguard_crypto_filter_SPEC.md v1.1
          docs/modules/M1_4_git_workflow_telemetry_SPEC.md v1.2
+         docs/modules/M1_1_os_telemetry_daemon_SPEC.md v1.2
 """
 import asyncio
 import logging
@@ -19,8 +20,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from config import get_settings
-from m1_4_github.webhooks import router as m1_4_webhook_router
+from m0_4_logging.schema import LogEvent
 from m1_4_github.oauth import router as m1_4_oauth_router
+from m1_4_github.webhooks import router as m1_4_webhook_router
 from m2_1_event_debouncer.debouncer import EventDebouncer
 from m2_1_event_debouncer.schema import EventBatch, RawTelemetryEvent
 from m2_2_gemma.pipeline import GemmaInferencePipeline
@@ -98,6 +100,34 @@ app.add_middleware(
 # M1.4 routers
 app.include_router(m1_4_webhook_router)
 app.include_router(m1_4_oauth_router)
+
+
+# ---------------------------------------------------------------------------
+# M1.1 — OS 遙測守護行程事件接收端點
+# ---------------------------------------------------------------------------
+
+@app.post("/api/m1_1/event")
+async def m1_1_event(event: LogEvent) -> dict[str, Any]:
+    """[M1.1 SPEC §3] Receive a single TelemetryEvent from the Rust sidecar.
+
+    M1.1 Rust daemon POSTs M0.4 LogEvent to this endpoint.
+    Validated by LogEvent's privacy_validator (forbids L1 plaintext keys).
+    Written to raw_tracking_logs via AsyncLogWriter.
+
+    [R06: 數位表型 §2.1] Focus/keystroke events as digital phenotype sensor.
+    [R02: 計算心理語言學 §1] WPM as cognitive state input feature.
+    """
+    from m0_4_logging.writer import get_logger
+    log_writer = get_logger()
+    await log_writer.emit(
+        module=event.module,
+        action=event.action,
+        level=event.level,
+        payload=event.payload,
+        role_id=event.role_id,
+        correlation_id=event.correlation_id,
+    )
+    return {"status": "ok", "event_id": event.id}
 
 
 # ---------------------------------------------------------------------------
