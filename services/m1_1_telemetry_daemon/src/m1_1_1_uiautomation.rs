@@ -16,7 +16,7 @@ pub struct ForegroundWindow {
 pub fn get_foreground_window() -> Option<ForegroundWindow> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
     use windows::Win32::System::ProcessStatus::GetProcessImageFileNameW;
 
     unsafe {
@@ -31,6 +31,15 @@ pub fn get_foreground_window() -> Option<ForegroundWindow> {
             return None;
         }
 
+        // Get window title for debug stdout only (never stored in payload)
+        let mut title_buf = vec![0u16; 512];
+        let title_len = GetWindowTextW(hwnd, &mut title_buf);
+        let window_title = if title_len > 0 {
+            String::from_utf16_lossy(&title_buf[..title_len as usize])
+        } else {
+            String::new()
+        };
+
         // Get process name — gracefully skip on AccessDenied
         let process_name = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
             Ok(handle) => {
@@ -40,15 +49,14 @@ pub fn get_foreground_window() -> Option<ForegroundWindow> {
                     "Unknown".to_string()
                 } else {
                     let path: String = String::from_utf16_lossy(&buf[..len as usize]);
-                    // Extract just the filename
                     path.split(['\\', '/']).last().unwrap_or("Unknown").to_string()
                 }
             }
-            Err(_) => {
-                // AccessDenied — record as Unknown, do not panic
-                "Unknown".to_string()
-            }
+            Err(_) => "Unknown".to_string(),
         };
+
+        // [DEBUG] stdout only — window_title never enters raw_tracking_logs (CaptureMode::Off)
+        eprintln!("[M1.1.1 DEBUG] foreground: \"{}\" | process: {}", window_title, process_name);
 
         let bucket = classify_process(&process_name);
         Some(ForegroundWindow { app_name: process_name, app_bucket: bucket })
