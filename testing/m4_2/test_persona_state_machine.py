@@ -330,3 +330,97 @@ class TestM4_2_BDI:
         """belief 為空時 intention 退化為 desire 的行動化版本"""
         bdi = reconcile_bdi(BDIInput(belief="", desire="完成作業"))
         assert len(bdi.intention) > 0
+
+
+# ===========================================================================
+# TestM4_2_MessageSplitter  (SPEC §7.4.1)
+# ===========================================================================
+
+class TestM4_2_MessageSplitter:
+    """[R05 §跨越恐怖谷] 多訊息分割器 — 模擬真人分段發言"""
+
+    def test_short_response_single_bubble(self):
+        """短回應 (< 60 字) 不拆分，單一氣泡"""
+        from m4_2_persona.message_splitter import split_response
+        short = "好的，這個問題讓我想想。"
+        seq = split_response(short)
+        assert seq.bubble_count == 1
+        assert seq.messages[0].delay_ms == 0
+
+    def test_medium_response_two_bubbles(self):
+        """中等回應 (60~200 字) 拆為 2 個氣泡"""
+        from m4_2_persona.message_splitter import split_response
+        medium = (
+            "微積分的 Taylor 展開是一個非常重要的工具。"
+            "它讓我們可以用多項式來近似任意光滑函數。"
+            "你可以把它想成「用一把尺去量一條曲線」的概念。"
+        )  # ~70 字
+        seq = split_response(medium)
+        assert seq.bubble_count == 2
+
+    def test_long_response_three_or_four_bubbles(self):
+        """長回應 (> 200 字) 拆為 3~4 個氣泡"""
+        from m4_2_persona.message_splitter import split_response
+        # 建立確定 >200 字的長回應（用重複確保）
+        long_resp = (
+            "我來解釋一下 OpenStack 的整體架構設計。"
+            "首先，Nova 負責計算資源的管理，你可以把它想成是虛擬機的排程員。"
+            "Neutron 則負責網路配置，讓不同虛擬機之間可以互相溝通。"
+            "Swift 是物件儲存服務，用來存放靜態檔案和長期備份資料。"
+            "Keystone 是認證服務，所有 OpenStack 元件都要通過它來驗證身份。"
+            "這四個核心元件是 MVP 階段最重要的基礎，先把這些搞懂，再深入其他元件。"
+        )
+        # 若仍不足 200 字則補充（相容 Windows/Unicode 計數差異）
+        while len(long_resp) <= 200:
+            long_resp += "這是補充的內容，確保長度足夠觸發長回應分割邏輯。"
+        seq = split_response(long_resp)
+        assert 3 <= seq.bubble_count <= 4
+
+    def test_first_bubble_has_zero_delay(self):
+        """第一個氣泡的 delay_ms 必須為 0"""
+        from m4_2_persona.message_splitter import split_response
+        resp = "這是一個很長的回應。" * 10
+        seq = split_response(resp)
+        assert seq.messages[0].delay_ms == 0
+
+    def test_subsequent_bubbles_have_delay_in_range(self):
+        """後續氣泡的 delay_ms 在 300~1500ms 範圍內"""
+        from m4_2_persona.message_splitter import (
+            MAX_DELAY_MS,
+            MIN_DELAY_MS,
+            split_response,
+        )
+        resp = "這是一個很長的回應。" * 15  # > 200 字
+        seq = split_response(resp)
+        for msg in seq.messages[1:]:
+            assert MIN_DELAY_MS <= msg.delay_ms <= MAX_DELAY_MS
+
+    def test_total_text_preserved(self):
+        """拆分後所有氣泡合計文字內容與原始回應一致（不丟字）"""
+        from m4_2_persona.message_splitter import split_response
+        resp = (
+            "讓我想想。微積分的極限定義是這樣的：當 x 趨近於 a 時，"
+            "函數 f(x) 趨近於 L，我們說 lim f(x) = L。"
+            "這個概念很抽象，但用圖形來看會直觀很多。"
+            "你有沒有試著畫出函數的圖形？"
+        )
+        seq = split_response(resp)
+        # 合計文字應與原文去除前後空白後一致
+        assert seq.total_text.replace(" ", "") == resp.strip().replace(" ", "")
+
+    def test_max_bubbles_respected(self):
+        """max_bubbles 參數必須被遵守"""
+        from m4_2_persona.message_splitter import split_response
+        very_long = "這是一個超長的句子，包含很多內容。" * 30
+        seq = split_response(very_long, max_bubbles=3)
+        assert seq.bubble_count <= 3
+
+    def test_bubble_count_within_spec_range(self):
+        """氣泡數量永遠在 1~4 之間（SPEC §7.4.1）"""
+        from m4_2_persona.message_splitter import split_response
+        for length_multiplier in [1, 5, 10, 30]:
+            resp = "這是測試回應。這裡有更多內容。" * length_multiplier
+            seq = split_response(resp)
+            assert 1 <= seq.bubble_count <= 4, (
+                f"回應長度 {len(resp)} 時氣泡數 {seq.bubble_count} 超出範圍"
+            )
