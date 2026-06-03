@@ -106,6 +106,48 @@ class TestM4_5_1_XPSettlement:
         assert result.amount > 0
         assert user.current_xp == result.amount
 
+    def test_xp_calculation_factors(self, db, user):
+        """[決策] 核准後 XP 計算包含基礎分鐘數、目標對齊、學習筆記與停留時間加成"""
+        # 1. 基礎情境：120 分鐘 = 50 XP
+        r_base = create_reflection(
+            is_draft=False, is_reviewed=True,
+            user_feeling="ok", user_action_plan="ok",
+            activity_minutes=120, user_learned=None
+        )
+        r_base.goal_aligned = False
+        res_base = xp_engine.settle(r_base, user, approval_duration_seconds=0)
+        assert res_base.amount == 50
+
+        # 2. 對齊專家目標：1.5x 加成
+        r_aligned = create_reflection(
+            is_draft=False, is_reviewed=True,
+            user_feeling="ok", user_action_plan="ok",
+            activity_minutes=120, user_learned=None
+        )
+        r_aligned.goal_aligned = True
+        res_aligned = xp_engine.settle(r_aligned, user, approval_duration_seconds=0)
+        assert res_aligned.amount == 75  # 50 * 1.5
+
+        # 3. 填寫學習筆記：+10 XP 固定紅利
+        r_learned = create_reflection(
+            is_draft=False, is_reviewed=True,
+            user_feeling="ok", user_action_plan="ok",
+            activity_minutes=120, user_learned="學會了生命週期"
+        )
+        r_learned.goal_aligned = False
+        res_learned = xp_engine.settle(r_learned, user, approval_duration_seconds=0)
+        assert res_learned.amount == 60  # 50 + 10
+
+        # 4. 深思熟慮加成：停留 30 秒 (每秒 0.1 XP, +3 XP)
+        r_duration = create_reflection(
+            is_draft=False, is_reviewed=True,
+            user_feeling="ok", user_action_plan="ok",
+            activity_minutes=120, user_learned=None
+        )
+        r_duration.goal_aligned = False
+        res_duration = xp_engine.settle(r_duration, user, approval_duration_seconds=30)
+        assert res_duration.amount == 53  # 50 + 3
+
     def test_xp_settlement_is_idempotent(self, db, user):
         """重複結算同一反思不會重複發放"""
         reflection = create_approved_reflection(activity_minutes=120)
@@ -145,26 +187,26 @@ class TestM4_5_1_XPSettlement:
         assert ambient <= daily_earned * 0.05
 
 class TestM4_5_2_ZombieDraftCleanup:
-    def test_stale_drafts_deleted_after_7_days(self, db, user):
-        """超過 7 天未審的草稿被自動淘汰"""
+    def test_stale_drafts_deleted_after_configured_days(self, db, user):
+        """[決策] 根據使用者配置的天數（預設 7 天）自動淘汰未審草稿"""
+        # 配置為 3 天
+        user_settings = get_user_settings(user.id)
+        user_settings.zombie_cleanup_days = 3
+        
         old_draft = create_reflection(
-            is_draft=True, created_at=days_ago(8)
+            is_draft=True, created_at=days_ago(4)
         )
-        run_zombie_cleanup_cron()
-        assert get_reflection(old_draft.id) is None
-
-    def test_recent_drafts_not_deleted(self, db, user):
-        """3 天內的草稿不被刪除"""
-        recent = create_reflection(
+        recent_draft = create_reflection(
             is_draft=True, created_at=days_ago(2)
         )
-        run_zombie_cleanup_cron()
-        assert get_reflection(recent.id) is not None
+        run_zombie_cleanup_cron(user.id)
+        assert get_reflection(old_draft.id) is None
+        assert get_reflection(recent_draft.id) is not None
 
     def test_approved_reflections_never_deleted(self, db, user):
-        """已核准的反思永不被殭屍清理刪除"""
+        """[決策] 已核准的反思段落與記錄永不被殭屍清理刪除"""
         approved = create_approved_reflection(created_at=days_ago(30))
-        run_zombie_cleanup_cron()
+        run_zombie_cleanup_cron(user.id)
         assert get_reflection(approved.id) is not None
 ```
 
@@ -184,10 +226,17 @@ class SettlementResult:
     amount: int = 0
     reason: str = ""
 
-# XP 計算公式 (MVP: 簡單線性)
-BASE_XP_PER_HOUR = 25  # 每小時基礎 XP
+# XP 計算公式與參數決策
+BASE_XP_PER_HOUR = 25          # 每小時基礎 XP
+GOAL_ALIGNMENT_MULTIPLIER = 1.5   # 對齊專家目標的加成倍率
+LEARNING_NOTE_BONUS = 10       # 填寫學習筆記 (user_learned) 的固定紅利
 
-async def settle(reflection, user) -> SettlementResult:
+# 深思熟慮加成參數
+MIN_REFLECTION_SECS = 15       # 觸發加成的最少秒數
+MAX_REFLECTION_SECS = 300      # 計算加成的最大上限秒數
+DURATION_XP_RATE = 0.1         # 每秒深思熟慮給予的 XP (e.g. 10秒 = 1 XP)
+
+async def settle(reflection, user, approval_duration_seconds: float = 0) -> SettlementResult:
     """
     [RISK-01] 三重守門:
     1. is_reviewed must be True
@@ -208,12 +257,29 @@ async def settle(reflection, user) -> SettlementResult:
     if reflection.xp_settled:
         return SettlementResult(False, reason="already_settled")
 
-    # 計算 Earned XP
+    # 1. 基礎活動 XP
     hours = (reflection.activity_minutes or 0) / 60
-    earned_xp = int(hours * BASE_XP_PER_HOUR)
-    earned_xp = max(earned_xp, 5)  # 最低 5 XP (參與獎勵)
+    base_xp = hours * BASE_XP_PER_HOUR
 
-    # [RISK-14] 原子交易: xp_ledger + users + daily_reflections
+    # 2. 目標對齊加成 (由 M4.6 Observer 標註的 goal_aligned 旗標判定)
+    is_aligned = getattr(reflection, "goal_aligned", False)
+    multiplier = GOAL_ALIGNMENT_MULTIPLIER if is_aligned else 1.0
+    calculated_xp = base_xp * multiplier
+
+    # 3. 學習筆記紅利 (當 user_learned 非空且有實質輸入時發放)
+    if reflection.user_learned and reflection.user_learned.strip():
+        calculated_xp += LEARNING_NOTE_BONUS
+
+    # 4. 深思熟慮加成 (核准時所花費的時間長度，防止掛機刷分設有上限)
+    if approval_duration_seconds >= MIN_REFLECTION_SECS:
+        clamped_duration = min(approval_duration_seconds, MAX_REFLECTION_SECS)
+        duration_bonus = int(clamped_duration * DURATION_XP_RATE)
+        calculated_xp += duration_bonus
+
+    # 取整並設定最低參與獎勵 5 XP
+    earned_xp = max(int(calculated_xp), 5)
+
+    # [RISK-14] 原子交易: xp_ledger + users + daily_reflections (即時觸發)
     await m6_5_gatekeeper.settle_reflection_xp(
         user_id=user.id,
         reflection_id=reflection.id,
@@ -254,31 +320,62 @@ async def grant_ambient_xp(user_id: str):
 
 from datetime import datetime, timedelta
 
-STALE_THRESHOLD_DAYS = 7
+DEFAULT_STALE_THRESHOLD_DAYS = 7
 
-async def run_zombie_cleanup_cron():
+async def run_zombie_cleanup_cron(user_id: str):
     """
-    清理超過 7 天未審的草稿，防止堆積導致倦怠。
-    只刪除 is_draft=true 的記錄，已核准的永不刪除。
+    清理過期未審的草稿，防止堆積導致倦怠。
+    [決策] 預設為 7 天，但允許使用者自訂閾值。已被核准的 segment / reflection 永不刪除。
     """
-    cutoff = datetime.utcnow() - timedelta(days=STALE_THRESHOLD_DAYS)
+    # 讀取使用者設定
+    settings = await user_settings_service.get_settings(user_id)
+    threshold_days = settings.zombie_cleanup_days or DEFAULT_STALE_THRESHOLD_DAYS
+    
+    cutoff = datetime.utcnow() - timedelta(days=threshold_days)
     stale_drafts = await db.fetch_all(
         "SELECT id FROM daily_reflections "
-        "WHERE is_draft = TRUE AND created_at < :cutoff",
-        {"cutoff": cutoff.isoformat()}
+        "WHERE user_id = :user_id AND is_draft = TRUE AND created_at < :cutoff",
+        {"user_id": user_id, "cutoff": cutoff.isoformat()}
     )
     for draft in stale_drafts:
+        # 僅硬刪除 is_draft=True 的草稿紀錄，已核准的絕對不可刪除
         await db.execute(
-            "DELETE FROM daily_reflections WHERE id = :id",
+            "DELETE FROM daily_reflections WHERE id = :id AND is_draft = TRUE",
             {"id": draft["id"]}
         )
         await log_event("zombie_draft_deleted", {"reflection_id": draft["id"]})
+
+async def send_expiry_reminders(user_id: str):
+    """
+    [決策] 當草稿即將過期且使用者配置開啟通知時，發送提醒通知。
+    """
+    settings = await user_settings_service.get_settings(user_id)
+    if not settings.enable_zombie_warning_notification:
+        return
+        
+    threshold_days = settings.zombie_cleanup_days or DEFAULT_STALE_THRESHOLD_DAYS
+    # 設定在過期前 1 天發出警報
+    warning_cutoff = datetime.utcnow() - timedelta(days=threshold_days - 1)
+    
+    impending_drafts = await db.fetch_all(
+        "SELECT id FROM daily_reflections "
+        "WHERE user_id = :user_id AND is_draft = TRUE AND created_at < :warning_cutoff",
+        {"user_id": user_id, "warning_cutoff": warning_cutoff.isoformat()}
+    )
+    
+    if impending_drafts:
+        await m3_9_notification_dashboard.send_system_notification(
+            user_id=user_id,
+            title="有未審核草稿即將過期",
+            content=f"你有 {len(impending_drafts)} 筆未核准的草稿即將過期被淘汰，快來完成反思領取 XP！",
+            notification_type="warning"
+        )
 ```
 
 ### 7.4 異常處理
 
-- **M6.5 交易失敗 (deadlock/timeout)** → 重試 1 次，仍失敗則標記 `settlement_failed` 日誌，下次 Cron 重試
-- **`users` 表行鎖等待超時** → `SELECT ... FOR UPDATE` 加 `NOWAIT`，失敗時排入下一批次
+- **M6.5 交易失敗 (deadlock/timeout)** → [決策] 靜默重試 (Silent Retry)。自動寫入重試佇列，靜默嘗試直到發放成功，不主動彈窗通知使用者。
+- **`users` 表行鎖等待超時** → `SELECT ... FOR UPDATE` 加 `NOWAIT`，失敗時排入下一批次重試。
 - **XP 計算結果為負數** → 拒絕結算，記錄 `negative_xp_calculation` 異常事件
 - **Supabase 雲端不可達** → 結算結果暫存本地 SQLite `pending_xp_sync`，恢復後同步
 
@@ -299,12 +396,19 @@ async def run_zombie_cleanup_cron():
 ❌ **不要硬刪除已結算的反思或 segment**
    理由：RISK-13。已結算的 XP 記錄不可自動回滾，需走軟刪除 + 人工審核。
 
-## 9. Open Questions
+## 9. Open Questions (已拍板決策)
 
-- [ ] **XP 計算公式的具體參數?** 目前用 `25 XP/hr` 線性計算，是否需要依專案難度、角色權重調整? 是否需要 streak multiplier?
-- [ ] **殭屍草稿的清理閾值?** 目前設定 7 天，是否需要可配置? 使用者是否應收到「你有未審草稿即將過期」的提醒?
-- [ ] **結算排程的觸發時機?** 是在使用者核准 (M3.3.3) 後立即結算 (事件驅動)，還是等下一次 Cron (例如每小時掃描)?
-- [ ] **XP 結算失敗時是否需要通知使用者?** 或者靜默重試直到成功?
+- **[決策] XP 計算公式的具體參數**：
+  除了依據每小時 `25 XP` 固定數值計算基礎 XP 外，還包含以下動態加成因子：
+  1. **目標對齊加成 (Goal Alignment Multiplier)**：工作/討論若對齊專家目標，給予 `1.5x` 加成倍率。
+  2. **學習筆記紅利 (Learning Note Bonus)**：核准時有寫入自己學到了什麼 (`user_learned` 非空)，給予 `+10 XP` 固定紅利。
+  3. **深思熟慮加成 (Reflection Duration Bonus)**：依據核准時花費的時間長度，超過 15 秒（上限 300 秒）每秒給予 `0.1 XP` 加成。
+- **[決策] 殭屍草稿的清理閾值**：
+  預設為 7 天，允許使用者自訂天數。已被核准的 segment 絕不可刪除。可配置是否發送「草稿即將過期」的提醒通知。
+- **[決策] 結算排程的觸發時機**：
+  **即時結算**。當使用者於前端核准時，立即觸發結算引擎並發放 XP。
+- **[決策] XP 結算失敗時的處理**：
+  **靜默重試 (Silent Retry)**。系統自動重試發放至成功為止，不通知/打擾使用者。
 
 ---
 

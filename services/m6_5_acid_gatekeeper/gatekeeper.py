@@ -182,7 +182,10 @@ class XPGatekeeper:
             return TransactionResult(False, "GATEKEEPER_000", "user_not_found")
 
         # [anti-pattern §8] Use relative increment, never absolute overwrite
+        # [RISK-14] Both current_xp (spendable) and lifetime_xp (level basis) increase
         user.current_xp += amount
+        if hasattr(user, "lifetime_xp"):
+            user.lifetime_xp += amount
 
         # Write ledger entry
         self._store.ledger.append(_make_ledger(
