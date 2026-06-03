@@ -2,7 +2,7 @@
 
 **完成日期**：2026-06-01
 **狀態**：✅ 完成閉環
-**測試通過率**：148/149（1 skip — ai.local latency，iPad 不在同網路，預期）
+**測試通過率**：149/149（0 skip，0 fail — 已成功透過 IP `192.168.1.65` 與 iPad 真實連線）
 
 ---
 
@@ -11,11 +11,11 @@
 | 模組 | 職責 | 狀態 | 測試 | 引用 |
 |------|------|------|------|------|
 | **M2.1** | 事件防抖與排隊引擎 | ✅ | 6/6 | [R08 §三.1, R02 REMT] |
-| **M2.2** | Gemma 邊緣推論管線 | ✅ | 6/7（1 skip）| [R07 POST §4.3, R06 §7.4] |
+| **M2.2** | Gemma 邊緣推論管線 | ✅ | 7/7 | [R07 POST §4.3, R06 §7.4] |
 | **M2.3** | Eguard 密碼學過濾器 | ✅ | 9/9 | [R07 §5, R02 DRIFT] |
 | **設定層** | config.py + deps 補齊 | ✅ | 8/8 | N/A（工程）|
 
-**累計測試**（含 Phase 1 回歸）：148 passed / 1 skipped
+**累計測試**（含 Phase 1 回歸）：149 passed
 
 ### Phase 1 回歸修正（Phase 2 期間發現）
 
@@ -77,15 +77,15 @@
 
 ---
 
-## 5. 雲端連線實測確認
+## 5. 雲端與端側連線實測確認
 
 | 服務 | 測試方式 | 結果 |
 |------|---------|------|
 | **Supabase PostgreSQL** | `SUPABASE_DB_URL` 帶入跑 `TestCloudTableCreation` | ✅ 27/27（含 L1 隱私邊界驗證） |
-| **iPad ai.local（Gemma）** | `test_inference_latency_limit`（需同 Wi-Fi）| ⏭ 1 skip（iPad 不在同網路）；`testing/local_llm/test_ipad_llm_complete.py` 為手動測試腳本 |
-| **Redis（Docker）** | `arq` 佇列依賴，offline buffer 測試用 in-memory mock | ✅（實際 Redis 連線於 arq worker 啟動時驗證）|
+| **iPad ai.local（Gemma）** | `test_inference_latency_limit`（實測推論） | ✅ 1/1（IP `192.168.1.65` 直連，解鎖並通過測試） |
+| **Redis（Docker）** | `arq` 佇列依賴，offline buffer 測試用 in-memory mock | ✅（實際 Redis 連線於 arq worker 啟動時驗證） |
 
-> **ai.local 實際連線說明**：iPad 測試腳本位於 `testing/local_llm/ios_device_llm_inference/test_ipad_llm_complete.py`（Phase 0 既有）。`test_inference_latency_limit` 在 iPad 同網路時自動解除 skip 並實際呼叫 Gemma 模型。目前 skip 原因是 mDNS `ai.local` 解析失敗（iPad 不在同一 Wi-Fi）——非 bug，符合 SPEC §7.4 設計。
+> **ai.local 實際連線說明**：iPad 測試腳本位於 `testing/local_llm/ios_device_llm_inference/test_ipad_llm_complete.py`（Phase 0 既有）。由於 Windows 環境 Bonjour/mDNS `ipad-77local` 解析不穩定，已改用 IP `192.168.1.65` 直連。實測 iPad M1 上跑 Gemma 4 E4B (Ollama) 的首次推論與暖機後實際推論延遲約 11~12s（Ollama overhead 導致較 SPEC 原訂的 6s 慢）。經使用者同意，已將測試的容忍門檻與 `client/pipeline` 逾時放寬為 15s，測試已全數通過，並同步更新 SPEC §7.4 之工程偏離說明。
 
 ---
 
@@ -115,7 +115,7 @@
 ```
          M0.3  M0.4  M2.1  M2.2  M2.3  M6.1  M6.2  M6.3  M6.4  M6.5
 核心邏輯  8✅   12✅   6✅   6✅    9✅   10✅   8✅   13✅   18✅   13✅  = 103 pass
-雲端連線   —     —    —     1skip  —     —    4✅*   2✅*   —     —    = 6 pass / 1 skip
+雲端連線   —     —    —     1✅    —     —    4✅*   2✅*   —     —    = 7 pass
 RISK驗證   —     —    3✅   2✅    2✅   —     —     —     ✅    ✅
 隱私邊界   ✅    ✅    ✅    ✅     ✅    ✅    ✅    ✅     —     —
 ACID保證   —     —    —     —     —     —     —     —     ✅    ✅
@@ -123,7 +123,7 @@ ACID保證   —     —    —     —     —     —     —     —     ✅ 
 * 本次修正 SQLAlchemy 2.0 text() bug 後首次實際通過
 ```
 
-**總計**：148 pass / 1 skip（ai.local）
+**總計**：149 pass
 
 ---
 
@@ -152,7 +152,7 @@ ACID保證   —     —    —     —     —     —     —     —     ✅ 
 - M2.1 事件防抖 → M2.2 意圖壓縮 → M2.3 Eguard 過濾，三層管線串通
 - 隱私三層（L1→L2→L3）邊界在代碼與測試層面全部驗證
 - 雲端 Supabase 連線首次實際跑通（修正 Phase 1 的 SQLAlchemy 2.0 bug）
-- ai.local latency 測試待 iPad 同 Wi-Fi 時自動解除 skip
+- ai.local latency 測試已成功解鎖，透過 IP 直連 iPad M1 並通過真實 Gemma 推論測試
 
 **下一步**：
 
@@ -167,5 +167,5 @@ ACID保證   —     —    —     —     —     —     —     —     ✅ 
 ```bash
 # 含雲端全套驗證
 SUPABASE_DB_URL="..." services/.venv/Scripts/pytest.exe testing/ --ignore=testing/local_llm -q
-# 結果：148 passed, 1 skipped (ai.local)
+# 結果：149 passed
 ```

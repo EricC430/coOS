@@ -27,6 +27,7 @@
 | M2.1 打包的事件批次 | `EventBatch` | `{"batch_id": "...", "events": [...]}` (高頻遙測資料) |
 | M1.3.1 原始代碼 Diff | string | 暫存的程式碼變更文字 (大體積，事件/存檔觸發) |
 | M3.4 對話輸入明文 | string | 使用者即時輸入的對話明文 (即時觸發，高優先級) |
+| M1.1 Opt-in `content_raw` (v1.2) | string (自 `raw_content_stores` 讀取) | 使用者授權後的視窗內文截取。由於隱私保護，原始內文不存於 `raw_tracking_logs` payload，M2.2 需以 payload 中之 `content_raw_ref` 查詢本地 SQLite `raw_content_stores` 表獲取明文 |
 
 ### Outputs
 
@@ -231,6 +232,8 @@ class IntentVector(BaseModel):
    > 若未來改為直接呼叫 MLX inference API（繞過 Ollama）可回到 6s 目標。
 
 2. **連線中斷（iPad 不可達）**：筆電端 FastAPI 捕獲連線超時後，自動進入**降級模式**：關閉深度學習推論，降級為以關鍵字字典與句法樹結構（AST Features）為主的 Rule-based 抽取器，事件暫存於本地 SQLite 不發送。**降級模式下 `source_log_id` 與 `role_id` 仍為必填**（不可為空），且 `inference_mode` 必須設為 `"rule_based_fallback"` 以供下游 M5.1 判斷可信度；否則觸發 RISK-05。
+
+   > **M1.1 Opt-in `content_summary` 降級路徑** (v1.2 新增)：當 iPad 不可達時，M1.1 將在本機直接以 rule-based 方式產出 `content_summary`（截取焦點區塊標題 + 前 200 字，見 M1.1 §7.8），標記為 `inference_mode: "rule_based_fallback"`。iPad 恢復後，M2.2 將批次重新產出 LLM 版本的 summary 並覆蓋。
 
 ### 7.5 異常處理
 

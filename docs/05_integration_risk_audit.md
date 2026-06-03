@@ -728,11 +728,65 @@ def test_earned_xp_updates_both_columns():
 
 ---
 
+## RISK-15：Opt-in 內文摘要 → 草稿引用 → 雲端側通道洩漏
+
+**觸發組合**：`M1.1 (content_summary, Opt-in) + M4.4 (深夜草稿) + M6.2 (雲端同步)`
+
+**失效機制**：
+
+M1.1 v1.1 新增 Opt-in 內文採集模式,由 M2.2 Local LLM 產出 `content_summary`（如「正在編輯畢業論文第五章結論」）。此摘要存於本地 SQLite (L1)。但若 M4.4 深夜草稿生成器在拼裝 `daily_reflections.ai_description` 時引用了 `content_summary` 原文,而 `ai_description` 後續經 M6.2 同步至雲端 PostgreSQL (L3) → **側通道洩漏**：從雲端可反推使用者正在做什麼具體工作。
+
+**研究衝突點**：R07 §3 (IDE 脈絡擷取供 AI 分析) vs 架構文件 §3 (T1 明文絕不上雲)
+
+**緩解策略**：
+
+```python
+# [R07 §3 + 架構文件 §3] content_summary 嚴格鎖定 L1
+class DraftGenerator:
+    async def build_ai_description(self, segments: list[Segment]) -> str:
+        for seg in segments:
+            # 草稿可用的欄位:app_bucket, duration_minutes, wpm_avg
+            # 草稿不可用的欄位:content_raw, content_summary, window_title
+            if seg.content_summary:
+                # 若需引用,必須先經 Eguard 過濾為泛化描述
+                sanitized = await eguard.generalize(seg.content_summary)
+                # "編輯畢業論文第五章結論" → "進行文件編輯工作"
+            else:
+                sanitized = seg.app_bucket  # "writing"
+```
+
+**三層防禦**：
+1. `content_raw` 與 `content_summary` 在 `raw_tracking_logs` 中標記為 `privacy_tier = "T1_OPTIN"`
+2. M4.4 草稿生成器在引用 `content_summary` 時,必須經 M2.3 Eguard 泛化為無具體細節的描述
+3. M6.2 雲端同步管線設置 hard block:payload 含 `content_raw` 或 `content_summary` 欄位 → 拒絕同步
+
+**驗收測試**：
+
+```python
+def test_content_summary_never_in_cloud_sync():
+    """RISK-15: content_summary 絕不進入雲端同步"""
+    log = create_raw_tracking_log(
+        payload={"content_summary": "編輯畢業論文第五章", "app_bucket": "writing"}
+    )
+    sync_payload = cloud_sync.prepare_payload(log)
+    assert "content_summary" not in sync_payload
+    assert "content_raw" not in sync_payload
+
+def test_draft_generalizes_content_summary():
+    """RISK-15: 草稿引用 content_summary 時必須泛化"""
+    segment = create_segment(content_summary="編輯畢業論文第五章結論")
+    draft = draft_generator.build_ai_description([segment])
+    assert "畢業論文" not in draft
+    assert "第五章" not in draft
+```
+
+---
+
 ## 新增風險的流程
 
 當實作過程中發現新的「合併後變差」模式:
 
-1. 在本文件追加 `RISK-13`、`RISK-14`...
+1. 在本文件追加 `RISK-15`、`RISK-16`...
 2. 記錄完整四欄:觸發組合 / 失效機制 / 緩解策略 / 驗收測試
 3. 更新對應模組 SPEC.md 的 `## Known Risks` 區塊
 4. 寫對應的 pytest 標記為 `@pytest.mark.integration_risk("RISK-xx")`

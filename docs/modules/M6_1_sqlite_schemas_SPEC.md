@@ -118,6 +118,13 @@ class TestTableCreation:
         )
         assert cursor.fetchone() is not None
 
+    def test_raw_content_stores_table_exists(self, local_db):
+        """驗收條件 4.1: raw_content_stores 表存在"""
+        cursor = local_db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='raw_content_stores'"
+        )
+        assert cursor.fetchone() is not None
+
 
 class TestSchemaConstraints:
     def test_raw_tracking_logs_has_required_columns(self, local_db):
@@ -125,6 +132,13 @@ class TestSchemaConstraints:
         cursor = local_db.execute("PRAGMA table_info(raw_tracking_logs)")
         columns = {row[1] for row in cursor.fetchall()}
         required = {"id", "timestamp", "module", "action", "level", "payload"}
+        assert required.issubset(columns)
+
+    def test_raw_content_stores_has_required_columns(self, local_db):
+        """驗收條件 5.1: raw_content_stores 包含所有必要欄位"""
+        cursor = local_db.execute("PRAGMA table_info(raw_content_stores)")
+        columns = {row[1] for row in cursor.fetchall()}
+        required = {"id", "content_raw", "created_at"}
         assert required.issubset(columns)
 
     def test_edge_event_buffer_has_source_log_id(self, local_db):
@@ -235,7 +249,28 @@ CREATE INDEX idx_uc_user ON user_consents(user_id);
 CREATE INDEX idx_uc_type ON user_consents(consent_type);
 ```
 
-### 7.5 SQLite 初始化 Pragma
+**v1.2 新增 `consent_type` 值**：
+
+| `consent_type` | 模組 | 說明 |
+|---|---|---|
+| `voice_cloud` | M3.4.3.3 | 語音意識流上雲轉錄同意 [RISK-11] |
+| `social_post_public` | M3.7 | 社群貼文公開同意 [RISK-12] |
+| `content_capture_all` | M1.1 v1.2 | Opt-in 全部軟體內文採集 (`CaptureMode::AllApps`) |
+| `content_capture_selected` | M1.1 v1.2 | Opt-in 指定軟體內文採集 (`CaptureMode::SelectedApps`)，`allowed_processes` 存於 payload JSON |
+| `system_notification_mute` | M1.2 v1.1 | 深度工作時靜音系統通知 (`SetNotificationMode`) |
+
+### 7.5 `raw_content_stores` (L1 — 原始內文附屬表)
+
+```sql
+-- [架構文件 §3 T1 明文] 原始內文附屬表，與 raw_tracking_logs 欄位分離以防止側通道洩漏
+CREATE TABLE raw_content_stores (
+    id              TEXT PRIMARY KEY,     -- 隨機 UUID (作為 raw_tracking_logs payload 中的 content_raw_ref 參照)
+    content_raw     TEXT NOT NULL,        -- 擷取之原始網頁/文件明文內容 (上限 4000 字元)
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+```
+
+### 7.6 SQLite 初始化 Pragma
 
 ```python
 # services/m6_1_sqlite/init.py
@@ -254,7 +289,7 @@ async def init_sqlite(db_path: str) -> aiosqlite.Connection:
     return conn
 ```
 
-### 7.6 異常處理
+### 7.7 異常處理
 
 - 資料庫檔案不存在 → Alembic `upgrade head` 自動建立
 - Foreign Key 違反 (`edge_event_buffer.source_log_id` 指向不存在的 log) → `IntegrityError`, 拒絕寫入並記錄至 stderr

@@ -64,10 +64,13 @@
 | Tier | 內容 | 儲存 | 上雲規則 | 範例 |
 | ---- | ---- | ---- | -------- | ---- |
 | **T1 明文** | 原始程式碼、對話逐字稿、瀏覽器內容 | 本地 SQLite (永久) | **絕對禁止** | `raw_tracking_logs.raw_text` |
+| **T1 Opt-in 內文** | 視窗標題、應用程式內文、Local LLM 摘要 (須使用者主動開啟) | 本地 SQLite (永久) | **絕對禁止** `[RISK-15]` | `raw_tracking_logs.payload.window_title`, `.content_raw`, `.content_summary` |
 | **T2 意圖向量** | Gemma 壓縮後的軟提示詞向量 | 本地 SQLite (短暫) | 僅向量本身,不可還原 | `edge_event_buffer.intent_tag` |
 | **T3 業務狀態** | XP、徽章、角色、社群貼文 | PostgreSQL (雲端) | 跨裝置同步 | `users`, `ai_experts`, `social_posts` |
 
 任何違反此分類的 PR 必須拒絕。Claude Code 在實作時必須先檢查資料屬於哪一層。
+
+> **v1.1 新增**:T1 Opt-in 內文為使用者主動同意後才會採集的應用程式內文與 Local LLM 摘要。預設關閉 (`CaptureMode::Off`)。詳見 `M1_1_os_telemetry_daemon_SPEC.md` §7.3。
 
 ## 4. 核心模組實作路線決策
 
