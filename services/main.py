@@ -131,6 +131,13 @@ async def m1_1_event(event: LogEvent) -> dict[str, Any]:
         role_id=event.role_id,
         correlation_id=event.correlation_id,
     )
+    # [M1.2 SPEC §3] Forward to BreakpointEngine — M1.1 events are M1.2's primary input
+    engine = _get_breakpoint_engine()
+    await engine.feed({
+        "module": event.module,
+        "action": event.action,
+        "payload": event.payload,
+    })
     return {"status": "ok", "event_id": event.id}
 
 
