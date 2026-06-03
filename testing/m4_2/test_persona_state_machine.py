@@ -88,6 +88,79 @@ class TestM4_2_1_SystemPrompts:
         # 兩個不同角色的 prompt 應不同（role context 被注入）
         assert prompt_csie != prompt_family
 
+    def test_memory_block_injected_with_goals(self):
+        """[v1.2 §7.1.1] 有 active_goals 時 [記憶區塊] 應包含核心目標"""
+        config = PersonaConfig(
+            name="Robert", personality_prompt="你是 Robert。",
+            backstory="...", tone_default="authoritative", trust_level=0.5,
+        )
+        goals = [{"persona_id": "expert-001", "title": "完成微積分期末報告",
+                  "created_at": "2026-06-01", "progress": 0.3}]
+        prompt = build_system_prompt(
+            config, role_id="role_csie", user_id="u_001",
+            persona_id="expert-001", active_goals=goals,
+        )
+        assert "[核心目標]" in prompt
+        assert "完成微積分期末報告" in prompt
+        assert "30%" in prompt
+
+    def test_memory_block_injected_with_promises(self):
+        """[v1.2 §7.1.1] 有 upcoming_promises 時 [記憶區塊] 應包含即將到期承諾"""
+        config = PersonaConfig(
+            name="Robert", personality_prompt="你是 Robert。",
+            backstory="...", tone_default="authoritative", trust_level=0.5,
+        )
+        promises = [{"persona_id": "expert-001", "text": "本週完成第三章練習",
+                     "deadline": "2026-06-05"}]
+        prompt = build_system_prompt(
+            config, role_id="role_csie", user_id="u_001",
+            persona_id="expert-001", upcoming_promises=promises,
+        )
+        assert "[即將到期的承諾]" in prompt
+        assert "本週完成第三章練習" in prompt
+
+    def test_memory_block_empty_when_no_data(self):
+        """[v1.2 §7.1.1] 無目標/承諾時 [記憶區塊] 顯示占位說明"""
+        config = PersonaConfig(
+            name="Robert", personality_prompt="你是 Robert。",
+            backstory="...", tone_default="authoritative", trust_level=0.5,
+        )
+        prompt = build_system_prompt(
+            config, role_id="role_csie", user_id="u_001",
+            persona_id="expert-001", active_goals=[], upcoming_promises=[],
+        )
+        assert "[記憶區塊" in prompt
+        assert "目前無已確立" in prompt
+
+    def test_memory_block_filters_by_persona_id(self):
+        """[v1.2 §7.1.1] 記憶區塊只注入屬於當前 persona 的目標/承諾"""
+        config = PersonaConfig(
+            name="Robert", personality_prompt="你是 Robert。",
+            backstory="...", tone_default="authoritative", trust_level=0.5,
+        )
+        goals = [
+            {"persona_id": "expert-001", "title": "Robert 的目標",
+             "created_at": "2026-06-01", "progress": 0.5},
+            {"persona_id": "expert-002", "title": "宏軒的目標",
+             "created_at": "2026-06-01", "progress": 0.2},
+        ]
+        prompt = build_system_prompt(
+            config, role_id="role_csie", user_id="u_001",
+            persona_id="expert-001", active_goals=goals,
+        )
+        assert "Robert 的目標" in prompt
+        assert "宏軒的目標" not in prompt
+
+    def test_behavior_instructions_present(self):
+        """[v1.2 §7.1.1] 系統提示詞包含目標引導行為指令"""
+        config = PersonaConfig(
+            name="Robert", personality_prompt="你是 Robert。",
+            backstory="...", tone_default="authoritative", trust_level=0.5,
+        )
+        prompt = build_system_prompt(config, role_id="role_csie", user_id="u_001")
+        assert "[行為指令]" in prompt
+        assert "session 最多 1 次" in prompt
+
 
 # ===========================================================================
 # TestM4_2_2_EchoMode

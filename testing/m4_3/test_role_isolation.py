@@ -390,3 +390,109 @@ class TestM4_3_RoleLifecycle:
         )
 
         assert any(e["type"] == "EXPERT_POOL_EMPTY" for e in sse_events)
+
+
+# ===========================================================================
+# TestM4_3_CommitmentContext  (v1.2 新增)
+# ===========================================================================
+
+class TestM4_3_CommitmentContext:
+    """[v1.2] build_commitment_context — goals + promises 撈取與過期標記"""
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_no_db(self):
+        """db=None 時回傳空 lists"""
+        from m4_3_role_isolation.context import build_commitment_context
+        goals, promises = await build_commitment_context(ROLE_CSIE, db=None)
+        assert goals == []
+        assert promises == []
+
+    @pytest.mark.asyncio
+    async def test_returns_active_goals(self):
+        """db 有 active goals 時正確回傳"""
+        from m4_3_role_isolation.context import build_commitment_context
+
+        mock_goals = [
+            {"id": str(uuid.uuid4()), "persona_id": str(EXPERT_ROBERT),
+             "title": "完成線性代數作業", "progress": 0.4, "status": "active"},
+        ]
+        db = MagicMock()
+        db.execute = AsyncMock()
+        db.fetch_all = AsyncMock(side_effect=[mock_goals, []])  # goals, promises
+
+        goals, promises = await build_commitment_context(ROLE_CSIE, db=db)
+        assert len(goals) == 1
+        assert goals[0]["title"] == "完成線性代數作業"
+        assert promises == []
+
+    @pytest.mark.asyncio
+    async def test_returns_upcoming_promises(self):
+        """db 有 upcoming promises 時正確回傳"""
+        from m4_3_role_isolation.context import build_commitment_context
+
+        mock_promises = [
+            {"id": str(uuid.uuid4()), "persona_id": str(EXPERT_ROBERT),
+             "text": "本週完成第三章練習題", "deadline": "2026-06-05", "status": "active"},
+        ]
+        db = MagicMock()
+        db.execute = AsyncMock()
+        db.fetch_all = AsyncMock(side_effect=[[], mock_promises])
+
+        goals, promises = await build_commitment_context(ROLE_CSIE, db=db)
+        assert goals == []
+        assert len(promises) == 1
+        assert promises[0]["text"] == "本週完成第三章練習題"
+
+    @pytest.mark.asyncio
+    async def test_expired_promises_marked_before_fetch(self):
+        """過期承諾在撈取前先執行 UPDATE status='expired'"""
+        from m4_3_role_isolation.context import build_commitment_context
+
+        executed_sqls: list[str] = []
+
+        async def tracking_execute(sql: str, params: dict) -> None:
+            executed_sqls.append(sql)
+
+        db = MagicMock()
+        db.execute = tracking_execute
+        db.fetch_all = AsyncMock(return_value=[])
+
+        await build_commitment_context(ROLE_CSIE, db=db)
+
+        # 確認有執行過期標記 UPDATE
+        assert any("expired" in sql and "promises" in sql for sql in executed_sqls)
+
+    @pytest.mark.asyncio
+    async def test_build_role_context_includes_goals_and_promises(self):
+        """[v1.2] build_role_context 回傳的 RoleContext 含 active_goals/upcoming_promises"""
+        from m4_3_role_isolation.context import build_role_context
+
+        mock_goals = [{"id": "g1", "persona_id": str(EXPERT_ROBERT),
+                       "title": "搞懂 LangGraph", "progress": 0.2, "status": "active"}]
+        mock_promises = [{"id": "p1", "persona_id": str(EXPERT_ROBERT),
+                          "text": "讀完文件", "deadline": None, "status": "active"}]
+
+        db = MagicMock()
+        db.execute = AsyncMock()
+        # fetch_all 呼叫順序: experts, projects, goals, promises
+        db.fetch_all = AsyncMock(side_effect=[[], [], mock_goals, mock_promises])
+        db.fetch_one = AsyncMock(return_value=None)
+
+        ctx = await build_role_context(USER_ID, ROLE_CSIE, db=db)
+        assert len(ctx.active_goals) == 1
+        assert ctx.active_goals[0]["title"] == "搞懂 LangGraph"
+        assert len(ctx.upcoming_promises) == 1
+        assert ctx.upcoming_promises[0]["text"] == "讀完文件"
+
+    @pytest.mark.asyncio
+    async def test_db_failure_returns_empty_goals_promises(self):
+        """build_commitment_context 失敗時靜默回傳空 lists，不 raise"""
+        from m4_3_role_isolation.context import build_commitment_context
+
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=Exception("DB connection error"))
+        db.fetch_all = AsyncMock(side_effect=Exception("DB error"))
+
+        goals, promises = await build_commitment_context(ROLE_CSIE, db=db)
+        assert goals == []
+        assert promises == []
