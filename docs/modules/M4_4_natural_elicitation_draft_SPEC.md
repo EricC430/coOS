@@ -6,7 +6,7 @@
 
 ## 1. Purpose (目的)
 
-透過兩階段管線產出每日反思草稿：白天在 Persona 對話中自然套問耗時資訊並解析結構化數據；深夜排程自動拉取 `raw_tracking_logs` 拼裝吉布斯反思循環草稿，寫入 `daily_reflections` 且標記 `is_draft = true`。
+透過兩階段管線產出每日反思草稿：白天在 Persona 對話中，當背景監測自信度不足或存在未覆蓋時段時，自然套問耗時與活動資訊並解析結構化數據；深夜排程自動拉取 `raw_tracking_logs` 拼裝吉布斯反思循環草稿，寫入 `daily_reflections` 且標記 `is_draft = true`。
 
 ## 2. References (引用研究)
 
@@ -25,6 +25,7 @@
 | 來源 | Schema | 範例 |
 | ---- | ------ | ---- |
 | M4.2 Persona 對話流 | `ChatMessage` | `{"thread_id": "t_001", "content": "這份微積分作業大概花了我三小時", "role": "user"}` |
+| M4.6 Observer 背景回掃結果 | `TelemetrySegmentReport` | `{"segments": [...], "gaps": [{"start": "09:00", "end": "12:00", "confidence": 0.0}]}` |
 | M6.1 `raw_tracking_logs` | DB Rows | 前一日所有 `module='M1.*'` 的遙測事件 |
 | M6.1 `chat_transcripts` | DB Rows | 前一日所有對話記錄 (含已套問到的耗時) |
 | M1.5 微 Nudges 回覆 (若有) | `NudgeResponse` | `{"target_alignment": true, "role_id": "role_csie"}` |
@@ -34,7 +35,7 @@
 
 | 對象 | Schema | 範例 |
 | ---- | ------ | ---- |
-| M4.2 Persona Prompt 注入 | `ElicitationPromptFragment` | `{"inject_question": "這個作業花了多久?", "context": "user_mentioned_homework"}` |
+| M4.2 Persona Prompt 注入 | `ElicitationPromptFragment` | `{"inject_messages": ["...", "..."], "context": "telemetry_gap"}` |
 | M6.1 `chat_transcripts` (套問結果) | 標記 `elicitation_tag` | 標記哪些對話 turn 是套問結果 |
 | M6.4 `daily_reflections` | `DraftReflection` | `{is_draft: true, ai_description: "...", ai_analysis: "...", source_log_ids: [...]}` |
 | M0.4 結構化日誌 | `LogEvent` | 記錄套問觸發、解析結果、草稿生成事件 |
@@ -44,8 +45,9 @@
 ### 上游 (我依賴誰)
 
 - **M4.1** (Agent 路由)：套問注入透過 LangGraph 節點觸發
-- **M4.2** (Persona 狀態機)：套問問句由 Persona 的語氣包裝，不可破壞人設
+- **M4.2** (Persona 狀態機)：套問問句由 Persona 的語氣包裝，經多訊息分割器輸出，不可破壞人設
 - **M4.3** (角色隔離)：草稿嚴格歸屬當前 `role_id`
+- **M4.6** (Observer 背景萃取)：提供 `TelemetrySegmentReport`（含語意分類與自信度），M4.4 **不自行做 domain keyword 匹配**
 - **M6.1** (SQLite)：讀取 `raw_tracking_logs` 與 `chat_transcripts`
 - **M6.4** (daily_reflections 表)：寫入草稿記錄
 
@@ -61,7 +63,8 @@
 | -------- | ---- | -------- |
 | **RISK-01** | 草稿自動產出後若被 M4.5 直接結算 XP → IKEA 效應失效 | M4.4 產出的記錄**永遠** `is_draft=true, is_reviewed=false`；M4.5 必須檢查 `is_reviewed=true` 才發放 |
 | **RISK-15** | M4.4.3 草稿引用 `content_summary` (M1.1 Opt-in) 原文後同步至雲端 → 側通道洩漏 | 草稿 `ai_description` 只可使用 `app_bucket`、`duration_minutes` 等泛化指標；若需引用 `content_summary`，必須先經 M2.3 Eguard 泛化 |
-| (無直接 RISK-xx) | 套問頻率過高 → 使用者覺得被審問 | 每次對話最多套問 1 次耗時；cooldown 至少 5 個 turn |
+| (無直接 RISK-xx) | 套問頻率過高 → 使用者覺得被審問 | 每次對話最多套問 1 次；cooldown 至少 5 個 turn |
+| (無直接 RISK-xx) | 背景監測已有高自信度數據時仍套問 → 使用者覺得 AI 裝傻 | 套問前必須檢查 `TelemetrySegmentReport.confidence`；自信度 ≥ 0.7 的時段不觸發套問 |
 
 ## 6. Acceptance Criteria (驗收標準)
 
@@ -72,16 +75,18 @@ import pytest
 from datetime import date, time
 
 class TestM4_4_1_ElicitationController:
-    def test_elicitation_injected_naturally(self):
-        """套問問句必須由 Persona 語氣包裝，不可突兀"""
-        fragment = elicitation_controller.generate_question(
-            context="user_mentioned_homework",
+    def test_elicitation_outputs_multi_message(self):
+        """套問結果為多訊息序列，模擬真人聊天節奏"""
+        fragment = elicitation_controller.generate_elicitation(
+            context="telemetry_gap",
+            telemetry_hint="下午有在 VS Code 寫程式",
             persona_tone="empathetic"
         )
-        assert fragment.inject_question is not None
-        assert len(fragment.inject_question) > 5
+        assert isinstance(fragment.inject_messages, list)
+        assert len(fragment.inject_messages) >= 2
         # 不可出現機器式語句
-        assert "請輸入耗時" not in fragment.inject_question
+        for msg in fragment.inject_messages:
+            assert "請輸入耗時" not in msg
 
     def test_elicitation_cooldown(self):
         """每次對話最多套問 1 次，cooldown 至少 5 turn"""
@@ -90,10 +95,36 @@ class TestM4_4_1_ElicitationController:
         assert controller.can_elicit(thread_id="t_001", current_turn=5) is False
         assert controller.can_elicit(thread_id="t_001", current_turn=9) is True
 
+    def test_no_elicitation_when_telemetry_confident(self):
+        """背景監測自信度 >= 0.7 時不套問，避免 AI 裝傻"""
+        report = TelemetrySegmentReport(
+            segments=[{"start": "14:00", "end": "16:00", "app_bucket": "coding",
+                       "confidence": 0.9, "duration_minutes": 120}],
+            gaps=[]
+        )
+        assert controller.should_elicit(report) is False
+
+    def test_elicit_on_telemetry_gap(self):
+        """存在未覆蓋時段 (gap) 時觸發套問"""
+        report = TelemetrySegmentReport(
+            segments=[],
+            gaps=[{"start": "09:00", "end": "12:00", "confidence": 0.0}]
+        )
+        assert controller.should_elicit(report) is True
+
+    def test_elicit_on_low_confidence_segment(self):
+        """背景監測有紀錄但自信度 < 0.7 時觸發確認性套問"""
+        report = TelemetrySegmentReport(
+            segments=[{"start": "14:00", "end": "15:00", "app_bucket": "document",
+                       "confidence": 0.4, "duration_minutes": 60}],
+            gaps=[]
+        )
+        assert controller.should_elicit(report) is True
+
     def test_elicitation_scoped_by_role(self):
         """[RISK-06] 套問只針對當前角色的專案"""
-        fragment = elicitation_controller.generate_question(
-            context="user_mentioned_project",
+        fragment = elicitation_controller.generate_elicitation(
+            context="telemetry_gap",
             role_id="role_csie"
         )
         assert fragment.target_role_id == "role_csie"
@@ -174,24 +205,74 @@ class TestM4_4_3_DraftScheduler:
 
 ### 7.1 對話套問控制器 (M4.4.1)
 
+> [!IMPORTANT]
+> **設計原則：M4.4 不自行做 domain 匹配**。背景遙測的語意分類與專家分配由 M4.6 Observer 統一處理（語意級別，非關鍵字字串比對）。M4.4 僅在收到 Observer 的 `TelemetrySegmentReport` 後，依據自信度門檻決定「是否需要套問」以及「套問什麼」。
+
+> [!IMPORTANT]
+> **設計原則：自信度門檻機制**。當 `TelemetrySegmentReport` 中某時段的 `confidence >= 0.7` 時，背景監測已有足夠可靠的數據，M4.4 **不發起套問**（避免 AI 裝傻）。僅當 `confidence < 0.7`（低自信度時段）或存在完全空白的 `gap`（未監測到的時段，如使用者離開筆電或未使用 coOS）時，才觸發套問。
+
+> [!IMPORTANT]
+> **設計原則：套問不限於時間**。套問內容不僅僅是「花了多久？」，還包含對未覆蓋時段的活動確認（如「你上午好像沒在線上，有做什麼跟專案相關的事嗎？」）以及對低自信度時段的內容確認（如「你下午在 Word 裡忙了好一陣子，是在寫報告嗎？」）。
+
 ```python
 # services/m4_4_elicitation/controller.py
 # [R08 §五 意圖脫鉤] 套問由 Persona 自然帶出
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
+
+@dataclass
+class TelemetrySegment:
+    """由 M4.6 Observer 回掃後產出的單一時段報告"""
+    start: str              # "14:00"
+    end: str                # "16:00"
+    app_bucket: str         # "coding" / "document" / "browser" / "unknown"
+    confidence: float       # 0.0~1.0，語意分類自信度
+    duration_minutes: int
+    project_name: Optional[str] = None
+
+@dataclass
+class TelemetryGap:
+    """完全沒有遙測數據的空白時段（使用者離線/未使用 coOS）"""
+    start: str
+    end: str
+    confidence: float = 0.0  # 永遠為 0
+
+@dataclass
+class TelemetrySegmentReport:
+    """M4.6 Observer 進入聊天室時回掃近期遙測產出的報告"""
+    segments: list[TelemetrySegment] = field(default_factory=list)
+    gaps: list[TelemetryGap] = field(default_factory=list)
 
 @dataclass
 class ElicitationPromptFragment:
-    inject_question: str
-    context: str
+    """套問結果：多訊息序列（模擬真人分段發送）"""
+    inject_messages: list[str]    # 2~4 個獨立訊息氣泡
+    context: str                  # "telemetry_gap" / "low_confidence" / "duration_confirm"
     target_role_id: str
     cooldown_turns: int = 5
 
+# 套問模板：每個 key 對應一個多訊息序列
 ELICITATION_TEMPLATES = {
-    "homework_duration": "對了，{project_name}這個作業大概花了你多久？",
-    "coding_session":   "今天寫程式的感覺怎樣？大概寫了多久？",
-    "general_task":     "這件事情花了你蠻多時間嗎？",
+    "telemetry_observed": [
+        "我從後台紀錄看到你{time_hint}有在{activity_hint}耶",
+        "今天進度怎麼樣",
+        "有做到預計的目標嗎？",
+    ],
+    "telemetry_gap": [
+        "我看你{time_hint}好像沒有在電腦前",
+        "有做什麼跟{project_name}相關的事嗎？",
+    ],
+    "low_confidence": [
+        "後台有記錄到你{time_hint}開了{app_hint}一陣子",
+        "是在做{project_name}的東西嗎？",
+    ],
+    "general_duration": [
+        "對了，{project_name}這個大概花了你多久？",
+    ],
 }
+
+CONFIDENCE_THRESHOLD = 0.7  # 自信度門檻
 
 class ElicitationController:
     """每個 thread 最多套問 1 次，cooldown 5 turn"""
@@ -202,6 +283,7 @@ class ElicitationController:
         self._history: dict[str, list[int]] = {}  # thread_id → [turn_numbers]
 
     def can_elicit(self, thread_id: str, current_turn: int) -> bool:
+        """頻率限制檢查"""
         history = self._history.get(thread_id, [])
         if len(history) >= self.MAX_PER_THREAD:
             return False
@@ -209,12 +291,41 @@ class ElicitationController:
             return False
         return True
 
-    def generate_question(self, context: str, persona_tone: str,
-                          role_id: str, project_name: str = "") -> ElicitationPromptFragment:
-        template = ELICITATION_TEMPLATES.get(context, ELICITATION_TEMPLATES["general_task"])
-        question = template.format(project_name=project_name)
+    def should_elicit(self, report: TelemetrySegmentReport) -> bool:
+        """
+        [自信度門檻] 判斷是否需要套問：
+        - 存在 gap (完全未覆蓋時段) → True
+        - 存在 confidence < CONFIDENCE_THRESHOLD 的時段 → True
+        - 所有時段 confidence >= CONFIDENCE_THRESHOLD → False (不套問，避免裝傻)
+        """
+        if report.gaps:
+            return True
+        return any(seg.confidence < CONFIDENCE_THRESHOLD for seg in report.segments)
+
+    def generate_elicitation(
+        self, context: str, role_id: str,
+        persona_tone: str = "empathetic",
+        telemetry_hint: str = "",
+        time_hint: str = "",
+        app_hint: str = "",
+        project_name: str = "",
+    ) -> ElicitationPromptFragment:
+        """
+        生成多訊息序列的套問 Fragment。
+        每個訊息由前端以獨立氣泡渲染，中間插入 300~1500ms 隨機延遲。
+        """
+        templates = ELICITATION_TEMPLATES.get(context, ELICITATION_TEMPLATES["general_duration"])
+        messages = [
+            t.format(
+                time_hint=time_hint,
+                activity_hint=telemetry_hint,
+                app_hint=app_hint,
+                project_name=project_name,
+            )
+            for t in templates
+        ]
         return ElicitationPromptFragment(
-            inject_question=question,
+            inject_messages=messages,
             context=context,
             target_role_id=role_id,
         )
@@ -370,12 +481,35 @@ def build_gibbs_analysis(logs, elicited) -> str:
 ❌ **不要在 `ai_analysis` 中填入主觀感受或行動建議**
    理由：R08 §五 意圖脫鉤。AI 只填客觀數據與初步觀察，「感受」和「行動」是使用者的微摩擦力欄位。
 
-## 9. Open Questions
+❌ **不要在 M4.4 內自行用 domain keywords 做遙測-專家匹配**
+   理由：字串包含比對極度不準確（誤匹配/遺漏率高）。遙測的語意分類與專家分配統一由 M4.6 Observer 處理。M4.4 只消費 `TelemetrySegmentReport`，不做 domain 匹配。
 
-- [ ] **草稿排程時間是否可由使用者自訂?** 目前預設為凌晨 02:00（與 M4.1.5 的 03:00 錯開），但若使用者作息不同 (如夜貓子 05:00 才睡)，需要可配置。`role_settings.daily_report_time` 已預留此欄位 (M6.3)。
-- [ ] **套問觸發條件的具體規則?** 目前設計為「使用者提及作業/專案相關關鍵字」時觸發。是否需要更細緻的規則 (如只在對話超過 3 turn 後才套問)?
-- [ ] **深夜草稿是否呼叫雲端 LLM (Gemini) 生成?** 若用 Gemini 生成 `ai_description`/`ai_analysis`，品質更高但涉及隱私 (raw_tracking_logs 送雲端)。是否僅用本地模板拼裝?
-- [ ] **M1.5 微 Nudges 的回覆如何整合至草稿?** M1.5 是 `[進階]` 模組，MVP 階段是否先忽略微 Nudges 數據來源?
+❌ **不要在背景監測自信度 ≥ 0.7 時仍套問已知資訊**
+   理由：使用者會覺得 AI 在裝傻（明明後台已經知道了卻還來問）。自信度門檻 `CONFIDENCE_THRESHOLD = 0.7` 是鐵律，高於此值的時段不觸發套問。
+
+## 9. Open Questions (已決議)
+
+本模組設計之核心開放問題已與使用者拍板決議：
+
+- **草稿排程時間是否可由使用者自訂？**
+  * **決策**：**可自訂**。
+  * **細節**：預設為凌晨 02:00（與其餘背景排程錯開），使用者可透過 `role_settings.daily_report_time` 自訂排程時間以符合其作息（如夜貓子可調整為 05:00）。
+
+- **套問觸發條件的具體規則？**
+  * **決策**：**自信度門檻 + 進入聊天室時回掃觸發**。
+  * **細節**：
+    1. **遙測數據由 M4.6 Observer 語意分類**：使用者進入某專家的聊天室時，Observer 回掃近期 `raw_tracking_logs`，產出 `TelemetrySegmentReport`（含自信度與 gap 分析），而非由 M4.4 用 domain keywords 做字串比對。
+    2. **自信度門檻機制**：`confidence >= 0.7` 的時段不套問（避免 AI 裝傻）；`confidence < 0.7` 的低自信度時段觸發確認性套問；完全空白的 gap（使用者離線/未使用 coOS）觸發活動詢問。
+    3. **套問不限於時間**：不只問「花了多久」，也問未覆蓋時段的活動（如「你上午好像沒在線上，有做什麼跟專案相關的事嗎？」）與低自信度時段的內容確認（如「你下午在 Word 裡忙了好一陣子，是在寫報告嗎？」）。
+    4. 頻率限制維持「單一 Thread 上限 1 次，cooldown 5 turn」。
+
+- **深夜草稿是否呼叫雲端 LLM (Gemini) 生成？**
+  * **決策**：**本地端輕量模型 (Gemma) 與 Eguard 混合生成**。
+  * **細節**：為了遵守 L1 明文不下雲的安全規定，草稿的客觀描述與分析先由本地程式碼（Regex 與模板）拼裝，涉及語意摘要則呼叫本地 Gemma (M2.2) 處理，生成 `ai_description` 與 `ai_analysis`。寫入資料庫前必須通過 `M2.3 Eguard` 泛化脫敏。絕不將未經脫敏的 `raw_tracking_logs` 明文送往雲端 Gemini。
+
+- **M1.5 微 Nudges 的回覆如何整合至草稿？**
+  * **決策**：**MVP 階段暫時忽略**。
+  * **細節**：微 Nudges 回覆的整合較為複雜，首期 MVP 僅聚焦於遙測耗時與對話套問的整合。
 
 ---
 
@@ -383,11 +517,11 @@ def build_gibbs_analysis(logs, elicited) -> str:
 
 - [x] §1 Purpose 是單一職責，不能拆解 — 套問 + 草稿生成管線
 - [x] §2 至少 1 個 `Rxx` 引用 — R10 ×2, R08 ×3
-- [x] §3 Schema 用 dataclass — `ElicitationPromptFragment`, `DurationResult`, `DraftReflection`
-- [x] §4 依賴是真實模組編號 — M4.1, M4.2, M4.3, M6.1, M6.4
+- [x] §3 Schema 用 dataclass — `ElicitationPromptFragment`, `TelemetrySegmentReport`, `DurationResult`, `DraftReflection`
+- [x] §4 依賴是真實模組編號 — M4.1, M4.2, M4.3, M4.6, M6.1, M6.4
 - [x] §5 grep 過 `05_integration_risk_audit.md` — RISK-01, RISK-15
-- [x] §6 測試先於程式碼 — 13 條驗收測試
-- [x] §8 至少 3 條反模式 — 5 條
+- [x] §6 測試先於程式碼 — 16 條驗收測試
+- [x] §8 至少 3 條反模式 — 7 條
 - [x] §9 至少 1 個開放問題 — 4 個
 
 ---
