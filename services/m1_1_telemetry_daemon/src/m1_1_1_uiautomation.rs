@@ -15,7 +15,7 @@ pub struct ForegroundWindow {
 #[cfg(windows)]
 pub fn get_foreground_window() -> Option<ForegroundWindow> {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::System::Threading::{GetCurrentProcessId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
     use windows::Win32::System::ProcessStatus::GetProcessImageFileNameW;
 

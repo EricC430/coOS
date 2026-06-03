@@ -14,7 +14,7 @@ use m1_1_telemetry_daemon::m1_1_1_uiautomation::get_foreground_window;
 use m1_1_telemetry_daemon::m1_1_2_input_debouncer::InputDebouncer;
 use m1_1_telemetry_daemon::m1_1_3_focus_tracker::FocusTracker;
 use m1_1_telemetry_daemon::m1_1_4_privacy_guard::assert_no_hw_capture;
-use m1_1_telemetry_daemon::models::{AppBucket, TelemetryEvent};
+use m1_1_telemetry_daemon::models::TelemetryEvent;
 
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
@@ -59,7 +59,7 @@ async fn main() {
             if win.app_name != last_app {
                 // App switched
                 let wpm = debouncer.current_wpm();
-                let key_count = debouncer.drain_key_count();
+                let _key_count = debouncer.drain_key_count();
 
                 // Emit focus_session_ended for previous app if long enough
                 if let Some(session_ev) = tracker.on_focus_changed(
