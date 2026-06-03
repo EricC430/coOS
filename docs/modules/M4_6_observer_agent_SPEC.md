@@ -59,7 +59,7 @@
 | -------- | ---- | -------- |
 | **RISK-08** | Observer 推論的 desire 與 ToM belief 矛盾 → 衝突路由 | Observer 不直接注入 Persona，萃取結果走 BDI Reconciler 整合為 `intention` 後才供 M4.2 使用 |
 | **RISK-12** | 推論出的 Project 名稱含敏感資訊 (如「OpenStack 畢業專題 by 陳XX」) 經 M6.2 同步上雲 → 側通道洩漏 | 萃取結果必須經 M2.3 Eguard 過濾 PII；Observer 自動建立的成就預設 `visibility="private"` |
-| (無直接 RISK-xx) | Observer 超時或崩潰阻塞主對話 | Observer 與 Persona 並行執行；Observer 設 5s timeout，超時靜默失敗不影響對話 |
+| (無直接 RISK-xx) | Observer 超時或崩潰阻塞主對話 | Observer 與 Persona 並行執行；Observer 設 30s timeout，超時靜默失敗不影響對話 |
 
 ## 6. Acceptance Criteria (驗收標準)
 
@@ -70,14 +70,14 @@ import pytest
 import asyncio
 
 class TestObserverExtraction:
-    def test_project_detected_in_5_seconds(self, db, user, role_csie):
-        """對話含「我想做 X 專案」→ 5 秒內 role_projects 出現對應紀錄"""
+    def test_project_detected_in_30_seconds(self, db, user, role_csie):
+        """[決策] 對話含「我想做 X 專案」→ 30 秒內 role_projects 出現對應紀錄"""
         result = run_observer(
             thread_id="t_001",
             user_msg="我想開始做微積分的期末專案",
             role_id=role_csie.id,
         )
-        assert result.elapsed_seconds <= 5
+        assert result.elapsed_seconds <= 30
         project = db.query_one(
             "SELECT * FROM role_projects WHERE role_id = :rid AND name LIKE '%微積分%'",
             {"rid": role_csie.id}
@@ -100,6 +100,12 @@ class TestObserverExtraction:
         result = run_observer(user_msg="我明天要交作業，今晚得趕完")
         assert result.extracted_intent is not None
         assert "deadline" in result.extracted_intent.lower() or "urgent" in result.extracted_intent.lower()
+
+    def test_emotion_extraction(self, db):
+        """[決策] 萃取使用者情緒"""
+        result = run_observer(user_msg="這份作業我寫了三天都寫不出來，真的很想放棄")
+        assert result.emotion_detected is not None
+        assert result.emotion_detected in ["frustrated", "anxious", "sad"]
 
 class TestObserverPrivacy:
     def test_extraction_passes_eguard(self):
@@ -171,6 +177,11 @@ class ObserverResult:
     extracted_intent: Optional[str] = None
     time_commitment: Optional[str] = None
     achievement: Optional[dict] = None
+    # v1.2 新增：承諾萃取與目標確立
+    promises_detected: List[dict] = field(default_factory=list)
+    goal_established: Optional[dict] = None
+    session_intention: Optional[str] = None  # Session 結束時 LLM 抽取
+    emotion_detected: Optional[str] = None   # [決策] 偵測到的當下情緒標籤 (如 anxious, frustrated)
     role_id: str = ""
     timed_out: bool = False
     elapsed_seconds: float = 0.0
@@ -188,12 +199,12 @@ EXTRACT_PATTERNS = {
 async def observer_extract(task: dict) -> ObserverResult:
     """
     [R10 §代理工作流] 非同步萃取，不阻塞 Persona。
-    5s timeout — 超時靜默失敗。
+    [決策] 30s timeout — 超時靜默失敗以適應本地端推論。
     """
     import asyncio
     try:
         result = await asyncio.wait_for(
-            _do_extraction(task), timeout=5.0
+            _do_extraction(task), timeout=30.0
         )
         return result
     except asyncio.TimeoutError:
@@ -222,8 +233,8 @@ async def detect_and_upsert_project(
     # Eguard 過濾 [RISK-12]
     candidate = await eguard_filter_pii(candidate)
 
-    # 模糊匹配
-    match = fuzzy_match(candidate, [p.name for p in existing_projects], threshold=0.7)
+    # [決策] 專案本質是標籤，提高匹配閾值至 0.85 防止過度合併 (例如 微積分作業 vs 微積分練習方法)
+    match = fuzzy_match(candidate, [p.name for p in existing_projects], threshold=0.85)
     if match:
         return match  # 已存在，不新建
 
@@ -261,12 +272,145 @@ async def submit_to_bdi_reconciler(
     # M4.2 的 BDI Reconciler 會從此佇列取出並整合 belief
 ```
 
-### 7.4 異常處理
+### 7.4 承諾萃取 (v1.2 新增)
 
-- **Observer 超時 (>5s)** → 靜默失敗，記錄 `observer_timeout` 日誌；不影響主對話流
+```python
+# services/m4_6_observer/promise_extractor.py
+# [v1.2] 從對話中偵測口頭承諾並寫入 promises 表
+
+async def extract_promises(
+    user_msg: str, thread_id: str, role_id: str, persona_id: str
+) -> list[dict]:
+    """
+    使用 LLM (本地 Gemma) 從使用者訊息中抽取口頭承諾。
+    純 Regex 無法涵蓋「我這週末應該可以搞定」等模糊承諾語句，
+    因此使用 LLM 做語意理解 + 時間 NER。
+
+    回傳格式: [{"text": "週五前做完報告", "deadline": "2026-06-06T23:59:00"}]
+    """
+    prompt = (
+        "從以下使用者訊息中抽取任何口頭承諾或時間約定。"
+        "回傳 JSON 陣列，每個元素包含 text（承諾原文）和 deadline（ISO 格式，若無法確定則為 null）。"
+        "若無承諾則回傳空陣列 []。\n"
+        f"使用者訊息：{user_msg}"
+    )
+    result = await gemma_edge.generate_json(prompt)
+    
+    # 寫入 promises 表
+    for promise in result:
+        promise_text = await eguard_filter_pii(promise["text"])
+        await db.execute(
+            "INSERT INTO promises (id, role_id, persona_id, source_thread_id, text, deadline) "
+            "VALUES (gen_random_uuid(), :rid, :pid, :tid, :text, :deadline)",
+            {"rid": role_id, "pid": persona_id, "tid": thread_id,
+             "text": promise_text, "deadline": promise.get("deadline")}
+        )
+        await emit_sse("PROMISE_RECORDED", {
+            "text": promise_text, "deadline": promise.get("deadline"),
+            "persona_id": persona_id,
+        })
+    
+    return result
+```
+
+### 7.5 Session 結束時 Intention 抽取 (v1.2 新增)
+
+```python
+# services/m4_6_observer/intention_extractor.py
+# [v1.2] 每個 Session (thread) 結束時由 LLM 抽取使用者核心 intention
+
+async def extract_session_intention(
+    thread_id: str, role_id: str, persona_id: str
+) -> Optional[str]:
+    """
+    Session 結束時觸發（由 M4.1 的 session_end 回調呼叫）。
+    從整段對話歷史中抽取使用者進行此對話的核心 intention。
+    寫入 chat_transcripts 的 session metadata，供 M3.4 前端歷史時間軸的 intention 欄顯示。
+    """
+    transcripts = await db.fetch_all(
+        "SELECT content, role FROM chat_transcripts "
+        "WHERE thread_id = :tid ORDER BY created_at ASC",
+        {"tid": thread_id}
+    )
+    if not transcripts:
+        return None
+    
+    conversation = "\n".join(
+        f"{'使用者' if t['role'] == 'user' else '專家'}: {t['content']}"
+        for t in transcripts
+    )
+    
+    prompt = (
+        "請用一句話摘要此對話中使用者的核心意圖/目的是什麼。"
+        "回傳純文字，不要 JSON。\n"
+        f"對話內容：\n{conversation[:2000]}"
+    )
+    intention = await gemma_edge.generate_text(prompt)
+    
+    # 更新 session metadata
+    await db.execute(
+        "UPDATE chat_transcripts SET session_intention = :intention "
+        "WHERE thread_id = :tid AND turn_number = 1",
+        {"intention": intention.strip(), "tid": thread_id}
+    )
+    
+    return intention.strip()
+```
+
+### 7.6 目標確立偵測 (v1.2 新增)
+
+```python
+# services/m4_6_observer/goal_detector.py
+# [v1.2] 偵測對話中是否確立了新的核心目標
+
+async def detect_goal_establishment(
+    user_msg: str, assistant_msg: str,
+    thread_id: str, role_id: str, persona_id: str,
+    existing_goals: list
+) -> Optional[dict]:
+    """
+    使用 LLM 判斷對話中是否確立了新的最高階目標。
+    觸發條件：
+    - 專家引導使用者明確說出目的 (如「所以你找我最主要是想...」)
+    - 使用者主動聲明目標 (如「我希望能...」「我的目標是...」)
+    
+    若偵測到新目標且不與既有 active goals 重複 → 寫入 goals 表。
+    觸發 GOAL_CONFIRMED SSE 事件（區別於單純的 GOAL_INFERRED）。
+    """
+    prompt = (
+        "以下對話中，使用者是否與專家確立了一個明確的核心目標或最高階目的？"
+        "若有，回傳 JSON: {\"title\": \"目標標題\", \"description\": \"詳細描述\"}。"
+        "若無明確目標確立，回傳 null。\n"
+        f"專家：{assistant_msg[:500]}\n使用者：{user_msg[:500]}"
+    )
+    result = await gemma_edge.generate_json(prompt)
+    
+    if result and result.get("title"):
+        # 去重：模糊匹配既有目標
+        title = await eguard_filter_pii(result["title"])
+        if not fuzzy_match(title, [g["title"] for g in existing_goals], threshold=0.7):
+            await db.execute(
+                "INSERT INTO goals (id, role_id, persona_id, title, description) "
+                "VALUES (gen_random_uuid(), :rid, :pid, :title, :desc)",
+                {"rid": role_id, "pid": persona_id,
+                 "title": title, "desc": result.get("description", "")}
+            )
+            await emit_sse("GOAL_CONFIRMED", {
+                "title": title, "persona_id": persona_id,
+            })
+            return result
+    
+    return None
+```
+
+### 7.7 異常處理
+
+- **Observer 超時 (>30s)** → 靜默失敗，記錄 `observer_timeout` 日誌；不影響主對話流
 - **Eguard 過濾後 project_name 為空** → 放棄此次萃取，記錄 `extraction_filtered_empty`
 - **`role_projects` UNIQUE 約束衝突** → 視為已存在，匹配而非失敗
 - **SSE 推送失敗 (前端斷線)** → 靜默忽略，System Event 非關鍵路徑
+- **承諾萃取 LLM 回傳格式錯誤** → 靜默忽略，記錄 `promise_extraction_parse_error`
+- **Intention 抽取失敗** → 記錄 `intention_extraction_failed`，前端 intention 欄顯示「(未抽取)」
 
 ## 8. Anti-patterns (反模式)
 
@@ -285,12 +429,19 @@ async def submit_to_bdi_reconciler(
 ❌ **不要在 Observer 偵測到專案時自動建立完整的 Kanban/Task**
    理由：MVP 階段 Project 僅是標籤概念 (M6.3 Open Questions)，進階功能留待未來。
 
-## 9. Open Questions
+❌ **不要讓承諾萃取繞過 Eguard 直接寫入 promises 表**
+   理由：RISK-12。承諾原文可能包含 PII（如「幫陳小明做 OpenStack 報告」），必須先泛化。
 
-- [ ] **Observer 的萃取是用 Regex 還是 LLM?** MVP 用 Regex pattern matching 足夠，但複雜語境 (如「我上週提到的那個東西」) 需要 LLM。是否 MVP 階段就呼叫 Gemini 做 Function Calling?
-- [ ] **專案模糊匹配的閾值?** 目前設 0.7，「微積分作業」vs「微積分」是否應匹配? 「OS Lab」vs「Operating System 實驗」呢?
-- [ ] **Observer 是否應萃取「情緒」?** 目前只萃取 project/intent/deadline，情緒偵測屬 M4.8 (進階)。但若 MVP 對話中明確說「我很焦慮」，Observer 是否應記錄?
-- [ ] **System Event 的 UI 呈現方式?** M3.4.4.1 定義了隱形提示，但具體樣式 (Toast? 對話氣泡? 底部 bar?) 需與前端設計對齊。
+## 9. Open Questions (已拍板決策)
+
+- [x] **Observer 的萃取是用 Regex 還是 LLM?**
+  * **決策**：**LLM（本地 Gemma）**。承諾萃取與目標確立偵測需要語意理解，純 Regex 無法涵蓋「我這週末應該可以搞定」等模糊語句。專案偵測保留 Regex 作為快速路徑，LLM 作為回退。
+- **[決策] 專案模糊匹配的閾值與定義**：
+  * **決策**：專案在系統中實質上是**「議題/討論標籤 (Topic Tag)」**而非限定於嚴格定義的專案實體。若角色本身的專業領域較為集中（例如「微積分助教」），過度寬鬆的匹配會將各種微積分話題合併。因此，將模糊匹配閾值提高至 **`0.85`**（高嚴格度），且專案定義為標籤（例如將討論「微積分怎麼練習比較好」標記為「微積分的練習方法」標籤），以防將不同話題錯誤合併。
+- **[決策] Observer 是否應萃取「情緒」**：
+  * **決策**：**是，進行情緒萃取**。除了原有的 project/intent/deadline/promise/goal 外，Observer 將同時偵測使用者在對話中所流露的當下情緒（如：焦慮、受挫、自信、迷茫等），並寫入 `chat_transcripts` 中的 metadata，以供 Persona 動態調整回應語氣或觸發反思套問。
+- **[決策] System Event 的 UI 呈現方式**：
+  * **決策**：**到時候確認**。暫不於 SPEC 硬性規定具體呈現樣式，待後續與前端 UI 設計實際開發對齊後再行敲定。
 
 ---
 
