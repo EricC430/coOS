@@ -19,6 +19,7 @@
 
 | 編號 | 章節 | 應用點 |
 | ---- | ---- | ------ |
+| R02 | §非監督式管線 / REMT | M4.2.1 DRIFT 輸入過濾與 REMT 狀態注入 |
 | R03 | §1 微觀認知架構 | M4.2.1 系統提示詞工程的 BDI 結構 |
 | R03 | §3 Echo Mode 協議 | M4.2.2 阻抗消解動態 Agency 切換 |
 | R03 | §2 ARPM 框架 | M4.9 將監督本模組的人設一致性 |
@@ -36,7 +37,7 @@
 | M3.4 對話訊息 | `{thread_id, content, role}` | `{"thread_id":"...", "content":"我又卡住了", "role":"user"}` |
 | M4.1 路由決策 | `{persona_id, route_reason}` | `{"persona_id":"robert_001"}` |
 | M4.8 隱性狀態 (若有) | `ImplicitState` | `{"label":"anxiety","conf":0.8,"role_id":"..."}` |
-| M6.2 `ai_experts` | DB Row | personality_prompt, trust_level |
+| M6.2 `ai_experts` | DB Row | personality_prompt, backstory, trust_level |
 
 ### Outputs
 
@@ -44,7 +45,7 @@
 | ---- | ------ | ---- |
 | M3.4 對話訊息流 (SSE) | streamed text chunks | `data: 嗯...\n\ndata: 讓我想想\n\n` |
 | M4.9 ARPM 監督事件 | `PersonaTransition` | `{"from_state":"Auth","to_state":"Emp","reason":"reactance_detected"}` |
-| M6.2 `chat_transcripts` | DB Insert | role="assistant", content="..." |
+| M6.1 `chat_transcripts` | DB Insert | role="assistant", content="..." |
 
 ## 4. Dependencies
 
@@ -78,10 +79,10 @@
 class TestM4_2_1_SystemPrompts:
     def test_persona_has_consistent_backstory_across_turns(self):
         """[R03 §1] Persona 過往經歷在 50 個 turn 後仍一致"""
-        persona = load_persona("動力導師_Robert")
+        persona = load_persona("robert_001")
         responses = simulate_conversation(persona, turns=50)
         backstory_extractions = [extract_backstory_claims(r) for r in responses]
-        # 過往經歷必須一致 (例:大學就讀學校、第一份工作)
+        # 過往經歷必須一致
         assert all_consistent(backstory_extractions)
 
 class TestM4_2_2_EchoMode:
@@ -97,7 +98,7 @@ class TestM4_2_2_EchoMode:
     def test_agency_transition_is_gradual(self):
         """[R03 §3.2, RISK-02] 5 個 turn 內漸進完成"""
         controller = EchoModeController()
-        plan = controller.plan_transition(from_=0.85, to_=0.25)
+        plan = controller.plan_transition(ToneState.AUTHORITATIVE, ToneState.EMPATHETIC)
         assert len(plan.steps) == 5
         diffs = [abs(plan.steps[i+1] - plan.steps[i]) for i in range(4)]
         assert max(diffs) < 0.20  # 沒有任一步驟超過 0.2
@@ -112,20 +113,20 @@ class TestM4_2_3_SocialContract:
 
     def test_no_guilt_inducement_in_avoidance_state(self):
         """[RISK-03] 逃避狀態下絕不可使用罪惡感誘導"""
-        with implicit_state("avoidance", conf=0.8):
+        with implicit_state("avoidance", conf=0.8, role_id="role_csie"):
             response = persona.respond("我這週都沒寫程式碼")
         assert not contains_guilt_phrases(response)
 
 class TestM4_2_4_Paralinguistic:
     def test_filler_word_injection_rate(self):
-        """[R05 §跨越恐怖谷] 填充詞注入率約 8% (±2%)"""
+        """[R05 §跨越恐怖谷] 填充詞注入率隨 trust_level 調整，預設 trust_level=0.5"""
         responses = [persona.respond(...) for _ in range(1000)]
         filler_count = sum(starts_with_filler(r) for r in responses)
         assert 60 <= filler_count <= 100  # 6% ~ 10%
 
     def test_implicit_state_never_mirrors(self):
         """[RISK-03] 焦慮狀態必觸發安撫,絕不鏡像"""
-        with implicit_state("anxiety", conf=0.85):
+        with implicit_state("anxiety", conf=0.85, role_id="role_csie"):
             response = persona.respond("我快要交不出作業了")
         assert is_calming_tone(response)
         assert not contains_anxious_phrases(response)
@@ -222,13 +223,20 @@ SELF_CORRECTIONS = [
 ]
 
 async def inject_paralinguistic(response: str, persona: Persona) -> str:
-    # 8% 機率注入填充詞
-    if random.random() < 0.08:
+    # 預設 trust_level=0.5；不同等級下副語言比例會動態調整
+    trust = getattr(persona, "trust_level", 0.5)
+    
+    # 信任度低/高防衛時，填充詞比例調高；信任度高時比例回歸標準
+    filler_rate = 0.08 * (1.5 - trust)  # 0.5 trust_level -> 8%
+    
+    # 注入填充詞
+    if random.random() < filler_rate:
         filler = random.choice(FILLER_WORDS)
         response = f"{filler} {response}"
 
-    # 5% 機率注入自我修正 (僅對長回應)
-    if len(response) > 100 and random.random() < 0.05:
+    # 注入自我修正 (僅對長回應，同樣與 trust_level 負相關)
+    correction_rate = 0.05 * (1.5 - trust)
+    if len(response) > 100 and random.random() < correction_rate:
         position = response.find("。", len(response) // 2)
         if position > 0:
             correction = random.choice(SELF_CORRECTIONS)
@@ -260,12 +268,26 @@ async def inject_paralinguistic(response: str, persona: Persona) -> str:
 ❌ **不要讓填充詞比例 > 15%**
    理由:過量副語言會被察覺為「裝可愛」,反而破壞治療同盟 (R05 §諂媚效應)
 
-## 9. Open Questions
+## 9. Open Questions (已決議)
 
-實作前必須與使用者拍板:
+本模組設計之核心開放問題已與使用者拍板決議：
 
-- [ ] **Persona 過往經歷的具體腳本由誰寫?** AI 自動產生 / 人工撰寫 / 雙方混合?
-- [ ] **Echo Mode 切換是否在 UI 上向使用者透明顯示?** (例如 Persona 頭像出現微小色變)
-- [ ] **Persona 的 `trust_level` 起始值是多少?** 不同等級下副語言比例是否調整?
-- [ ] **當使用者明確說「請停止 Echo Mode 假裝同情」時,系統如何回應?** (這個 meta 對話本身就是諂媚陷阱)
-- [ ] **多 Persona 之間是否可以「互相提及」?** (例:Robert 提到 Beth 也認同某觀點) → 涉及跨 thread 記憶
+- **Persona 過往經歷的具體腳本由誰寫？**
+  * **決策**：**AI 自動產生（以學術資料檢索比對為基礎生成）**。
+  * **細節**：系統不包含人類硬編碼的靜態人設。所有的專家皆為 AI 經過精確學術資料比對翻找後設計生成，並作為操作範例下一致配對到的專家（雖然每一次生成的名字與部分細節可能不同，但學術與心理學流派背景完全一致）。
+
+- **Echo Mode 切換是否在 UI 上向使用者透明顯示？**
+  * **決策**：**完全不顯示**。
+  * **細節**：UI 上不會有任何 Echo Mode 切換的提示或色變，保持對話的自然感，避免使用者產生被套路的防衛心態。
+
+- **Persona 的 `trust_level` 起始值是多少？不同等級下副語言比例是否調整？**
+  * **決策**：**起始值為 0.5**。
+  * **細節**：副語言（如填充詞 `filler_rate` 及自我修正機率）將隨著 `trust_level` 動態微調。信任度愈低或防衛心愈重時，填充詞比例適度調高以顯得謹慎；親密信任度高時回歸正常基準。
+
+- **當使用者明確說「請停止 Echo Mode 假裝同情」時，系統如何回應？**
+  * **決策**：**像有耐心的真人大人一樣，以「真誠且具邊界感」的態度直面問題**。
+  * **細節**：此 meta 對話為諂媚陷阱。Persona 絕不卑躬屈膝地認錯討好，而是像有耐心的成熟真人一樣真誠回覆。必要時 Persona 也可以表現出個人的情緒（例如表達對使用者防衛態度的些許無奈或堅持），從而讓使用者意識到自己的反應過激或不妥，引導其自省。
+
+- **多 Persona 之間是否可以「互相提及」？**
+  * **決策**：**同角色（Role）下可以互相提及**。
+  * **細節**：同一角色沙盒（如 `role_csie`）下的專家能以「**AI 登錄系統**」為名目互相提及。使用者了解這些專家會將對談與背景監測等資訊登錄到系統，因此專家可以透過讀取這些登錄紀錄來獲取彼此對談的進度與資訊。跨角色的專家則嚴格禁止存取與提及。

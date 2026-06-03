@@ -149,12 +149,30 @@ arq==0.25.*    # 排程
 
 | 服務 | 用途 | 方案 | 額度 |
 | ---- | ---- | ---- | ---- |
-| Gemini 3.5 Flash / Gemini 3.1 Flash Lite | 雲端 LLM | Google AI Pro | 限時免費 |
-| Gemini 3.5 Pro API | 雲端 LLM | Google Dev Program | $10/月 (尚未開通) |
+| Gemini 3.5 Flash / Gemini 3 Flash / Gemini 2.5 Flash / Lite | 雲端 LLM (高複雜度，用量緊繃) | Google AI Studio Free Tier | RPD 10 (免費) |
+| Gemini 3.1 Flash Lite | 雲端 LLM (中複雜度) | Google AI Studio Free Tier | RPD 500 (免費) |
+| Gemma 4 (31B/26B) | 雲端 LLM (輕量級，無感延遲) | Google AI Studio Free Tier | RPD 1500 (免費) |
+| Gemini 3.5 Pro API | 核心深層認知 | Google Dev Program | $10/月 (尚未開通) |
 | Supabase | PostgreSQL | Free tier | 500MB |
 | Neo4j AuraDB | 圖譜 DB | Free tier | 20 萬節點 |
 | Pollinations.ai | 生圖 (MVP) | 無 | 免費 |
 | Leonardo.ai | 生圖 (Beta) | Free tier | 150 點/日 |
+
+### 5.1 任務難度分層與 LLM 路由策略 (LLM Tiering & Fallback)
+
+為防範 Google AI Studio Free Tier 的每日用量上限 (Quota Limits) 以及本地端運作延遲 (iPad 12秒延遲)，系統將推理任務依複雜度與日配額限制分為四個層級，動態選用最適模型：
+
+| 層級 (Tier) | 適用任務 | 優先推薦模型 (首選) | 備用/降級模型 (Fallback) | 用量配額 (RPD) |
+| --- | --- | --- | --- | --- |
+| **Tier 1 (最輕量級)** | 基礎關鍵字抽取、PII 過濾、本地遙測資料壓縮、高頻率重複請求 | 雲端 `Gemma 4 31B/26B` (API Studio, 無延遲) | 本地正則與句法特徵提取 (Rule-based) | RPD 1500 |
+| **Tier 2 (中低複雜度)** | 背景路由驗證 (`llm_verify_and_learn`)、初步意圖分類、通知卡片生成 | 雲端 `Gemini 3.1 Flash Lite` | 雲端 `Gemma 4 31B/26B` | RPD 500 |
+| **Tier 3 (中度複雜度)** | Persona Agent 擬真人設對話、主要路由補判 (`llm_route`) | 雲端 `Gemini 3.5 Flash` / `Gemini 3 Flash` / `Gemini 2.5 Flash` / `Gemini 2.5 Flash Lite` | 雲端 `Gemini 3.1 Flash Lite` | RPD 10 |
+| **Tier 4 (深度複雜/關鍵)** | 每日深度反思總結 (M4.4)、薩提爾冰山圖譜 GraphRAG 寫入與驗證 (M5.2) | 雲端 `Gemini 3.5 Pro` | 雲端 `Gemini 3.5 Flash` | 視付費帳戶額度而定 |
+
+**故障轉移 (Fallback) 邏輯**：
+當任何 API 請求遭遇 `429 Too Many Requests` (Rate Limit) 或 `503 Service Unavailable` 時，系統客戶端應捕捉該異常，並自動向下一層級 (或較輕量且配額較多的備用模型) 進行 Fallback 重新請求，以保障系統高可用性。
+
+
 
 ## 6. 開發環境
 

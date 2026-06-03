@@ -1,7 +1,7 @@
 # M4.3 — 全域情境隔離狀態機 (Role Isolation Engine)
 
 **標籤**:`[MVP]`
-**版本**:`1.0` / `draft`
+**版本**:`1.1`
 **最後更新**:2026-06-03
 
 ## 1. Purpose (目的)
@@ -62,6 +62,8 @@
 | -------- | ---- | -------- |
 | **RISK-06** | 角色切換時 ImplicitState 跨界洩漏：M4.2.4 可能把 CSIE 角色的「焦慮」狀態注入 FAMILY 角色的 Persona | `role_implicit_states` 以 `(user_id, role_id)` 雙鍵查詢；切換後若新角色無狀態，回傳 `PersonaContext.neutral_default()`，**絕不繼承** |
 | **RISK-06** (延伸) | LangGraph 的 `thread_id` 若跨角色共用，對話歷史會洩漏 | `thread_id` 必須包含 `role_id` 前綴 (例：`role_csie::t_001`)，查詢時強制過濾 |
+| **RISK-06** (新建角色) | 新建 Role 時沙盒未就緒，使用者立即進入 AI 幫手發送訊息，M4.1 Router 用空白 `active_experts` 路由 | `ROLE_CREATED` 事件廣播後前端顯示 Loading 狀態，等待後端確認 `ROLE_SANDBOX_READY` 事件才開放 AI 幫手輸入框 |
+| **RISK-06** (刪除角色) | 刪除 Role 後殘留的 `role_router_rules` 孤兒記錄可能被 Router 誤載入 | 刪除 Role 時 CASCADE 停用對應所有 `role_router_rules`（`status = 'inactive'`）；Router 啟動時濾除 `inactive` 規則 |
 | **RISK-12** | 角色切換事件本身若上雲 (如 `xp_ledger`)，可從切換時間推測行為模式 | 角色切換事件僅寫入本地 `raw_tracking_logs` (L1)，不上雲 |
 
 ## 6. Acceptance Criteria (驗收標準)
@@ -307,7 +309,140 @@ def validate_thread_access(thread_id: str, current_role_id: uuid.UUID) -> bool:
     return prefix == str(current_role_id)
 ```
 
-### 7.5 異常處理
+### 7.5 Role 生命週期處理器 (v1.1 新增)
+
+```python
+# services/m4_3_role_isolation/lifecycle.py
+# [RISK-06] 新建/刪除 Role 時的沙盒初始化與清除
+
+async def on_role_created(user_id: UUID, role_id: UUID) -> None:
+    """
+    新 Role 建立後的沙盒初始化流程。
+    前端在收到 ROLE_SANDBOX_READY 前必須鎖定 AI 幫手輸入框。
+    """
+    # 1. 建立空的 role_settings 記錄（確保後續查詢不回傳 None）
+    await db.execute(
+        "INSERT INTO role_settings (role_id, weekly_target_minutes) "
+        "VALUES (:rid, 0) ON CONFLICT DO NOTHING",
+        {"rid": role_id}
+    )
+
+    # 2. 在本地 SQLite 初始化空的 role_router_rules（無任何種子規則）
+    # 新角色啟動時規則池為空，Router 直接走 LLM fallback 直到配對完成
+    await log_event("role_sandbox_initialized", {
+        "user_id": str(user_id),
+        "role_id": str(role_id),
+        "expert_count": 0,
+        "rule_count": 0,
+    })
+
+    # 3. 廣播 ROLE_SANDBOX_READY → 前端解鎖 AI 幫手輸入框
+    await broadcast_sse("ROLE_SANDBOX_READY", {
+        "role_id": str(role_id),
+        "is_empty": True,   # 前端據此顯示「配對第一位專家」引導
+    })
+
+
+async def on_role_deleted(user_id: UUID, role_id: UUID) -> None:
+    """
+    Role 刪除後的沙盒清除流程。
+    需原子性完成：快取清除 + 規則停用 + 廣播。
+    """
+    # 1. 清除 Prompt 快取與 Thread 快取（同 handle_role_switch）
+    prompt_cache.invalidate_by_role(role_id)
+    thread_cache.invalidate_by_role(role_id)
+
+    # 2. 停用此 role 下所有 role_router_rules（不硬刪除，保留歷史）
+    await local_sqlite.execute(
+        "UPDATE role_router_rules SET status='inactive' WHERE role_id=:rid",
+        {"rid": str(role_id)}
+    )
+
+    # 3. 停用此 role 下所有 ai_experts（軟刪除，保留對話歷史）
+    await cloud_db.execute(
+        "UPDATE ai_experts SET is_active=FALSE WHERE role_id=:rid",
+        {"rid": str(role_id)}
+    )
+
+    # 4. 廣播 ROLE_DELETED → 前端移除 Carousel 項目
+    await broadcast_sse("ROLE_DELETED", {
+        "role_id": str(role_id),
+    })
+
+    await log_event("role_sandbox_torn_down", {
+        "user_id": str(user_id),
+        "role_id": str(role_id),
+    })
+
+
+async def on_expert_deleted(role_id: UUID, expert_id: UUID) -> None:
+    """
+    Persona 刪除後的路由規則維護。
+    [RISK-17] 若為最後一個 Persona，廣播 EXPERT_POOL_EMPTY。
+    """
+    # 停用此 expert 對應的路由規則
+    await local_sqlite.execute(
+        "UPDATE role_router_rules SET status='inactive' "
+        "WHERE role_id=:rid AND persona_id=:pid",
+        {"rid": str(role_id), "pid": str(expert_id)}
+    )
+
+    # 清除 Prompt 快取（避免舊 Persona 的 prompt 殘留）
+    prompt_cache.invalidate_by_persona(expert_id)
+
+    # 檢查是否清空了專家池 [RISK-17]
+    remaining = await cloud_db.fetch_one(
+        "SELECT COUNT(*) as cnt FROM ai_experts "
+        "WHERE role_id=:rid AND is_active=TRUE",
+        {"rid": str(role_id)}
+    )
+    if remaining["cnt"] == 0:
+        await broadcast_sse("EXPERT_POOL_EMPTY", {
+            "role_id": str(role_id),
+            "action_hint": "match_new_expert",
+        })
+```
+
+**驗收測試（新增）**：
+
+```python
+class TestM4_3_RoleLifecycle:
+    async def test_role_created_broadcasts_sandbox_ready(self):
+        """[RISK-06 新建] 新 Role 建立後廣播 ROLE_SANDBOX_READY"""
+        with capture_sse_events() as events:
+            await on_role_created(user_id=mock_user, role_id=new_role_id)
+        assert any(e["type"] == "ROLE_SANDBOX_READY" for e in events)
+        assert any(e["data"]["is_empty"] is True for e in events)
+
+    async def test_role_deleted_inactivates_router_rules(self):
+        """[RISK-06 刪除] 刪除 Role 後 role_router_rules 全部變 inactive"""
+        create_router_rule(role_id=role_id, status="active")
+        await on_role_deleted(user_id=mock_user, role_id=role_id)
+        rules = get_rules(role_id=role_id)
+        assert all(r["status"] == "inactive" for r in rules)
+
+    async def test_role_deleted_inactivates_experts(self):
+        """[RISK-06 刪除] 刪除 Role 後 ai_experts 全部軟刪除"""
+        create_expert(role_id=role_id, is_active=True)
+        await on_role_deleted(user_id=mock_user, role_id=role_id)
+        experts = get_experts(role_id=role_id)
+        assert all(not e["is_active"] for e in experts)
+
+    async def test_expert_deleted_broadcasts_pool_empty(self):
+        """[RISK-17] 刪除最後一個 Persona 後廣播 EXPERT_POOL_EMPTY"""
+        expert = create_expert(role_id=role_id, is_active=True)
+        with capture_sse_events() as events:
+            await on_expert_deleted(role_id=role_id, expert_id=expert.id)
+        assert any(e["type"] == "EXPERT_POOL_EMPTY" for e in events)
+
+    async def test_new_role_router_rules_empty_at_creation(self):
+        """新建 Role 時 role_router_rules 為空，Router 只能走 LLM fallback"""
+        await on_role_created(user_id=mock_user, role_id=new_role_id)
+        rules = get_active_rules(role_id=new_role_id)
+        assert len(rules) == 0   # 配對前無任何規則
+```
+
+### 7.6 異常處理
 
 - **角色不存在** → `404 Not Found`，不可 fallback 到其他角色
 - **角色切換時 DB 查詢失敗** → 中止切換，保持原角色，記錄 `role_switch_failed` 至 `raw_tracking_logs`

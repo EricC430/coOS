@@ -1,8 +1,14 @@
 # M6.2 — 雲端 PostgreSQL Schema 定義 (Cloud PostgreSQL Schemas)
 
-**標籤**:`[MVP-Refinement v1.1]`
-**版本**:`1.1` / `released`
-**最後更新**:2026-05-31
+**標籤**:`[MVP-Refinement v1.2]`
+**版本**:`1.2`
+**最後更新**:2026-06-03
+
+**v1.2 變動**（Role/Persona 動態管理）：
+
+- `roles`：新增 CRUD API 定義（§8.1）；每使用者上限統一為**最多 10 個**（原文「任意多個」為誤，已修正）
+- `ai_experts`：新增 `domain_keywords TEXT[]`、`created_by VARCHAR(20)`（§7.2）；新增 Persona CRUD API（§8.2）
+- 說明 `ai_experts` 為**動態成長表**：配對流程可透過 LLM 新建 Persona，不再是靜態預設清單
 
 **v1.1 變動**（Phase 1.5 Refinement Sprint）：
 
@@ -179,29 +185,41 @@ CREATE TABLE users (
 );
 ```
 
-### 7.2 `ai_experts` (L3 — Persona 定義)
+### 7.2 `ai_experts` (L3 — Persona 定義，動態成長表)
+
+> **v1.2 設計說明**：`ai_experts` 不是靜態預設清單。每次使用者執行「配對」流程時，系統先以 rule-based 比對現有 Persona（`is_active = true`），若無匹配則透過 LLM 動態生成新 Persona 並插入此表。欄位 `created_by` 記錄來源，`domain_keywords` 作為 `role_router_rules` 的種子。
 
 ```sql
--- [R03 §1, R09 §6.2 BDI] Persona 人設定義
+-- [R03 §1, R09 §6.2 BDI, RISK-16] Persona 人設定義（動態成長）
 CREATE TABLE ai_experts (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name                VARCHAR(100) NOT NULL,      -- '動力導師_Robert'
-    role_id             UUID NOT NULL,               -- 綁定角色
-    personality_prompt  VARCHAR(4096) NOT NULL,      -- [R03 §1.1] 固定人設提示詞
-    backstory           VARCHAR(2048),               -- 過往經歷腳本
+    name                VARCHAR(100) NOT NULL,
+    role_id             UUID NOT NULL,              -- [RISK-06] 綁定角色，嚴格隔離
+    personality_prompt  VARCHAR(4096) NOT NULL,     -- [R03 §1.1] 固定人設提示詞
+    backstory           VARCHAR(2048),              -- 過往經歷腳本
     tone_default        VARCHAR(20) NOT NULL DEFAULT 'authoritative',
-    trust_level         REAL NOT NULL DEFAULT 0.5,   -- [0, 1] 信任等級
+    trust_level         REAL NOT NULL DEFAULT 0.5,  -- [0, 1] 信任等級
     avatar_url          VARCHAR(512),
+    domain_keywords     TEXT[],                     -- [v1.2] 路由觸發關鍵字，作為
+                                                    -- role_router_rules 的種子
+                                                    -- e.g. ARRAY['微積分','taylor','積分']
+    created_by          VARCHAR(20) NOT NULL DEFAULT 'user_match',
+                                                    -- [v1.2] 'user_match'   : 使用者手動配對
+                                                    --        'llm_generated': LLM 自動生成
+                                                    --        'system_seed'  : 系統預設初始
     is_active           BOOLEAN NOT NULL DEFAULT TRUE,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    FOREIGN KEY (role_id) REFERENCES roles(id)
+    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
 );
 
--- [R03 §1.1] 每個角色下的 Persona 名稱不重複
+-- [R03 §1.1] 每個角色下的 Persona 名稱不重複（允許不同角色有同名 Persona）
 CREATE UNIQUE INDEX idx_ae_role_name ON ai_experts(role_id, name);
+CREATE INDEX idx_ae_role_active ON ai_experts(role_id, is_active);
 ```
 
 ### 7.3 `roles` (L3 — 角色定義)
+
+> **v1.2 說明**：每位使用者最多 **10 個** role（CHECK constraint 強制），不是「任意多個」。上限由 Supabase Free tier 500MB 配額與 M4.3 沙盒初始化成本共同決定。
 
 ```sql
 -- [架構文件 §角色沙盒] 角色情境定義
@@ -212,12 +230,29 @@ CREATE TABLE roles (
     display_name    VARCHAR(50) NOT NULL,      -- '資工系', '家庭', '副業'
     color_hex       CHAR(7),                   -- UI 標識色 '#FF6B35'
     icon_name       VARCHAR(30),               -- 前端圖示名稱
+    avatar_url      VARCHAR(512),              -- Role Carousel 頭像（v1.1）
     sort_order      INTEGER NOT NULL DEFAULT 0,
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY (user_id) REFERENCES users(id),
     UNIQUE (user_id, slug)
 );
+
+-- [v1.2 + M6.3 §5] 每使用者最多 10 個 active role
+CREATE OR REPLACE FUNCTION check_role_limit()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (SELECT COUNT(*) FROM roles
+        WHERE user_id = NEW.user_id AND is_active = TRUE) >= 10 THEN
+        RAISE EXCEPTION 'role_limit_exceeded: max 10 active roles per user';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER enforce_role_limit
+    BEFORE INSERT ON roles
+    FOR EACH ROW EXECUTE FUNCTION check_role_limit();
 ```
 
 ### 7.4 `xp_ledger` (L3 — XP 異動流水帳)
@@ -274,11 +309,125 @@ CREATE TABLE user_badges (
 - UUID 衝突 (極低機率) → PostgreSQL `gen_random_uuid()` 衝突時 retry 一次
 - `personality_prompt` 超過 4096 字元 → 拒絕寫入, 提示縮減提示詞
 
-## 8. 進階與未來擴充規格 [進階 / Future Phase]
+## 8. MVP CRUD API 定義 (v1.2 新增)
+
+### 8.1 Role CRUD API
+
+```python
+# services/m6_2_postgresql/routers/roles.py
+# [架構文件 §角色沙盒 + RISK-06] Role 管理端點，全部需要 X-User-ID 驗證
+
+# 建立新角色
+# POST /api/m6_2/roles
+# Body: { slug, display_name, color_hex?, icon_name?, avatar_url? }
+# 觸發: M4.3 沙盒初始化（建立後廣播 ROLE_CREATED 事件）
+# 驗收: slug 在此 user 下唯一；超過 10 個 active role 返回 409
+
+# 取得使用者所有角色
+# GET /api/m6_2/roles
+# Response: Role[] (依 sort_order 排序，只回傳 is_active=true)
+
+# 編輯角色（名稱/顏色/圖示/排序）
+# PUT /api/m6_2/roles/{role_id}
+# Body: { display_name?, color_hex?, icon_name?, avatar_url?, sort_order? }
+# 注意: slug 建立後不可修改（作為系統內部 key）
+
+# 刪除角色（軟刪除）
+# DELETE /api/m6_2/roles/{role_id}
+# 行為:
+#   1. 設 is_active = false
+#   2. CASCADE 停用此 role 下的所有 ai_experts（is_active = false）
+#   3. 廣播 ROLE_DELETED SSE 事件，M4.3 清除對應沙盒快取
+#   4. 若被刪除的是 users.active_role_id，自動切換到第一個可用角色
+# 注意: 不做硬刪除，保留歷史資料（daily_reflections、chat_transcripts）
+```
+
+```python
+# 對應的 Pydantic schemas
+from pydantic import BaseModel
+from uuid import UUID
+from typing import Optional
+
+class RoleCreate(BaseModel):
+    slug: str                    # 小寫英數，最多 30 字
+    display_name: str            # 顯示名稱，最多 50 字
+    color_hex: Optional[str]     # '#FF6B35' 格式
+    icon_name: Optional[str]     # 前端圖示名稱
+    avatar_url: Optional[str]
+
+class RoleUpdate(BaseModel):
+    display_name: Optional[str]
+    color_hex: Optional[str]
+    icon_name: Optional[str]
+    avatar_url: Optional[str]
+    sort_order: Optional[int]
+
+class RoleRead(BaseModel):
+    id: UUID
+    slug: str
+    display_name: str
+    color_hex: Optional[str]
+    icon_name: Optional[str]
+    avatar_url: Optional[str]
+    sort_order: int
+    expert_count: int            # 此 role 下 active expert 數量
+```
+
+### 8.2 Persona (ai_experts) CRUD API
+
+```python
+# services/m6_2_postgresql/routers/experts.py
+# [R03 §1, RISK-06, RISK-16, RISK-17] Persona 管理端點
+
+# 取得此 role 下所有 Persona
+# GET /api/m6_2/roles/{role_id}/experts
+# Response: AIExpert[] (is_active=true，含 domain_keywords)
+
+# 配對新 Persona（核心流程）
+# POST /api/m4_1/match_persona        ← 由 M4.1 負責，非 M6.2 直接呼叫
+# 流程見 M4.1 §7.x（rule 比對 → LLM 新建 → 寫入 ai_experts）
+
+# 編輯 Persona（使用者可調整的部分）
+# PUT /api/m6_2/experts/{expert_id}
+# Body: { name?, domain_keywords?, tone_default?, avatar_url? }
+# 注意: personality_prompt 不開放使用者直接編輯（防止越權注入）
+#        tone_default 只允許: 'authoritative'|'empathetic'|'probing'
+
+# 刪除 Persona（軟刪除）
+# DELETE /api/m6_2/experts/{expert_id}
+# 行為:
+#   1. 設 is_active = false
+#   2. 停用此 expert 對應的 role_router_rules（status = 'inactive'）
+#   3. [RISK-17] 若刪除後 role 下 active expert 數量 = 0，廣播 EXPERT_POOL_EMPTY SSE
+#   4. 保留 chat_transcripts（歷史對話不刪除）
+# 守門: [RISK-17] 前端在刪除最後一個 expert 時必須顯示 warning + 二次確認
+```
+
+```python
+class ExpertUpdate(BaseModel):
+    name: Optional[str]
+    domain_keywords: Optional[list[str]]   # 路由觸發關鍵字（使用者可編輯）
+    tone_default: Optional[str]
+    avatar_url: Optional[str]
+
+class ExpertRead(BaseModel):
+    id: UUID
+    name: str
+    role_id: UUID
+    tone_default: str
+    trust_level: float
+    avatar_url: Optional[str]
+    domain_keywords: Optional[list[str]]
+    created_by: str              # 'user_match'|'llm_generated'|'system_seed'
+    is_active: bool
+    created_at: str
+```
+
+## 9. 進階與未來擴充規格 [進階 / Future Phase]
 
 以下資料表屬於後續進階 Phase 的範疇（如 Phase 4 隨機挑戰或專家首頁解鎖）。當前 Phase 1.5 遷移引擎 (Alembic) 暫不實作此部分。
 
-### 8.1 `expert_homepages` (L3 — 專家首頁背景與解鎖功能)
+### 9.1 `expert_homepages` (L3 — 專家首頁背景與解鎖功能)
 
 ```sql
 -- 專家個人化的主頁佈局與已解鎖功能，預計於 Phase 4 啟用
@@ -292,7 +441,7 @@ CREATE TABLE expert_homepages (
 );
 ```
 
-### 8.2 `zpd_tasks` (L3 — 隨機挑戰任務池)
+### 9.2 `zpd_tasks` (L3 — 隨機挑戰任務池)
 
 ```sql
 -- 認知最近發展區 (ZPD) 生成的客製化隨機挑戰，預計於 Phase 4 / Phase 6+ 啟用
@@ -314,7 +463,7 @@ CREATE INDEX idx_zt_user ON zpd_tasks(user_id);
 CREATE INDEX idx_zt_status ON zpd_tasks(status);
 ```
 
-## 9. Anti-patterns (反模式)
+## 10. Anti-patterns (反模式)
 
 - ❌ **不要在雲端 PostgreSQL 中建立 `raw_tracking_logs` 或 `chat_transcripts`**。這些是 L1 明文資料,只能存在於本地 SQLite (M6.1)。
   理由:架構文件 §3 隱私三層分類。

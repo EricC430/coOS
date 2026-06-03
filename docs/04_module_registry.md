@@ -534,21 +534,27 @@
 
 ### M4.1 Agent 路由與協作管線 (LangGraph 結構層) `[MVP]`
 
-**Purpose**:LangGraph 純結構層,提供路由、容器與安全規劃,不含 Persona 內容。
+**Purpose**:LangGraph 純結構層,提供信心分層路由、容器與安全規劃,不含 Persona 內容。路由規則依 role_id 完全隔離,並透過 M4.1.5 每日自適應更新。
 
 **子模組**:
 
-| 編號 | 職責 |
-| ---- | ---- |
-| M4.1.1 | Router Agent:對話精準路由至特定學科/心理專家 |
-| M4.1.2 | Persona Agent 容器:純結構接點,Prompt 內容由 M4.2 注入 |
-| M4.1.3 | Observer / Drafting Agent 容器:背景非同步協調,具體萃取邏輯在 M4.6 |
-| M4.1.4 | DRIFT 安全規劃器:防範外部訊號挾持 Agent 系統提示詞 |
+| 編號 | 職責 | 執行時序 |
+| ---- | ---- | -------- |
+| M4.1.1 | **信心分層 Router**:三層決策引擎 (Rule → LLM 背景驗證 → LLM 主導),候選池由 M4.3 白名單限定 | 即時,每次對話 |
+| M4.1.2 | Persona Agent 容器:純結構接點,Prompt 內容由 M4.2 注入 | 即時 |
+| M4.1.3 | Observer / Drafting Agent 容器:背景非同步協調,具體萃取邏輯在 M4.6 | 即時並行 |
+| M4.1.4 | DRIFT 安全規劃器:防範外部訊號挾持 Agent 系統提示詞 | 即時,M4.1.1 之前 |
+| **M4.1.5** | **自適應規則更新器**:每日批次從 `daily_reflections` 任務標題 + `routing_samples` 負向信號抽取關鍵字,更新 `role_router_rules` 候選池;達門檻後自動晉升為 active 規則 | 每日深夜排程 |
 
-**Deps**:M2.2, M2.3
-**Criteria**:路由準確率 ≥85% 於人工標註測試集。
-**Research**:`[R09: MAS §6.1]` `[R02: DRIFT §架構安全性]` `[R03: LangGraph §1]`
-**Risks**:無
+**Deps**:M2.2, M2.3, M4.3, M6.1 (`role_router_rules`, `routing_samples`)
+**Criteria**:
+
+- 路由準確率 ≥85% 於人工標註測試集
+- confidence ≥ 0.85 時 LLM 補判觸發率 = 0%
+- M4.1.5 每日執行後候選規則數量不為負成長
+
+**Research**:`[R09: MAS §6.1]` `[R02: DRIFT §架構安全性]` `[R03: LangGraph §1]` `[R10: §代理工作流狀態機]`
+**Risks**:RISK-06 (跨角色規則洩漏), RISK-13 (訓練信號含明文), RISK-14 (LLM 補判上雲)
 
 ---
 
@@ -607,7 +613,7 @@
 | M4.4.3 | 異步客觀草稿排程器:深夜 Cron → 拉取 `raw_tracking_logs` → 拼裝吉布斯描述 → 更新 `daily_reflections` |
 
 **Deps**:M4.1, M4.2, M6.1, M6.4
-**Criteria**:每日 03:00 自動產出前一日完整草稿。
+**Criteria**:每日 02:00 自動產出前一日完整草稿。
 **Research**:`[R10: 代理工作流 §狀態機]` `[R10: MindScape §反思鷹架]` `[R08: 意圖脫鉤 §五]`
 **Risks**:RISK-01 (草稿 + XP 結算交互)
 

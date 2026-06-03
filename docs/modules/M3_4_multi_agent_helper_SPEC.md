@@ -1,7 +1,7 @@
 # M3.4 — 沉浸式多智能體幫手模組 (Multi-Agent AI Helper)
 
 **標籤**:`[MVP]`
-**版本**:`1.0`
+**版本**:`1.1`
 **最後更新**:2026-06-03
 
 ## 1. Purpose
@@ -58,13 +58,80 @@ PDF 原稿定義**兩種視圖**,以左側邊欄統一導覽:
 
 **UI 細節說明**:
 
-- **左側邊欄 Persona 清單**: 每列顯示`[圓形頭像] 職稱 姓名`;選取中的 Persona 以斜線陰影標示 (active state)
-- **`[配對]` 按鈕**: 固定在側邊欄底部;點擊後開啟狀態輸入彈窗,**不允許直接點擊 Persona 列表開啟對話**
+- **左側邊欄 Persona 清單**: 每列顯示`[圓形頭像] 職稱 姓名`。**初始角色開通時，此清單為空，僅顯示「🤖 AI 幫手」**。僅有在解鎖條件觸發（AI 幫手聊天時的推薦通知、背景 telemetry 意圖觸發、或手動配對）並經使用者確認配對後，對應的 Persona 分頁才會顯示於側邊欄中。選取中的 Persona 以斜線陰影標示 (active state)
+- **`[配對]` 按鈕**: 固定在側邊欄底部;點擊後開啟狀態輸入彈窗。**不允許直接點擊尚未配對解鎖的 Persona 開啟對話**。
 - **歷史時間軸三欄**: `timeline`(日期) / `project`(主題文件圖示+名稱) / `intention`(發問意圖要點);縱向排列由近到遠
 - **即時對話**: AI 訊息靠左帶頭像,使用者訊息靠右帶頭像;碎塊發言 (多個獨立 bubble) 模擬真人打字節奏
 - **系統通知**: 置中灰色細線文字 (e.g. "Project 偵測為『初始目標設定』創立"),不使用 Modal/Toast
 - **輸入區按鈕**: `[+]` 附件、`[🔗]` 網址、`[workflow▸]` 觸發 M3.6 彈窗、右側 `[▷]` 送出
 - **專案脈絡區欄位**: `project` (文件圖示+名稱)、`intention` (意圖文字)、`summary` (AI 摘要,自動更新)、`note` (備忘)
+
+
+### 1.2 Persona 管理 UI（v1.1 新增）
+
+側邊欄除了顯示 Persona 清單，還提供每個 Persona 的行內管理操作：
+
+```text
+┌─────────────────────────────────────────────────────┐
+│ 🤖 AI 幫手                          [⚙ 管理角色]   │
+│─────────────────────────────────────────────────────│
+│  🔧  工具型 AI                                      │ ← 永遠置頂，不可刪除
+│─────────────────────────────────────────────────────│
+│  🎓  微積分助教 宏軒          ✏️  🗑️              │
+│  💼  資工系學長 Terry          ✏️  🗑️              │
+│  💬  動力導師 Robert           ✏️  🗑️              │
+│─────────────────────────────────────────────────────│
+│  [+ 配對新專家]      [🔄 對目前專家重新配對]        │
+└─────────────────────────────────────────────────────┘
+```
+
+**操作行為規範**：
+
+- **`✏️` 編輯**：開啟 `PersonaEditModal`，可修改 `name`、`domain_keywords`（路由觸發詞）、`tone_default`、`avatar_url`；`personality_prompt` 不開放直接編輯（防越權注入）
+- **`🗑️` 刪除**：
+  - 若此角色下尚有其他 active Persona → 二次確認後軟刪除（`is_active = false`），對應 `role_router_rules` 自動設為 `inactive`
+  - 若此為最後一個 Persona → [RISK-17] 顯示強制 warning 彈窗：「刪除後此角色將暫時只有工具型 AI，建議先配對新專家再刪除。」使用者需輸入確認文字後才可執行
+- **`[+ 配對新專家]`**：開啟 `MatchPersonaModal`，走 M4.1 §7.5 配對流程狀態機（rule 比對 → LLM 新建 → 使用者預覽確認）
+- **`[🔄 重新配對]`**：對當前 active Persona 開啟配對彈窗，並帶入 `exclude_persona_id` 參數，要求 LLM 生成**不同風格**的替代 Persona
+
+**配對彈窗欄位**（`MatchPersonaModal`）：
+
+```text
+┌────────────────────────────────────────────────┐
+│  為「CSIE」角色配對新的 AI 專家                  │
+│                                                │
+│  目前情境 context                              │
+│  ┌────────────────────────────────────────┐   │
+│  │ 我最近在準備期末考，微積分還沒搞懂泰勒展開  │   │
+│  └────────────────────────────────────────┘   │
+│                                                │
+│  你需要什麼類型的專家 description             │
+│  ┌────────────────────────────────────────┐   │
+│  │ 需要一個有耐心、會用例子解釋的老師       │   │
+│  └────────────────────────────────────────┘   │
+│                                                │
+│  關聯專案（選填）           [內在動機探索 ▼]   │
+│                                                │
+│  [取消]                    [送出配對請求]      │
+└────────────────────────────────────────────────┘
+```
+
+配對請求送出後：
+
+1. 後端走 M4.1 §7.5 rule 比對，若匹配度 ≥ 0.80 則直接激活現有 Persona
+2. 若無匹配，LLM 生成新 Persona spec，前端顯示 **PersonaPreviewModal**（使用者可編輯名稱後確認）
+3. 使用者確認後，呼叫 `POST /api/m6_2/experts/confirm`，正式建立並激活
+
+**Observer 自動推薦入口**：
+
+當 M4.6 Observer 偵測到對話涉及當前 Role 下沒有對應 Persona 的新領域時（例如在 CSIE 角色下談到「論文寫作」），前端在側邊欄底部顯示推薦 chip：
+
+```text
+  💡 偵測到「論文寫作」相關討論
+     要為 CSIE 配對一位研究導師嗎？  [配對]  [×]
+```
+
+點擊 `[配對]` 後預填 context 欄位，走相同配對流程。
 
 ## 2. References
 
@@ -120,6 +187,8 @@ PDF 原稿定義**兩種視圖**,以左側邊欄統一導覽:
 | **RISK-11** | 語音輸入走本地 Whisper 可能耗盡 RAM | M3.4.3.3 語音按鈕送出後必須先查 RAM,走 `VoiceTranscriptionRouter` 三級降級;前端顯示「語音處理中」而非直接送出 |
 | **RISK-04** | Observer 萃取事件的隱形提示若直接彈出通知會破壞深度工作 | 隱形提示必須使用 L2 defer 通道:非 `BREAKPOINT_DETECTED` 時,提示僅更新側邊欄 Badge,不彈 Modal |
 | **RISK-12** | 使用者貼上的網址若含敏感內容直接上雲 | 網址內容必須先經 M2.3 Eguard 過濾,只取標題與摘要;原始 URL 本地記錄,不上雲 LLM |
+| **RISK-16** | LLM 新建的 Persona 首次上場無歷史，ARPM 無基準可比對 → 人設不穩定 | 確認新建後由 `create_persona_with_seed` 自動生成種子對話；前端 PersonaPreviewModal 完成後才解除 `is_loading` 狀態，確保種子對話已就緒再開放對話輸入框 |
+| **RISK-17** | 刪除最後一個 Persona 後 Router 白名單空集合 → 靜默降級為工具型 AI | 前端 `🗑️` 守門員：若為最後一個 active Persona，必須顯示強制 warning 彈窗並要求輸入確認文字；刪除後後端廣播 `EXPERT_POOL_EMPTY` SSE，前端顯示「暫無配對專家」引導文案 |
 
 ## 6. Acceptance Criteria
 
@@ -128,21 +197,25 @@ PDF 原稿定義**兩種視圖**,以左側邊欄統一導覽:
 
 describe("M3.4.1 雙軌側邊欄", () => {
   it("側邊欄第一位永遠是工具型 AI,且無人設標籤", () => {
-    render(<ExpertSidebar experts={mockExperts} />);
-    const firstExpert = screen.getAllByTestId("expert-item")[0];
-    expect(firstExpert).toHaveAttribute("data-type", "tool");
-    expect(firstExpert).not.toHaveTextContent("動力導師");
+    // 預設 active_experts 為空，僅載入工具型 AI
+    render(<ExpertSidebar activeExperts={[]} allExperts={mockExperts} />);
+    const items = screen.getAllByTestId("expert-item");
+    expect(items.length).toBe(1);
+    expect(items[0]).toHaveAttribute("data-type", "tool");
   });
 
-  it("其餘位置為擬真人設專家,顯示職稱與姓名", () => {
-    render(<ExpertSidebar experts={mockExperts} />);
-    const personaExperts = screen.getAllByTestId("expert-item").slice(1);
-    personaExperts.forEach((item) => {
-      expect(item).toHaveAttribute("data-type", "persona");
-      expect(item.querySelector("[data-testid='expert-title']")).not.toBeNull();
-    });
+  it("當專家解鎖後，該擬真人設專家才會顯示在側邊欄，顯示職稱與姓名", () => {
+    // 傳入已解鎖的 activeExperts 清單
+    const activeExperts = [{ id: "robert_001", expertName: "Robert", title: "動力導師", domain: "motivation" }];
+    render(<ExpertSidebar activeExperts={activeExperts} allExperts={mockExperts} />);
+    const items = screen.getAllByTestId("expert-item");
+    expect(items.length).toBe(2); // 1 個工具型 AI + 1 個解鎖的專家
+    expect(items[1]).toHaveAttribute("data-type", "persona");
+    expect(items[1]).toHaveTextContent("動力導師");
+    expect(items[1]).toHaveTextContent("Robert");
   });
 });
+
 
 describe("M3.4.2 動態配對控制器", () => {
   it("直接點選清單中的 Persona 無法啟動對話,必須透過配對流程", () => {

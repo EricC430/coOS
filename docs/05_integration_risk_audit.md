@@ -782,6 +782,162 @@ def test_draft_generalizes_content_summary():
 
 ---
 
+## RISK-16：動態 Persona 生成 + 首次注入無歷史 → 人設不穩定
+
+**觸發組合**：`M4.1 (LLM 新建 Persona)` + `M4.2 (Persona 注入)` + `M4.9 (ARPM 人設一致性監督)`
+
+**失效機制**：
+
+LLM 剛生成的 Persona 只有 `personality_prompt`，沒有任何對話歷史。M4.9 ARPM 的人設一致性監督依賴**對話歷史序列**作為基準比對。新 Persona 第一次上場時 ARPM 基準為空 → 無法判斷是否漂移 → 若 LLM 在前幾個 turn 輸出的回覆風格不穩定（初始化雜訊），ARPM 抓不到任何異常 → 使用者感覺剛配對的新專家「人格飄移」→ 治療同盟建立失敗（R05 §治療同盟），使用者立刻要求重新配對或放棄。
+
+**研究衝突點**：R03 §2 (ARPM 嚴格還原，需歷史基準) vs R05 §治療同盟建構 (第一印象決定信任基線)
+
+**緩解策略**：
+
+1. **種子對話注入**：新 Persona 建立時，系統自動呼叫 LLM 生成 2～3 條「種子對話（Seed Exchanges）」作為 ARPM 的初始歷史錨點，不顯示給使用者，純粹作為 ARPM 的 `persona_history` 基準：
+
+```python
+# services/m4_1_router/persona_factory.py
+# [R03 §2 + RISK-16] 新 Persona 建立後立即生成種子對話
+
+async def create_persona_with_seed(
+    persona_config: dict,
+    role_context: RoleContext,
+) -> AIExpert:
+    expert = await db.insert("ai_experts", persona_config)
+
+    # 生成種子對話作為 ARPM 錨點（不寫入 chat_transcripts，僅作 ARPM 基準）
+    seed_exchanges = await llm_generate_seed_exchanges(
+        personality_prompt=persona_config["personality_prompt"],
+        n_exchanges=3,
+    )
+    await arpm_service.set_persona_anchor(
+        persona_id=expert.id,
+        seed_exchanges=seed_exchanges,
+    )
+    return expert
+```
+
+1. **ARPM 新 Persona 寬鬆模式**：ARPM 在新 Persona 前 5 個 turn 採寬鬆模式，漂移判斷閾值提高 30%（避免把初始化雜訊誤判為崩塌）：
+
+```python
+# services/m4_9_arpm/validator.py
+# [R03 §2 + RISK-16]
+
+def get_drift_threshold(persona: AIExpert, turn_count: int) -> float:
+    BASE_THRESHOLD = 0.70
+    if turn_count <= 5:
+        return BASE_THRESHOLD * 1.30   # 新 Persona 前 5 turn 寬鬆 30%
+    return BASE_THRESHOLD
+```
+
+1. **首次配對的「破冰腳本」**：M4.2 為新 Persona 注入一段固定的「破冰系統提示」，確保前幾個 turn 語氣穩定，不依賴 LLM 的自由發揮：
+
+```python
+ICEBREAKER_SUFFIX = """
+在前五次互動中，你應：
+1. 先做自我介紹（姓名、背景一句話）
+2. 詢問使用者當下最想討論什麼
+3. 語氣保持[tone_default]，不做風格實驗
+"""
+```
+
+**驗收測試**：
+
+```python
+def test_new_persona_has_arpm_anchor():
+    """RISK-16: 新建 Persona 後 ARPM 必須有種子對話錨點"""
+    expert = create_persona_with_seed(persona_config=mock_config, role_context=mock_ctx)
+    anchor = arpm_service.get_persona_anchor(expert.id)
+    assert anchor is not None
+    assert len(anchor.seed_exchanges) >= 2
+
+def test_new_persona_arpm_lenient_mode():
+    """RISK-16: 新 Persona 前 5 turn ARPM 閾值提高 30%"""
+    expert = create_new_persona()
+    threshold_turn1 = arpm.get_drift_threshold(expert, turn_count=1)
+    threshold_turn6 = arpm.get_drift_threshold(expert, turn_count=6)
+    assert threshold_turn1 == pytest.approx(threshold_turn6 * 1.30, rel=0.01)
+
+def test_new_persona_stable_first_response():
+    """RISK-16: 新 Persona 第一個回覆語氣必須符合 tone_default"""
+    expert = create_new_persona(tone_default="authoritative")
+    first_response = persona_agent.respond("你好", expert=expert, turn=1)
+    tone = classify_tone(first_response)
+    # 破冰腳本確保第一 turn 不漂移
+    assert tone in ("authoritative", "probing")
+    assert tone != "resonance"   # 不應直接跳到最共情模式
+```
+
+---
+
+## RISK-17：刪除唯一 Persona → Router 白名單空集合 → 靜默降級
+
+**觸發組合**：`M3.4 (Persona 管理 UI)` + `M4.1.1 (Router 白名單)` + `M4.3 (角色沙盒)`
+
+**失效機制**：
+
+使用者在 Role CSIE 下只有一個 Persona（微積分助教宏軒），刪除後 `active_experts` 白名單為空。M4.1.1 Router fallback 到 `tool_ai_default`（工具型 AI），但前端沒有任何提示 → 使用者以為仍在和「微積分助教」說話，但實際上對話對象已靜默切換為無人設的工具型 AI → 治療同盟斷裂，使用者察覺後信任崩潰。
+
+**研究衝突點**：R05 §治療同盟 (使用者需感知對話對象) vs (產品設計 工具型 AI 作為 fallback)
+
+**緩解策略**：
+
+前端強制 warning + 後端 SSE 廣播：
+
+```python
+# Frontend: M3.4 側邊欄刪除守門員
+def can_delete_expert(role_id: str, expert_id: str) -> DeletePermission:
+    active_count = count_active_experts(role_id)
+    if active_count <= 1:
+        return DeletePermission(
+            allowed=True,   # 技術上允許，但必須顯示 warning
+            requires_confirmation=True,
+            warning_message=(
+                "刪除後此角色將暫時只有「工具型 AI」可用，"
+                "建議先配對新專家再刪除。"
+            )
+        )
+    return DeletePermission(allowed=True, requires_confirmation=False)
+
+# Backend: M4.3 刪除後廣播
+async def on_expert_deleted(role_id: str, expert_id: str):
+    remaining = count_active_experts(role_id)
+    if remaining == 0:
+        await broadcast_sse("EXPERT_POOL_EMPTY", {
+            "role_id": role_id,
+            "message": "此角色目前沒有配對的 AI 專家",
+            "action_hint": "match_new_expert",
+        })
+```
+
+**驗收測試**：
+
+```python
+def test_delete_last_expert_shows_warning():
+    """RISK-17: 刪除最後一個 Persona 前必須顯示 warning"""
+    role = create_role_with_one_expert()
+    perm = can_delete_expert(role.id, role.experts[0].id)
+    assert perm.requires_confirmation is True
+    assert "工具型 AI" in perm.warning_message
+
+def test_empty_expert_pool_broadcasts_sse():
+    """RISK-17: 刪除後 active_experts 為空時廣播 EXPERT_POOL_EMPTY"""
+    role = create_role_with_one_expert()
+    with capture_sse_events() as events:
+        delete_expert(role.id, role.experts[0].id)
+    assert any(e["type"] == "EXPERT_POOL_EMPTY" for e in events)
+
+def test_tool_ai_visible_when_pool_empty():
+    """RISK-17: 空池時前端側邊欄仍顯示工具型 AI，不顯示空白"""
+    role = create_role_with_no_experts()
+    sidebar = render_expert_sidebar(role_id=role.id)
+    assert sidebar.tool_ai_entry.visible is True
+    assert "暫無配對專家" in sidebar.empty_state_hint
+```
+
+---
+
 ## 新增風險的流程
 
 當實作過程中發現新的「合併後變差」模式:

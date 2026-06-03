@@ -126,9 +126,9 @@ class TestM4_4_2_NERParser:
         assert slot.project == "微積分"
 
 class TestM4_4_3_DraftScheduler:
-    def test_daily_draft_generated_at_0300(self):
-        """每日 03:00 自動產出前一日草稿"""
-        with freeze_time("2026-06-03 03:00:00"):
+    def test_daily_draft_generated_at_0200(self):
+        """每日 02:00 自動產出前一日草稿"""
+        with freeze_time("2026-06-03 02:00:00"):
             drafts = run_draft_cron(user_id="u_001")
         assert len(drafts) >= 1
         assert all(d.reflection_date == date(2026, 6, 2) for d in drafts)
@@ -268,7 +268,7 @@ from datetime import date, timedelta
 
 async def run_draft_cron(user_id: str):
     """
-    每日 03:00 排程。
+    每日 02:00 排程。
     [RISK-01] 產出的草稿永遠 is_draft=true。
     [RISK-15] ai_description 不含 content_summary 原文。
     """
@@ -372,7 +372,7 @@ def build_gibbs_analysis(logs, elicited) -> str:
 
 ## 9. Open Questions
 
-- [ ] **草稿排程時間是否可由使用者自訂?** 目前硬編碼 03:00，但若使用者作息不同 (如夜貓子 05:00 才睡)，需要可配置。`role_settings.daily_report_time` 已預留此欄位 (M6.3)。
+- [ ] **草稿排程時間是否可由使用者自訂?** 目前預設為凌晨 02:00（與 M4.1.5 的 03:00 錯開），但若使用者作息不同 (如夜貓子 05:00 才睡)，需要可配置。`role_settings.daily_report_time` 已預留此欄位 (M6.3)。
 - [ ] **套問觸發條件的具體規則?** 目前設計為「使用者提及作業/專案相關關鍵字」時觸發。是否需要更細緻的規則 (如只在對話超過 3 turn 後才套問)?
 - [ ] **深夜草稿是否呼叫雲端 LLM (Gemini) 生成?** 若用 Gemini 生成 `ai_description`/`ai_analysis`，品質更高但涉及隱私 (raw_tracking_logs 送雲端)。是否僅用本地模板拼裝?
 - [ ] **M1.5 微 Nudges 的回覆如何整合至草稿?** M1.5 是 `[進階]` 模組，MVP 階段是否先忽略微 Nudges 數據來源?
