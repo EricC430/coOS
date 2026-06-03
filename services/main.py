@@ -62,6 +62,12 @@ async def lifespan(app: FastAPI):
 
     # Initialize module singletons
     global _gemma_pipeline, _eguard_filter, _drift_shield, _debouncer, _breakpoint_engine
+
+    # [M0.4] Start AsyncLogWriter background flush worker
+    from m0_4_logging.writer import get_logger as get_log_writer
+    _log_writer = get_log_writer(db_path=str(settings.local_db_path))
+    await _log_writer.start()
+
     _breakpoint_engine = BreakpointEngine()
 
     _gemma_pipeline = GemmaInferencePipeline(
@@ -87,6 +93,8 @@ async def lifespan(app: FastAPI):
     yield
     if _debouncer:
         await _debouncer.shutdown_gracefully()
+    from m0_4_logging.writer import get_logger as get_log_writer
+    await get_log_writer().stop()
     logger.info("[M0.3] coOS sidecar 關閉")
 
 
