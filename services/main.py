@@ -293,3 +293,170 @@ async def test_stream():
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 UI 端點 — M3.x 前端所需的 API
+# ---------------------------------------------------------------------------
+
+# --- M6.3 Role Context ---
+
+@app.get("/api/m6_3/role_context")
+async def m6_3_role_context(role_id: str) -> dict[str, Any]:
+    """Context Header 四槽位資料 (Project / Role / Promises / Goal)"""
+    # Seed data — replaced by real DB query when M6.3 migration is run
+    return {
+        "role_id": role_id,
+        "project": {"name": "期末考準備"},
+        "role": {"name": role_id.split("_")[0].upper()},
+        "promises": ["每天寫 1 小時程式", "本週完成微積分作業"],
+        "goals": ["通過資料結構期末考"],
+    }
+
+
+# --- M6.4 Daily Reflections ---
+
+@app.get("/api/m6_4/heatmap")
+async def m6_4_heatmap(role_id: str) -> list[dict[str, Any]]:
+    """過去 365 天的活躍度熱圖資料"""
+    import random
+    from datetime import date, timedelta
+    today = date.today()
+    result = []
+    for i in range(365):
+        d = today - timedelta(days=364 - i)
+        count = random.choices([0, 0, 0, 1, 2, 3, 5], weights=[4, 2, 2, 3, 2, 1, 1])[0]
+        if count:
+            result.append({"date": d.isoformat(), "count": count})
+    return result
+
+
+@app.get("/api/m6_4/daily_timeline")
+async def m6_4_daily_timeline(date: str, role_id: str | None = None) -> list[dict[str, Any]]:
+    """當日任務清單（依角色分組）"""
+    return [
+        {
+            "id": "task_demo_1",
+            "roleId": role_id or "csie_001",
+            "roleName": "CSIE",
+            "title": "微積分作業",
+            "status": "completed",
+            "reflection": {
+                "id": "refl_demo_1",
+                "ai_description": "你今天花了約 90 分鐘完成微積分作業，涵蓋泰勒展開與極限計算。",
+                "ai_analysis": "進度符合計畫，主動解決三道難題。",
+                "user_feeling": "",
+                "user_action_plan": "",
+                "is_draft": True,
+                "is_reviewed": False,
+            },
+        },
+        {
+            "id": "task_demo_2",
+            "roleId": role_id or "csie_001",
+            "roleName": "CSIE",
+            "title": "資料結構筆記 CH2",
+            "status": "in_progress",
+            "reflection": None,
+        },
+    ]
+
+
+@app.patch("/api/m6_4/reflections/{reflection_id}")
+async def m6_4_patch_reflection(reflection_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """[RISK-01] 更新 user_feeling / user_action_plan / is_reviewed"""
+    logger.info("[M6.4] reflection %s patched: %s", reflection_id, list(body.keys()))
+    return {"id": reflection_id, "status": "updated", **body}
+
+
+# --- M4.5 XP Settlement ---
+
+@app.patch("/api/m4_5/grant_xp")
+async def m4_5_grant_xp(body: dict[str, Any]) -> dict[str, Any]:
+    """[RISK-01] 只在 is_reviewed=true 後呼叫；回傳發放金額"""
+    if not body.get("is_reviewed"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="RISK-01: is_reviewed must be true")
+    xp_amount = 50  # Base XP; real calculation in M4.5 engine
+    logger.info("[M4.5] XP granted: reflection_id=%s amount=%d", body.get("reflection_id"), xp_amount)
+    return {"granted": True, "amount": xp_amount}
+
+
+# --- M6.5 Achievements ---
+
+@app.get("/api/m6_5/user_collections")
+async def m6_5_user_collections() -> list[dict[str, Any]]:
+    return [
+        {"id": "badge_001", "name": "首次反思", "rarity": "common",
+         "description": "完成第一次反思草稿核准", "acquired_at": "2026-06-01",
+         "unlock_condition": "核准第一份日報草稿"},
+        {"id": "badge_002", "name": "CPE 挑戰者", "rarity": "rare",
+         "description": "報名 CPE 程式能力檢定", "acquired_at": "2026-05-20",
+         "unlock_condition": "在 CSIE 角色記錄 CPE 準備 Project"},
+    ]
+
+
+@app.get("/api/m6_5/items_dictionary")
+async def m6_5_items_dictionary() -> list[dict[str, Any]]:
+    return [
+        {"id": "badge_001", "name": "首次反思", "rarity": "common"},
+        {"id": "badge_002", "name": "CPE 挑戰者", "rarity": "rare"},
+        {"id": "badge_003", "name": "連續 7 天", "rarity": "epic"},
+        {"id": "badge_004", "name": "學期之星", "rarity": "legendary"},
+    ]
+
+
+# --- M4.1 Chat (LangGraph) ---
+
+@app.post("/api/m4_1/chat")
+async def m4_1_chat(body: dict[str, Any]) -> dict[str, Any]:
+    """對話端點 — Phase 5 seed response; 接上 LangGraph 後換真實推論"""
+    user_msg = body.get("content", "")
+    role_id = body.get("role_id", "")
+    persona_greetings = {
+        "csie_001": "學長在這！關於你說的問題，我們來一步一步拆解...",
+        "family_001": "嗨～有什麼心事想聊聊嗎？",
+    }
+    reply = persona_greetings.get(role_id, f"我收到了你的訊息：「{user_msg[:30]}」，讓我想想...")
+    return {"content": reply, "persona_id": "robert_001", "thread_id": body.get("thread_id")}
+
+
+@app.post("/api/m4_1/match_persona")
+async def m4_1_match_persona(body: dict[str, Any]) -> dict[str, Any]:
+    """配對最合適的 Persona"""
+    return {"persona_id": "robert_001", "matched": True, "reason": "rule_match"}
+
+
+# --- M4.6 Observer SSE ---
+
+@app.get("/api/m4_6/events")
+async def m4_6_events_sse():
+    """Observer 背景萃取事件 SSE 通道"""
+    async def generator():
+        import json
+        await asyncio.sleep(3)
+        yield f"data: {json.dumps({'type': 'PROJECT_CREATED', 'project_name': '期末考準備'})}\n\n"
+        await asyncio.sleep(60)
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# --- M1.4 Workflow / Connected Sources ---
+
+@app.get("/api/m1_4/connected_sources")
+async def m1_4_connected_sources() -> list[dict[str, Any]]:
+    return []
+
+
+@app.post("/api/m1_4/bind_source")
+async def m1_4_bind_source(body: dict[str, Any]) -> dict[str, Any]:
+    return {"status": "connected", "source_type": body.get("source_type")}
+
+
+@app.post("/api/m1_4/create_trigger")
+async def m1_4_create_trigger(body: dict[str, Any]) -> dict[str, Any]:
+    return {"id": "trigger_001", "status": "created", **body}
