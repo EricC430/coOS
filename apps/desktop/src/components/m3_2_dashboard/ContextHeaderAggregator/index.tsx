@@ -1,15 +1,22 @@
 /**
- * M3.2.3 -- Context Header Aggregator (Short-Term Memory Recall)
+ * M3.2.3 -- Context Header Aggregator (Restructured 2-Row Layout)
  *
  * SPEC: docs/modules/M3_2_role_dashboard_SPEC.md SS1.1
- * Shows 4-slot header: Project | Role | Promises | Goal
+ * 
+ * Layout:
+ *   - Top: Role name as large title (no "Role" prefix)
+ *   - Row 1: Project | Promises | Goal (equal-width 3 columns)
+ *   - Row 2: Dashboard (with heatmap + title)
+ *   - Both rows are equal height
+ *
  * [R08 SS1] Skeleton UI prevents layout shift during load
  * [RISK-06] Waits for ROLE_CONTEXT_SYNCED before showing real data
  */
 
-import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchRoleContext } from "./useRoleContextCache";
+import { ConsistencyHeatmap } from "../ConsistencyHeatmap";
+import type { HeatmapEntry } from "../ConsistencyHeatmap";
 
 interface ContextData {
   project?: { name: string };
@@ -21,19 +28,37 @@ interface ContextData {
 interface Props {
   roleId: string;
   roleName?: string;
+  heatmapData: HeatmapEntry[];
 }
 
 function SkeletonSlot() {
   return (
     <div
       data-testid="skeleton-loader"
-      className="h-8 rounded-md bg-gray-200 animate-pulse"
-    />
+      className="glass-card"
+      style={{
+        height: "100%",
+        minHeight: 60,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <div
+        style={{
+          width: "60%",
+          height: 16,
+          borderRadius: 8,
+          background: "var(--glass-border)",
+          animation: "pulse 1.5s ease-in-out infinite",
+        }}
+      />
+    </div>
   );
 }
 
-export function ContextHeaderAggregator({ roleId, roleName }: Props) {
-  const { data, isLoading, error } = useQuery<ContextData>({
+export function ContextHeaderAggregator({ roleId, roleName, heatmapData }: Props) {
+  const { data, isLoading } = useQuery<ContextData>({
     queryKey: ["role_context", roleId],
     queryFn: () => fetchRoleContext(roleId),
     staleTime: 60_000,
@@ -42,39 +67,69 @@ export function ContextHeaderAggregator({ roleId, roleName }: Props) {
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-4 gap-3 px-4 py-3" data-testid="context-header">
-        <SkeletonSlot />
-        <SkeletonSlot />
-        <SkeletonSlot />
-        <SkeletonSlot />
+      <div className="context-header" data-testid="context-header">
+        <div
+          style={{
+            width: 120,
+            height: 28,
+            borderRadius: 8,
+            background: "var(--glass-border)",
+            animation: "pulse 1.5s ease-in-out infinite",
+          }}
+        />
+        <div className="context-grid">
+          <div className="context-row-top">
+            <SkeletonSlot />
+            <SkeletonSlot />
+            <SkeletonSlot />
+          </div>
+          <SkeletonSlot />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-4 gap-3 px-4 py-3 text-sm" data-testid="context-header">
-      {/* Project slot */}
-      <div data-testid="project-slot" className="bg-white/10 rounded-lg p-2">
-        <div className="text-xs text-gray-400 uppercase tracking-wide">Project</div>
-        <div className="font-medium truncate">{data?.project?.name ?? "—"}</div>
-      </div>
+    <div className="context-header" data-testid="context-header" style={{ flex: 1, minHeight: 0 }}>
+      {/* Role name as top-level title — only name, no "Role" prefix */}
+      <h1 className="context-role-title" data-testid="role-title">
+        {roleName ?? data?.role?.name ?? "—"}
+      </h1>
 
-      {/* Role slot -- most prominent */}
-      <div data-testid="role-slot" className="bg-white/20 rounded-lg p-2 text-center">
-        <div className="text-xs text-gray-400 uppercase tracking-wide">Role</div>
-        <div className="font-bold text-base">{roleName ?? data?.role?.name ?? "—"}</div>
-      </div>
+      {/* 2-row equal-height grid */}
+      <div className="context-grid" style={{ flex: 1, minHeight: 0 }}>
+        {/* Row 1: Project | Promises | Goal — equal width */}
+        <div className="context-row-top">
+          <div className="glass-card context-slot" data-testid="project-slot">
+            <span className="context-slot-label">Project</span>
+            <span className="context-slot-value">
+              {data?.project?.name ?? "—"}
+            </span>
+          </div>
 
-      {/* Promises slot */}
-      <div data-testid="promises-slot" className="bg-white/10 rounded-lg p-2">
-        <div className="text-xs text-gray-400 uppercase tracking-wide">Promises</div>
-        <div className="truncate">{data?.promises?.[0] ?? "—"}</div>
-      </div>
+          <div className="glass-card context-slot" data-testid="promises-slot">
+            <span className="context-slot-label">Promises</span>
+            <span className="context-slot-value">
+              {data?.promises?.[0] ?? "—"}
+            </span>
+          </div>
 
-      {/* Goal slot */}
-      <div data-testid="goal-slot" className="bg-white/10 rounded-lg p-2">
-        <div className="text-xs text-gray-400 uppercase tracking-wide">Goal</div>
-        <div className="truncate">{data?.goals?.[0] ?? "—"}</div>
+          <div className="glass-card context-slot" data-testid="goal-slot">
+            <span className="context-slot-label">Goal</span>
+            <span className="context-slot-value">
+              {data?.goals?.[0] ?? "—"}
+            </span>
+          </div>
+        </div>
+
+        {/* Row 2: Dashboard with heatmap */}
+        <div className="glass-card dashboard-block" data-testid="dashboard-block">
+          <span className="dashboard-title">Dashboard</span>
+          <div>
+            <span className="heatmap-title">365 天一致性紀錄</span>
+            <ConsistencyHeatmap data={heatmapData} />
+          </div>
+        </div>
       </div>
     </div>
   );

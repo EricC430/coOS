@@ -6,7 +6,7 @@
  * Anti-pattern: NEVER render raw raw_tracking_logs; expects pre-aggregated {date, count}[]
  */
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { HeatmapCell } from "./HeatmapCell";
 
 export interface HeatmapEntry {
@@ -38,8 +38,15 @@ export function ConsistencyHeatmap({ data }: Props) {
   const grid = buildGrid(data);
 
   return (
-    <div className="relative">
-      <div className="flex flex-wrap gap-0.5" style={{ maxWidth: 728 }}>
+    <div style={{ position: "relative" }}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 2,
+          maxWidth: 728,
+        }}
+      >
         {grid.map((entry) => (
           <HeatmapCell
             key={entry.date}
@@ -53,7 +60,19 @@ export function ConsistencyHeatmap({ data }: Props) {
       {tooltip && (
         <div
           data-testid="heatmap-tooltip"
-          className="absolute bottom-full left-0 mb-1 bg-black text-white text-xs rounded px-2 py-1 pointer-events-none"
+          className="glass-card"
+          style={{
+            position: "absolute",
+            bottom: "100%",
+            left: 0,
+            marginBottom: 4,
+            fontSize: 12,
+            padding: "6px 10px",
+            pointerEvents: "none",
+            color: "var(--text-primary)",
+            whiteSpace: "nowrap",
+            zIndex: 20,
+          }}
         >
           {tooltip.date}: {tooltip.count} 項
         </div>

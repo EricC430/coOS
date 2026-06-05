@@ -1,18 +1,21 @@
 /**
- * M3.2 -- Role Dashboard
+ * M3.2 -- Role Dashboard (Restructured)
  *
  * SPEC: docs/modules/M3_2_role_dashboard_SPEC.md
  * Research: [R08 SS1 SS5] [R09 SS4 SDT] [R06 SS2]
  * Risk mitigation: RISK-04, RISK-06
+ *
+ * Layout:
+ *   Top 75%: TransitionBackground + ContextHeader (with Dashboard & heatmap)
+ *   Bottom 25%: Coverflow Rotary Wheel Carousel
  */
 
-import React, { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useCoOSStore } from "../../stores/m3_1_global_store";
 import { RoleFocusCarouselDock } from "./RoleFocusCarouselDock";
 import { TransitionBackground } from "./TransitionBackground";
+import type { ThemePalette } from "./TransitionBackground/useColorTemperature";
 import { ContextHeaderAggregator } from "./ContextHeaderAggregator";
-import { ConsistencyHeatmap } from "./ConsistencyHeatmap";
 import type { HeatmapEntry } from "./ConsistencyHeatmap";
 
 async function fetchHeatmapData(roleId: string): Promise<HeatmapEntry[]> {
@@ -21,7 +24,11 @@ async function fetchHeatmapData(roleId: string): Promise<HeatmapEntry[]> {
   return res.json();
 }
 
-export function RoleDashboard() {
+interface Props {
+  onEnterChat?: (roleId: string) => void;
+}
+
+export function RoleDashboard({ onEnterChat }: Props) {
   const { currentRole, roleCache, switchRole, setRoleTransitioning } = useCoOSStore();
   const roles = Object.values(roleCache);
 
@@ -39,48 +46,83 @@ export function RoleDashboard() {
   // Clear transitioning flag after animation settles
   const handleTransitionEnd = () => setRoleTransitioning(false);
 
+  const handleCenterClick = (roleId: string) => {
+    onEnterChat?.(roleId);
+  };
+
+  const handleAddRole = () => {
+    console.log("[M3.2] Add new role triggered — placeholder");
+  };
+
   if (!currentRole) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-400">
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100%",
+          color: "var(--text-muted)",
+          fontSize: 16,
+        }}
+      >
         載入角色中...
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full relative">
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", position: "relative" }}>
       <TransitionBackground
         roleId={currentRole.id}
-        palette={currentRole.themeColorPalette}
+        palette={currentRole.themeColorPalette as unknown as ThemePalette}
         onTransitionEnd={handleTransitionEnd}
       />
 
-      {/* Context Header */}
-      <ContextHeaderAggregator
-        roleId={currentRole.id}
-        roleName={currentRole.name}
-      />
-
-      {/* Dashboard Body */}
-      <div className="flex-1 overflow-y-auto px-4 py-2">
+      {/* Top 75%: Context Header (Role title + Project/Promises/Goal + Dashboard) */}
+      <div style={{ flex: 3, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {roles.length === 0 ? (
           <div
             data-testid="dashboard-empty-state"
-            className="text-center text-gray-400 mt-16"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              height: "100%",
+              color: "var(--text-muted)",
+              fontSize: 14,
+            }}
           >
             在 AI 幫手中描述你的目標，Dashboard 將自動填入
           </div>
         ) : (
-          <ConsistencyHeatmap data={heatmapData} />
+          <ContextHeaderAggregator
+            roleId={currentRole.id}
+            roleName={currentRole.name}
+            heatmapData={heatmapData}
+          />
         )}
       </div>
 
-      {/* Role Carousel Dock */}
-      <div className="border-t border-white/10 pb-2">
+      {/* Bottom 25%: Coverflow Rotary Wheel Carousel */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          position: "relative",
+          borderTop: "1px solid var(--glass-border)",
+        }}
+      >
         <RoleFocusCarouselDock
-          roles={roles}
+          roles={roles.map((r) => ({
+            id: r.id,
+            name: r.name,
+            colorHex: r.themeColorPalette?.primary,
+          }))}
           activeRoleId={currentRole.id}
           onRoleSnap={handleSnap}
+          onCenterClick={handleCenterClick}
+          onAddRole={handleAddRole}
         />
       </div>
     </div>

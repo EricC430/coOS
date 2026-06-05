@@ -4,9 +4,12 @@
  * SPEC: docs/modules/M3_2_role_dashboard_SPEC.md SS7.2
  * [R08 SS1] 500ms color gradient avoids visual shock, supports cognitive reset
  * Respects prefers-reduced-motion for accessibility
+ *
+ * Redesign: Warm therapeutic-alliance themed background with
+ * subtle concentric circle ripples and ambient glow.
  */
 
-import React, { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { useColorTemperature, type ThemePalette } from "./useColorTemperature";
 
 interface Props {
@@ -15,8 +18,6 @@ interface Props {
   isTransitioning?: boolean;
   onTransitionEnd?: () => void;
 }
-
-const DEFAULT_PALETTE: ThemePalette = { primary: "#6366f1" };
 
 export function TransitionBackground({
   palette,
@@ -39,18 +40,28 @@ export function TransitionBackground({
   );
 
   return (
-    <div
-      data-testid="transition-background"
-      className="fixed inset-0 -z-10 transition-colors duration-500"
-      style={{
-        background: `linear-gradient(135deg, var(--role-primary, ${palette.primary})22 0%, transparent 60%)`,
-      }}
-    >
+    <div className="app-background" data-testid="transition-background">
+      {/* Role-specific ambient glow */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: `radial-gradient(ellipse 50% 50% at 50% 80%, ${palette.primary}15 0%, transparent 70%)`,
+          transition: "background 0.6s ease",
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Transitioning blur overlay */}
       {isTransitioning && (
         <div
           data-testid="ambient-glow"
-          className="absolute inset-0"
-          style={{ backdropFilter: "blur(4px)", opacity: 0.5 }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            backdropFilter: "blur(4px)",
+            opacity: 0.5,
+          }}
         />
       )}
     </div>
