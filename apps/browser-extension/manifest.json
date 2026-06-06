@@ -10,11 +10,18 @@
   "permissions": [
     "tabs",
     "idle",
-    "nativeMessaging"
+    "nativeMessaging",
+    "scripting",
+    "activeTab"
   ],
   "browser_specific_settings": {
     "gecko": {
       "id": "coos_extension@coos.local"
     }
-  }
+  },
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://*/*",
+    "https://*/*"
+  ]
 }

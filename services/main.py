@@ -358,8 +358,30 @@ async def lifespan(app: FastAPI):
     _eguard_filter = EguardFilter()
     _drift_shield = DriftShield(ai_local_host=settings.ai_local_host)
 
+    # Periodic rule miner task
+    async def periodic_rule_miner():
+        await asyncio.sleep(60.0)
+        while True:
+            try:
+                if _gemma_pipeline and _sqlite_conn:
+                    from m2_2_gemma.rule_miner import FallbackRuleMiner
+                    miner = FallbackRuleMiner(_gemma_pipeline.fallback)
+                    new_rules = await miner.mine_rules_from_db(_sqlite_conn, min_occurrences=3, min_correlation=0.8)
+                    if new_rules:
+                        logger.info("[M2.2] Periodic rule miner automatically learned %d new fallback rules", len(new_rules))
+            except Exception as e:
+                logger.warning("[M2.2] Periodic rule miner encountered error: %s", e)
+            await asyncio.sleep(3600.0)
+
+    miner_task = asyncio.create_task(periodic_rule_miner())
+
     logger.info("[M0.3] coOS sidecar 啟動完成 (local_only=%s)", not settings.gemini_api_key)
     yield
+    miner_task.cancel()
+    try:
+        await miner_task
+    except asyncio.CancelledError:
+        pass
     if _debouncer:
         await _debouncer.shutdown_gracefully()
     from m0_4_logging.writer import get_logger as get_log_writer
@@ -376,6 +398,7 @@ app = FastAPI(title="coOS Sidecar", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["tauri://localhost", "http://localhost:1420"],
+    allow_origin_regex="chrome-extension://.*",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -606,6 +629,34 @@ async def m2_2_compress(body: dict[str, Any]) -> IntentVector:
         )
 
     return await _gemma_pipeline.compress(text, source_log_id=source_log_id, role_id=role_id)
+
+
+@app.post("/api/m2_2/mine_rules")
+async def m2_2_mine_rules(
+    min_occurrences: int = 3,
+    min_correlation: float = 0.8
+) -> dict[str, Any]:
+    """[M2.2 SPEC §7.8] Trigger rule mining from gemma_edge logs to expand rule-based fallbacks."""
+    if _gemma_pipeline is None:
+        raise HTTPException(status_code=503, detail="M2.2 pipeline not initialized")
+
+    from m2_2_gemma.rule_miner import FallbackRuleMiner
+    miner = FallbackRuleMiner(_gemma_pipeline.fallback)
+
+    if _sqlite_conn is None:
+        raise HTTPException(status_code=500, detail="Local SQLite connection is not initialized")
+
+    new_rules = await miner.mine_rules_from_db(
+        _sqlite_conn,
+        min_occurrences=min_occurrences,
+        min_correlation=min_correlation
+    )
+
+    return {
+        "status": "ok",
+        "new_rules_count": len(new_rules),
+        "new_rules": [{"pattern": p, "intent": i} for p, i in new_rules]
+    }
 
 
 # ---------------------------------------------------------------------------

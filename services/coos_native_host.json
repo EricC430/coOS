@@ -1,0 +1,9 @@
+{
+    "name": "coos_native_host",
+    "description": "coOS Native Messaging Host",
+    "path": "C:\\coOS\\coos_native_host.exe",
+    "type": "stdio",
+    "allowed_origins": [
+        "chrome-extension://ddkhknklcgnilkbofglkchpjdkdlcefo/"
+    ]
+}

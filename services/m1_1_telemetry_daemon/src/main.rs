@@ -121,18 +121,20 @@ async fn main() {
                 // [RISK-15] content_raw is L1-only — it enters the local event payload
                 // and local SQLite raw_tracking_logs, but is never synced to L3 (cloud).
                 if let Some(summary) = &capture.content_summary {
-                    let content_ev = TelemetryEvent::new(
-                        "M1.1.1",
-                        "content_capture",
-                        serde_json::json!({
-                            "app_name": capture.app_name,
-                            "content_raw": capture.content_raw,
-                            "content_summary": summary,
-                            "inference_mode": "rule_based_fallback",
-                            "privacy_tier": "T1_OPTIN",
-                        }),
-                    );
-                    emitter.emit(content_ev).await;
+                    if !is_browser_process(&capture.app_name) {
+                        let content_ev = TelemetryEvent::new(
+                            "M1.1.1",
+                            "content_capture",
+                            serde_json::json!({
+                                "app_name": capture.app_name,
+                                "content_raw": capture.content_raw,
+                                "content_summary": summary,
+                                "inference_mode": "rule_based_fallback",
+                                "privacy_tier": "T1_OPTIN",
+                            }),
+                        );
+                        emitter.emit(content_ev).await;
+                    }
                 }
 
                 let ev = TelemetryEvent::new("M1.1.1", "window_changed", ev_payload);
@@ -173,4 +175,17 @@ async fn main() {
             emitter.emit(scan_ev).await;
         }
     }
+}
+
+fn is_browser_process(app_name: &str) -> bool {
+    let lower = app_name.to_lowercase();
+    lower == "chrome.exe"
+        || lower == "msedge.exe"
+        || lower == "firefox.exe"
+        || lower == "brave.exe"
+        || lower == "opera.exe"
+        || lower == "chrome"
+        || lower == "msedge"
+        || lower == "firefox"
+        || lower == "brave"
 }

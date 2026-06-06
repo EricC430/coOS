@@ -1,0 +1,23 @@
+{
+  "_INTENT_KEYWORDS": {
+    "debug|error|exception|traceback|fix": "debugging_session",
+    "calculus|integral|derivative|math|homework": "math_study",
+    "test|pytest|unittest|assert": "testing_activity",
+    "sql|database|db|query|migration": "database_development",
+    "read|doc|reference|mdn|stack": "documentation_reading",
+    "commit|push|pull|merge|git": "version_control_activity",
+    "write|essay|report|draft": "writing_task",
+    "\\badobe\\b": "image_editing",
+    "\\bpsd\\b": "image_editing",
+    "\\bvectors\\b": "image_editing",
+    "\\bediting\\b": "image_editing",
+    "\\bdrawing\\b": "image_editing",
+    "\\blayer\\b": "image_editing",
+    "\\blayers\\b": "image_editing",
+    "\\bphotoshop\\b": "image_editing"
+  },
+  "_FRUSTRATION_SIGNALS": {
+    "error|exception|fail|crash|bug|wrong|broken": 0.6,
+    "retry|again|still|doesn.t work": 0.4
+  }
+}

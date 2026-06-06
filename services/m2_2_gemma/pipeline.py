@@ -35,7 +35,7 @@ class GemmaInferencePipeline:
         timeout: float = 15.0,  # revised: Ollama overhead on iPad M1 ~11-12s actual
     ) -> None:
         self._client = GemmaEdgeClient(ai_local_host, model, timeout)
-        self._fallback = RuleBasedExtractor()
+        self.fallback = RuleBasedExtractor()
         self._edge_offline = False  # toggled by simulate_edge_offline() in tests
 
     async def compress(
@@ -72,7 +72,7 @@ class GemmaInferencePipeline:
 
     def _make_fallback_vector(self, source_log_id: str, role_id: str) -> IntentVector:
         """Rule-based fallback -- RISK-05: source_log_id/role_id always preserved."""
-        extracted = self._fallback.extract("")
+        extracted = self.fallback.extract("")
         return IntentVector(
             source_log_id=source_log_id,
             role_id=role_id,
