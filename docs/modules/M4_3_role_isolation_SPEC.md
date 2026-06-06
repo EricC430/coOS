@@ -217,6 +217,9 @@ class RoleContext:
     projects: List[dict] = field(default_factory=list)
     settings: Optional[dict] = None
     implicit_state: Optional[dict] = None  # [RISK-06] 僅當前角色
+    # v1.2 新增：承諾與目標上下文（供 M4.2 Persona prompt [記憶區塊] 注入）
+    active_goals: List[dict] = field(default_factory=list)
+    upcoming_promises: List[dict] = field(default_factory=list)
 
 async def build_role_context(user_id: UUID, role_id: UUID) -> RoleContext:
     """
@@ -243,6 +246,9 @@ async def build_role_context(user_id: UUID, role_id: UUID) -> RoleContext:
         {"uid": user_id, "rid": role_id}
     )
 
+    # v1.2 新增：承諾與目標上下文
+    active_goals, upcoming_promises = await build_commitment_context(role_id)
+
     return RoleContext(
         role_id=role_id,
         user_id=user_id,
@@ -250,7 +256,50 @@ async def build_role_context(user_id: UUID, role_id: UUID) -> RoleContext:
         projects=projects,
         settings=settings,
         implicit_state=implicit_state,  # 可能為 None → M4.2.4 用中性預設
+        active_goals=active_goals,
+        upcoming_promises=upcoming_promises,
     )
+
+
+async def build_commitment_context(role_id: UUID) -> tuple[list, list]:
+    """
+    [v1.2] 承諾與目標上下文建構器。
+    在使用者進入聊天室時，預撈該角色下的 active 目標與即將到期的承諾，
+    壓縮為 compact context block 供 M4.2 Persona system prompt [記憶區塊] 注入。
+
+    設計原則：
+    - 目標：取所有 status='active' 的 goals（通常 1~3 筆）
+    - 承諾：篩選 deadline 在 ±3 天內的 active promises（最多 5 筆）
+    - 過期承諾自動標記為 expired
+    - 不同專家的承諾/目標由 persona_id 隔離，在 M4.2 注入時按當前 persona 篩選
+    """
+    # 1. 自動標記過期承諾
+    await db.execute(
+        "UPDATE promises SET status = 'expired', updated_at = NOW() "
+        "WHERE role_id = :rid AND status = 'active' "
+        "AND deadline IS NOT NULL AND deadline < NOW()",
+        {"rid": role_id}
+    )
+
+    # 2. 撈取 active 目標
+    active_goals = await db.fetch_all(
+        "SELECT id, persona_id, title, description, progress, target_date, status "
+        "FROM goals WHERE role_id = :rid AND status = 'active' "
+        "ORDER BY created_at ASC",
+        {"rid": role_id}
+    )
+
+    # 3. 撈取即將到期的承諾（±3 天內）
+    upcoming_promises = await db.fetch_all(
+        "SELECT id, persona_id, text, deadline, source_thread_id, status "
+        "FROM promises WHERE role_id = :rid AND status = 'active' "
+        "AND (deadline IS NULL OR deadline BETWEEN NOW() - INTERVAL '3 days' AND NOW() + INTERVAL '3 days') "
+        "ORDER BY deadline ASC NULLS LAST "
+        "LIMIT 5",
+        {"rid": role_id}
+    )
+
+    return active_goals, upcoming_promises
 ```
 
 ### 7.3 角色切換處理器 (M4.3.3 + M4.3.4)
@@ -466,14 +515,25 @@ class TestM4_3_RoleLifecycle:
 ❌ **不要讓角色切換事件同步至雲端 PostgreSQL**
    理由：角色切換的時間戳可能洩漏行為模式 (如「每天 22:00 切到 FAMILY 角色」)。僅寫入本地 `raw_tracking_logs`。[RISK-12]
 
-## 9. Open Questions
+## 9. Open Questions (已決議)
 
-實作前必須與使用者拍板：
+本模組設計之核心開放問題已與使用者拍板決議：
 
-- [ ] **角色切換的冷卻時間?** 是否需要防止使用者快速連續切換 (如 1 秒內切 5 次) 導致快取反覆清除的效能問題?
-- [ ] **「工具型 AI」(M3.4.1.1) 是否跨角色共享?** 它是首位固定的無人設 AI，是否應該在所有角色都可用，還是每個角色有獨立的工具型 AI 實例?
-- [ ] **角色切換時是否需要確認彈窗?** 如果使用者在對話中途切換角色，當前對話是否自動存檔? 還是需要提醒「切換後此對話將結束」?
-- [ ] **`thread_id` 的 role_id 前綴策略是否過於僵硬?** 是否有未來場景需要「跨角色引用對話」(例如導師提及使用者在另一角色的進步)? 若有，應改為 ACL 層級控制而非前綴硬隔離。
+- **角色切換的冷卻時間？**
+  * **決策**：**3 秒內連續切換角色則執行等待載入**。
+  * **細節**：若使用者在 3 秒內點擊進入第二個角色，則在進入期間執行等待的載入動畫/載入條。若是透過主畫面的角色儀表板卡片輪播（Dashboard Carousel）切換角色，則不設此限制。
+
+- **「工具型 AI」是否跨角色共享？**
+  * **決策**：**不共享**。
+  * **細節**：每個角色擁有獨立的工具型 AI（無人設助手）實例與獨立的 thread，確保代碼片段、剪貼簿與臨時上下文在不同角色沙盒間完全隔離。
+
+- **角色切換時是否需要確認彈窗？**
+  * **決策**：**無彈窗，模擬真實聊天介面**。
+  * **細節**：依前端設計說明書規範，使用者在主畫面的角色 Dashboard Carousel 滾動到特定角色後點擊才能進入該角色畫面。進入對話畫面後，僅能點選「返回」回到主頁面，無法直接切換至其他角色。此舉使切換行為必須回到主頁重新進入，不需額外確認彈窗即可實現直覺切換，模擬真實的獨立聊天室體驗。
+
+- **`thread_id` 的 role_id 前綴策略是否過於僵硬？**
+  * **決策**：**暫定強制隔離**。
+  * **細節**：維持 `role_id::thread_id` 的前綴強制實體隔離，確保資料庫層級的絕對安全性與開發架構的單純性。
 
 ---
 

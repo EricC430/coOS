@@ -15,6 +15,7 @@ from langgraph.graph import END, StateGraph
 from .drift import drift_validate
 from .observer_dispatch import dispatch_observer
 from .routing_engine import route_with_confidence
+from m4_2_persona.graph import get_persona_graph
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class RouterState(TypedDict, total=False):
     route_decision: dict | None       # M4.1.1 輸出
     persona_response: str | None      # M4.2 填入
     observer_extractions: list | None # M4.1.3/M4.6 填入
+    implicit_state: str | None        # M4.8 / M4.3 context 傳遞
     error: str | None
 
 
@@ -83,12 +85,56 @@ async def llm_router_node(state: RouterState) -> RouterState:
 async def invoke_persona_node(state: RouterState) -> RouterState:
     """
     M4.1.2 純結構接點：轉發到對應 Persona 容器。
-    Prompt 內容由 M4.2 注入，此節點不含任何 Persona 內容。
+    呼叫 M4.2 Persona 狀態機，將回應注入 state["persona_response"]。
     """
     decision = state.get("route_decision") or {}
-    logger.debug("[M4.1.2] Persona container: %s", decision.get("persona_id"))
-    # M4.2 實作後此處替換為真實 Persona 呼叫
-    return {**state, "persona_response": None}
+    persona_id = decision.get("persona_id")
+    logger.debug("[M4.1.2] Persona container: %s", persona_id)
+
+    # 尋找對應 Expert 設定
+    active_experts = state.get("active_experts") or []
+    expert = None
+    for exp in active_experts:
+        if str(exp.get("id")) == str(persona_id):
+            expert = exp
+            break
+
+    if not expert:
+        # Fallback 預設
+        expert = {
+            "name": "AI 幫手",
+            "personality_prompt": "你是一個有幫助的 AI 助手。",
+            "tone_default": "authoritative",
+            "trust_level": 0.5,
+            "backstory": ""
+        }
+
+    # 組裝 Persona 輸入狀態
+    persona_input = {
+        "thread_id": state.get("thread_id"),
+        "role_id": state.get("role_id"),
+        "user_message": state.get("user_message"),
+        "persona_id": persona_id,
+        "persona_config": {
+            "name": expert.get("name"),
+            "personality_prompt": expert.get("personality_prompt"),
+            "backstory": expert.get("backstory"),
+            "tone_default": expert.get("tone_default", "authoritative"),
+            "trust_level": expert.get("trust_level", 0.5),
+        },
+        "implicit_state": state.get("implicit_state"),
+        "bdi_belief": "",
+        "bdi_desire": "",
+        "current_tone": expert.get("tone_default", "authoritative"),
+        "current_agency": expert.get("trust_level", 0.5),
+    }
+
+    # 執行 Persona 狀態機圖
+    persona_graph = get_persona_graph()
+    res = await persona_graph.ainvoke(persona_input)
+    response = res.get("final_response") or res.get("raw_response")
+
+    return {**state, "persona_response": response}
 
 
 # ---------------------------------------------------------------------------

@@ -268,21 +268,71 @@ class RoleImplicitState(BaseModel):
 - Foreign Key 違反 → `IntegrityError`, 前端提示「角色已被刪除」
 - 超過 10 個角色上限 → `422 Unprocessable Entity`
 
-## 8. 進階與未來擴充規格 [進階 / Future Phase]
+## 8. 承諾與目標資料結構 (v1.2 提前啟用)
 
-以下結構屬於後續進階 Phase 的範疇（如 M3.2.3 橫向 Bento Grid 中的 CSIE 角色短期記憶喚醒區，需整合 Projects / Promises / Goals）。當前 Phase 1.5 遷移引擎 (Alembic) 暫不實作此部分。
+> [!NOTE]
+> **v1.2 更新**：`promises`、`goals`、`role_context_aggregates` 三表原定 Phase 4 啟用，因「主動性承諾提醒」與「目標對齊審視」為核心體驗需求，提前至 MVP 正式啟用。
 
-### 8.1 角色情境聚合關係 (role_context_aggregates) — 預計於 Phase 4 啟用
+### 8.1 `promises` (L3 — 口頭承諾追蹤)
 
-在 MVP 中，`role_projects` 已經直接透過外鍵關聯到 `roles`。在進階設計中，當引入口頭承諾（Promises，如「明天中午前完成簡報」）與長遠目標（Goals，如「學會 React」）時，我們將建立關係表以實現多對多綁定或統一的角色情境聚合查詢。
+每筆承諾綁定 `persona_id`（在哪位專家的對話中產生），供 M4.3 建構承諾上下文時篩選。
 
 ```sql
--- 角色與多種 context 實體的多對多關聯聚合（概念 DDL）
+CREATE TABLE promises (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    role_id         UUID NOT NULL,
+    persona_id      UUID NOT NULL,
+    source_thread_id VARCHAR(100) NOT NULL,
+    text            VARCHAR(500) NOT NULL,
+    deadline        TIMESTAMPTZ,
+    status          VARCHAR(20) NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'fulfilled', 'expired', 'cancelled')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+    FOREIGN KEY (persona_id) REFERENCES ai_experts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_promises_role ON promises(role_id);
+CREATE INDEX idx_promises_persona ON promises(persona_id);
+CREATE INDEX idx_promises_deadline ON promises(deadline) WHERE status = 'active';
+```
+
+### 8.2 `goals` (L3 — 專家核心目標)
+
+每位專家與使用者確立的「最高階目的」記錄於此，供後續對話中持續審視對齊度。
+
+```sql
+CREATE TABLE goals (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    role_id         UUID NOT NULL,
+    persona_id      UUID NOT NULL,
+    title           VARCHAR(200) NOT NULL,
+    description     VARCHAR(1000),
+    progress        REAL NOT NULL DEFAULT 0.0
+                    CHECK (progress >= 0 AND progress <= 1),
+    target_date     TIMESTAMPTZ,
+    status          VARCHAR(20) NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'achieved', 'revised', 'abandoned')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+    FOREIGN KEY (persona_id) REFERENCES ai_experts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_goals_role ON goals(role_id);
+CREATE INDEX idx_goals_persona ON goals(persona_id);
+CREATE INDEX idx_goals_status ON goals(status) WHERE status = 'active';
+```
+
+### 8.3 `role_context_aggregates` (L3 — 角色情境聚合關聯)
+
+```sql
 CREATE TABLE role_context_aggregates (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     role_id             UUID NOT NULL,
     entity_type         VARCHAR(20) NOT NULL CHECK (entity_type IN ('project', 'promise', 'goal')),
-    entity_id           UUID NOT NULL,                 -- 指向對應實體表的主鍵
+    entity_id           UUID NOT NULL,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
     UNIQUE (role_id, entity_type, entity_id)
@@ -291,10 +341,34 @@ CREATE TABLE role_context_aggregates (
 CREATE INDEX idx_rca_lookup ON role_context_aggregates(role_id, entity_type);
 ```
 
-### 8.2 承諾表 (promises) 與 目標表 (goals) — 預計於 Phase 4 啟用
-未來將新增與 `roles` 綁定的輕量化實體表，提供給 Bento Grid 進行短期與長期記憶喚醒：
-*   `promises`：記錄與特定角色專家對話中做出的口頭承諾（如 `{id, role_id, text, deadline, status}`）。
-*   `goals`：記錄該角色的核心推進里程碑（如 `{id, role_id, title, progress, target_date}`）。
+### 8.4 Pydantic Models (promises / goals)
+
+```python
+# services/m6_3_role_context/models.py (v1.2 擴充)
+
+class Promise(BaseModel):
+    id: UUID
+    role_id: UUID
+    persona_id: UUID
+    source_thread_id: str
+    text: str = Field(max_length=500)
+    deadline: Optional[datetime] = None
+    status: str = Field(default="active")
+    created_at: datetime
+    updated_at: datetime
+
+class Goal(BaseModel):
+    id: UUID
+    role_id: UUID
+    persona_id: UUID
+    title: str = Field(max_length=200)
+    description: Optional[str] = Field(max_length=1000, default=None)
+    progress: float = Field(default=0.0, ge=0, le=1)
+    target_date: Optional[datetime] = None
+    status: str = Field(default="active")
+    created_at: datetime
+    updated_at: datetime
+```
 
 ## 9. Anti-patterns (反模式)
 

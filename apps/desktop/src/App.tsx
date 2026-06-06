@@ -24,6 +24,7 @@ import { CommunityUI } from "./components/m3_7_community";
 import { WorkflowModal } from "./components/m3_6_workflow_modal";
 import { EdgeNavigationTrigger } from "./components/EdgeNavigationTrigger";
 import { PageTransition } from "./components/PageTransition";
+import { SettingsModal } from "./components/SettingsModal";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -67,6 +68,7 @@ function ThemeToggle() {
 function AppContent() {
   const [activeView, setActiveView] = useState<ActiveView>("home");
   const [workflowOpen, setWorkflowOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [_chatRoleId, setChatRoleId] = useState<string | null>(null);
   const { seedRoleCache } = useCoOSStore();
 
@@ -121,6 +123,16 @@ function AppContent() {
     <div style={{ width: "100vw", height: "100vh", position: "relative", overflow: "hidden" }}>
       {/* Theme toggle */}
       <ThemeToggle />
+
+      {/* Settings toggle */}
+      <button
+        className="settings-toggle"
+        onClick={() => setSettingsOpen(true)}
+        aria-label="Open settings"
+        title="系統與隱私設定"
+      >
+        ⚙️
+      </button>
 
       {/* Main content — always rendered underneath */}
       <main style={{ width: "100%", height: "100%", position: "relative" }}>
@@ -186,6 +198,9 @@ function AppContent() {
 
       {/* M3.6 Workflow Modal -- in-context, no page navigation */}
       <WorkflowModal open={workflowOpen} onClose={() => setWorkflowOpen(false)} />
+
+      {/* Settings Modal */}
+      <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

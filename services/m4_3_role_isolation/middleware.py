@@ -18,6 +18,7 @@ EXEMPT_PATHS = {
     "/api/health",
     "/api/auth/login",
     "/api/m6_2/roles",
+    "/api/m4_6/events",
 }
 
 
@@ -39,14 +40,35 @@ class RoleIsolationMiddleware(BaseHTTPMiddleware):
         if request.url.path in EXEMPT_PATHS:
             return await call_next(request)
 
-        # 只攔截 /api/ 路徑
-        if not request.url.path.startswith("/api/"):
+        # 只安全攔截 /api/m4_* 與 /api/m6_* 路徑
+        path = request.url.path
+        if not (path.startswith("/api/m4_") or path.startswith("/api/m6_")):
             return await call_next(request)
 
         role_id = request.headers.get("X-Role-ID")
+
+        # 1. 嘗試從 query parameters 獲取
+        if not role_id:
+            role_id = request.query_params.get("role_id")
+
+        # 2. 嘗試從 JSON body 獲取 (不破壞後續處理器的讀取)
+        if not role_id and request.method in ("POST", "PUT", "PATCH"):
+            try:
+                body_bytes = await request.body()
+                import json
+                body_json = json.loads(body_bytes)
+                role_id = body_json.get("role_id")
+                
+                # 重設 receive 管道以便後續的路由處理器能正常讀取 Body
+                async def receive():
+                    return {"type": "http.request", "body": body_bytes, "more_body": False}
+                request._receive = receive
+            except Exception:
+                pass
+
         if not role_id:
             return Response(
-                content='{"detail": "Missing X-Role-ID header"}',
+                content='{"detail": "Missing X-Role-ID header or role_id parameter"}',
                 status_code=422,
                 media_type="application/json",
             )

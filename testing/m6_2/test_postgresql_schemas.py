@@ -106,6 +106,8 @@ class TestEngineModule:
     def test_get_cloud_engine_returns_none_without_url(self, monkeypatch):
         """AC: engine factory returns None gracefully when URL not set."""
         monkeypatch.delenv("SUPABASE_DB_URL", raising=False)
+        from config import Settings
+        monkeypatch.setattr("config.get_settings", lambda: Settings(supabase_db_url=""))
         # Reset module singleton
         import importlib
 
@@ -119,6 +121,8 @@ class TestEngineModule:
     def test_is_cloud_available_returns_false_without_url(self, monkeypatch):
         """AC: is_cloud_available() returns False when URL not set."""
         monkeypatch.delenv("SUPABASE_DB_URL", raising=False)
+        from config import Settings
+        monkeypatch.setattr("config.get_settings", lambda: Settings(supabase_db_url=""))
         import importlib
 
         import services.m6_2_postgresql.engine as eng_mod

@@ -83,7 +83,11 @@ class LogWriter:
         user_id: str | None = None,
         role_id: str | None = None,
         correlation_id: str | None = None,
+        event_id: str | None = None,
     ) -> str:
+        kwargs = {}
+        if event_id:
+            kwargs["id"] = event_id
         event = LogEvent(
             module=module,
             action=action,
@@ -92,6 +96,7 @@ class LogWriter:
             user_id=user_id,
             role_id=role_id,
             correlation_id=correlation_id,
+            **kwargs
         )
         with self._connect() as conn:
             conn.execute(
@@ -177,8 +182,12 @@ class AsyncLogWriter:
         user_id: str | None = None,
         role_id: str | None = None,
         correlation_id: str | None = None,
+        event_id: str | None = None,
     ) -> None:
         """Fire-and-forget: enqueue and return immediately."""
+        kwargs = {}
+        if event_id:
+            kwargs["id"] = event_id
         event = LogEvent(
             module=module,
             action=action,
@@ -187,6 +196,7 @@ class AsyncLogWriter:
             user_id=user_id,
             role_id=role_id,
             correlation_id=correlation_id,
+            **kwargs
         )
         if self._dev_mode:
             _stdout_logger.log(

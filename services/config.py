@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     # === PostgreSQL @ Supabase (T3 optional) ===
     supabase_url: str = Field(default="", description="Supabase REST URL（optional）")
     supabase_key: str = Field(default="", description="Supabase anon/service key（optional）")
+    supabase_db_url: str = Field(default="", description="Supabase PostgreSQL 連線 URL（optional）")
 
     # === Neo4j AuraDB (T3 optional) ===
     neo4j_uri: str = Field(default="", description="Neo4j 連線 URI（optional）")

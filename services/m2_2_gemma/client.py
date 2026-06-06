@@ -22,6 +22,7 @@ POST_SYSTEM_PROMPT = (
     "1. Remove all PII: filenames, variable names, IPs, URLs, DB column names.\n"
     "2. Generalize concrete actions (e.g. 'editing db.py SQL' -> 'database write development').\n"
     "3. Estimate emotional state (e.g. long retry loops -> frustration; clean compile -> flow).\n"
+    "4. Ignore non-blocking software warnings or registration notices in window titles (e.g., '產品啟動失敗', '受保護的檢視', 'Product activation failed', 'Protected View'). Instead, focus on the actual document name, topic, or content the user is studying or editing.\n"
     "Output strictly valid JSON with keys: "
     "intent_label, context_summary, frustration_level (0.0-1.0), "
     "valence (-1.0 to 1.0), arousal (0.0-1.0), stripped_entities_count."

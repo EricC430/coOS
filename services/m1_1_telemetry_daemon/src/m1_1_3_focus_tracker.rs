@@ -3,13 +3,15 @@
 /// SPEC: docs/modules/M1_1_os_telemetry_daemon_SPEC.md §7.1 M1.1.3, §7.5
 /// [R06: 數位表型 §2.1] Focus duration + activity state as digital phenotype.
 /// [R02: 時間動力學 §1.2] Burst features from app switching frequency.
-use crate::models::{ActivityState, AppBucket, TelemetryEvent};
+use crate::models::{ActivityState, AppBucket, SecondaryWindowEntry, SecondaryWindowSnapshot, TelemetryEvent};
 use std::time::{Duration, Instant};
+use chrono;
 
-const MIN_SESSION_DURATION_S: u64 = 30;   // < 30s sessions not emitted
+const MIN_SESSION_DURATION_S: u64 = 30;          // < 30s sessions not emitted
 const HEARTBEAT_INTERVAL_S: u64 = 30;
-const IDLE_THRESHOLD_S: u64 = 300;        // 5 min without input → IDLE
-const DEEP_FOCUS_THRESHOLD_S: u64 = 600;  // 10 min single work app → DEEP_FOCUS
+const SECONDARY_SCAN_INTERVAL_S: u64 = 30;       // EnumWindows secondary scan cadence
+const IDLE_THRESHOLD_S: u64 = 300;               // 5 min without input → IDLE
+const DEEP_FOCUS_THRESHOLD_S: u64 = 600;         // 10 min single work app → DEEP_FOCUS
 
 pub struct FocusTracker {
     current_app: String,
@@ -17,6 +19,7 @@ pub struct FocusTracker {
     session_start: Instant,
     last_activity: Instant,
     last_heartbeat: Instant,
+    last_secondary_scan: Instant,
     app_switch_count_5min: u32,
     switch_window_start: Instant,
     scroll_events_per_min: u32,
@@ -36,6 +39,7 @@ impl FocusTracker {
             session_start: now,
             last_activity: now,
             last_heartbeat: now,
+            last_secondary_scan: now,
             app_switch_count_5min: 0,
             switch_window_start: now,
             scroll_events_per_min: 0,
@@ -151,6 +155,22 @@ impl FocusTracker {
         }
     }
 
+    /// [M1.1 SPEC §7.1 M1.1.3] Emit SecondaryWindowSnapshot every 30 seconds.
+    /// Scans all visible windows on all monitors (EnumWindows) except the foreground.
+    pub fn tick_secondary_scan(&mut self) -> Option<TelemetryEvent> {
+        if self.last_secondary_scan.elapsed().as_secs() < SECONDARY_SCAN_INTERVAL_S {
+            return None;
+        }
+        self.last_secondary_scan = Instant::now();
+
+        let windows = enumerate_visible_secondary_windows(&self.current_app);
+        let scanned_at = chrono::Utc::now().to_rfc3339();
+
+        let snapshot = SecondaryWindowSnapshot { windows, scanned_at };
+        let payload = serde_json::to_value(&snapshot).unwrap_or(serde_json::json!({}));
+        Some(TelemetryEvent::new("M1.1.3", "secondary_window_snapshot", payload))
+    }
+
     pub fn record_activity(&mut self) {
         self.last_activity = Instant::now();
     }
@@ -160,6 +180,104 @@ impl Default for FocusTracker {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ---------------------------------------------------------------------------
+// SecondaryWindowSnapshot — EnumWindows scan  (SPEC §7.1 M1.1.3)
+// ---------------------------------------------------------------------------
+
+/// [M1.1 SPEC §7.1 M1.1.3] Enumerate all visible non-foreground windows and
+/// return them as SecondaryWindowEntry list.  Only process name + bucket are kept
+/// (no window titles — CaptureMode::Off applies to secondary scan).
+#[cfg(windows)]
+fn enumerate_visible_secondary_windows(foreground_app: &str) -> Vec<SecondaryWindowEntry> {
+    use crate::models::classify_process;
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId, IsWindowVisible,
+    };
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::System::ProcessStatus::GetProcessImageFileNameW;
+    use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST};
+
+    // Use a raw Vec behind a raw pointer so the extern "system" callback can mutate it.
+    // Safety: EnumWindows is synchronous — the callback runs on the same thread before
+    // EnumWindows returns, so no concurrent access occurs.
+    struct ScanState {
+        foreground_app_lower: String,
+        entries: Vec<SecondaryWindowEntry>,
+    }
+
+    let mut scan = ScanState {
+        foreground_app_lower: foreground_app.to_lowercase(),
+        entries: Vec::new(),
+    };
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let scan = &mut *(lparam.0 as *mut ScanState);
+
+        if !IsWindowVisible(hwnd).as_bool() {
+            return BOOL(1);
+        }
+
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 {
+            return BOOL(1);
+        }
+
+        let process_name = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            Ok(handle) => {
+                let mut buf = vec![0u16; 260];
+                let len = GetProcessImageFileNameW(handle, &mut buf);
+                if len == 0 {
+                    return BOOL(1);
+                }
+                let path = String::from_utf16_lossy(&buf[..len as usize]);
+                path.split(['\\', '/']).last().unwrap_or("Unknown").to_string()
+            }
+            Err(_) => return BOOL(1),
+        };
+
+        // Skip foreground app (tracked as primary) and duplicates
+        let name_lower = process_name.to_lowercase();
+        if name_lower == scan.foreground_app_lower {
+            return BOOL(1);
+        }
+        if scan.entries.iter().any(|e| e.app_name.to_lowercase() == name_lower) {
+            return BOOL(1);
+        }
+
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        let monitor_index = (monitor.0 as usize % 8) as u32;
+
+        let bucket = classify_process(&process_name);
+        scan.entries.push(SecondaryWindowEntry {
+            app_name: process_name,
+            app_bucket: bucket,
+            visible_since: String::new(), // filled after enumeration
+            monitor_index,
+        });
+
+        BOOL(1)
+    }
+
+    unsafe {
+        let lparam = LPARAM(&mut scan as *mut ScanState as isize);
+        let _ = EnumWindows(Some(enum_proc), lparam);
+    }
+
+    // Stamp visible_since uniformly for this scan
+    let visible_since = chrono::Utc::now().to_rfc3339();
+    for entry in &mut scan.entries {
+        entry.visible_since = visible_since.clone();
+    }
+    scan.entries
+}
+
+#[cfg(not(windows))]
+fn enumerate_visible_secondary_windows(_foreground_app: &str) -> Vec<SecondaryWindowEntry> {
+    vec![]
 }
 
 #[cfg(test)]

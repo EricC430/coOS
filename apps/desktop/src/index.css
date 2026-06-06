@@ -567,3 +567,358 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
+
+/* ---------- Settings Toggle Button ---------- */
+.settings-toggle {
+  position: fixed;
+  top: 12px;
+  right: 56px;
+  z-index: 200;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  backdrop-filter: blur(8px);
+  color: var(--gold-accent);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.settings-toggle:hover {
+  transform: scale(1.1);
+  box-shadow: 0 0 16px rgba(244,162,97,0.2);
+}
+
+/* ---------- Settings Modal Backdrop & Dialog ---------- */
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(44, 24, 16, 0.15); /* Soft warm tint instead of dark black */
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease-out;
+}
+
+[data-theme="dark"] .settings-backdrop {
+  background: rgba(0, 0, 0, 0.65); /* High contrast dark overlay in dark mode */
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.settings-dialog {
+  width: 760px;
+  max-width: 95vw;
+  height: 520px;
+  display: flex;
+  flex-direction: column;
+  background: #fffdfb; /* Highly bright warm white in light mode */
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(120, 80, 40, 0.15);
+  border-radius: 20px;
+  box-shadow: 0 16px 48px rgba(120, 80, 40, 0.12);
+  overflow: hidden;
+  animation: scaleUp 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+[data-theme="dark"] .settings-dialog {
+  background: #231913; /* Solid premium dark base in dark mode */
+  border-color: rgba(180, 140, 100, 0.15);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
+@keyframes scaleUp {
+  from { transform: scale(0.9) translateY(20px); opacity: 0; }
+  to { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+.settings-header {
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--glass-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.settings-close-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px;
+  transition: color 0.2s;
+}
+
+.settings-close-btn:hover {
+  color: var(--coral-accent);
+}
+
+.settings-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--text-secondary);
+}
+
+.settings-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--glass-border);
+  border-top-color: var(--gold-accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.settings-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* ---------- Sidebar Tabs ---------- */
+.settings-tabs {
+  width: 200px;
+  border-right: 1px solid var(--glass-border);
+  background: rgba(0, 0, 0, 0.02);
+  padding: 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+[data-theme="dark"] .settings-tabs {
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.settings-tab-btn {
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-tab-btn:hover {
+  background: rgba(244, 162, 97, 0.08);
+  color: var(--text-primary);
+}
+
+.settings-tab-btn.active {
+  background: var(--gold-accent);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(244, 162, 97, 0.2);
+}
+
+/* ---------- Tab Contents ---------- */
+.settings-content {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.settings-section h3 {
+  margin: 0 0 4px 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* ---------- Form Fields ---------- */
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-field label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.settings-field label strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.field-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.settings-field select,
+.settings-field input[type="text"],
+.settings-field input[type="time"] {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.settings-field select:focus,
+.settings-field input[type="text"]:focus,
+.settings-field input[type="time"]:focus {
+  border-color: var(--gold-accent);
+}
+
+/* Row-style toggle checkbox field */
+.settings-field.row {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--glass-border);
+}
+
+.settings-field.row label {
+  max-width: 80%;
+}
+
+/* iOS Toggle Switch Switch Component style */
+.settings-toggle-checkbox {
+  appearance: none;
+  width: 44px;
+  height: 24px;
+  background: var(--text-muted);
+  border-radius: 12px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s;
+  outline: none;
+}
+
+.settings-toggle-checkbox:checked {
+  background: #34c759;
+}
+
+.settings-toggle-checkbox::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+.settings-toggle-checkbox:checked::before {
+  transform: translateX(20px);
+}
+
+/* Time range input */
+.time-range-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.time-range-row input {
+  width: 120px;
+}
+
+.time-range-row span {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* ---------- Footer Buttons ---------- */
+.settings-footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--glass-border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.01);
+}
+
+.settings-cancel-btn {
+  padding: 9px 18px;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.settings-cancel-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text-primary);
+}
+
+.settings-save-btn {
+  padding: 9px 20px;
+  border: none;
+  background: var(--gold-accent);
+  color: white;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 12px rgba(244, 162, 97, 0.15);
+}
+
+.settings-save-btn:hover {
+  background: var(--coral-accent);
+  transform: translateY(-1px);
+}
+
+.settings-save-btn:disabled,
+.settings-cancel-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}

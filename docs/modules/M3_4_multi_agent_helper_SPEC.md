@@ -60,7 +60,7 @@ PDF 原稿定義**兩種視圖**,以左側邊欄統一導覽:
 
 - **左側邊欄 Persona 清單**: 每列顯示`[圓形頭像] 職稱 姓名`。**初始角色開通時，此清單為空，僅顯示「🤖 AI 幫手」**。僅有在解鎖條件觸發（AI 幫手聊天時的推薦通知、背景 telemetry 意圖觸發、或手動配對）並經使用者確認配對後，對應的 Persona 分頁才會顯示於側邊欄中。選取中的 Persona 以斜線陰影標示 (active state)
 - **`[配對]` 按鈕**: 固定在側邊欄底部;點擊後開啟狀態輸入彈窗。**不允許直接點擊尚未配對解鎖的 Persona 開啟對話**。
-- **歷史時間軸三欄**: `timeline`(日期) / `project`(主題文件圖示+名稱) / `intention`(發問意圖要點);縱向排列由近到遠
+- **歷史時間軸三欄**: `timeline`(日期) / `project`(主題文件圖示+名稱) / `intention`(發問意圖要點，每個 session 結束時由 M4.6 Observer 調用 LLM 自動抽取);縱向排列由近到遠
 - **即時對話**: AI 訊息靠左帶頭像,使用者訊息靠右帶頭像;碎塊發言 (多個獨立 bubble) 模擬真人打字節奏
 - **系統通知**: 置中灰色細線文字 (e.g. "Project 偵測為『初始目標設定』創立"),不使用 Modal/Toast
 - **輸入區按鈕**: `[+]` 附件、`[🔗]` 網址、`[workflow▸]` 觸發 M3.6 彈窗、右側 `[▷]` 送出
@@ -360,6 +360,10 @@ function SystemEventHint({ event }: { event: ObserverEvent }) {
   const messages: Record<string, string> = {
     PROJECT_CREATED: `Project 偵測為「${event.project_name}」已建立`,
     GOAL_INFERRED: `目標「${event.goal}」已記錄`,
+    // v1.2 新增：承諾與目標確立事件
+    GOAL_CONFIRMED: `與 ${event.expert_name} 確立目標「${event.title}」`,
+    PROMISE_RECORDED: `承諾「${event.text}」已記錄${event.deadline ? `，deadline: ${event.deadline}` : ''}`,
+    PROMISE_REMINDER: `承諾「${event.text}」即將到期`,
   };
   // [RISK-04] L2 defer: 只顯示於側邊欄,不彈 Modal
   return (

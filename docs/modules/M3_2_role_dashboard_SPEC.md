@@ -352,7 +352,7 @@ function useRoleContextCache(adjacentRoleIds: string[]) {
 
 ## 9. Open Questions
 
-- [ ] **角色數量上限是多少?** PDF 線框圖示範 5 個角色 (諮商/學者/UNI/CSIE/FAMILY);Carousel 若超過 8 個角色,是否需要摺疊或分頁?
+- [x] **角色數量上限是多少?** PDF 線框圖示範 5 個角色 (諮商/學者/UNI/CSIE/FAMILY);Carousel 若超過 8 個角色,是否需要摺疊或分頁? 目前上限10個，carousel滑動超過所有角色後到底就停止滑動，只會顯示連續的5~7個角色，角色切換時需左右動態滑動，並且中間的尺寸最大，越旁邊越小，可以進出邊界
 - [ ] **Context Header 四槽位 (Project / Role / Promises / Goal) 的資料優先順序?** 若某角色同時有多個活躍 Project,顯示哪一個?是否有 pin 功能?
 - [ ] **`Role` 槽位顯示的是 role.name 還是 role.display_name?** 需要與 M6.3 `roles` 表的欄位命名一致。
 - [ ] **一致性熱圖的「推進計數」包含哪些事件?** (commit? 對話? 任務完成?) 需要 M1.x 遙測統一定義

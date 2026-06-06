@@ -149,10 +149,66 @@ def build_persona_graph():
     graph.add_node("bdi_reconciler", bdi_reconcile)           # [R09 §6.2, RISK-08]
     graph.add_node("persona_responder", generate_response)
     graph.add_node("paralinguistic", inject_paralinguistic)   # [R05]
+    graph.add_node("message_splitter", split_response)        # [R05 §跨越恐怖谷]
     graph.add_node("arpm_audit", arpm_supervise)              # [R03 §2]
 
     # Edges (見圖 1)
     return graph.compile()
+```
+
+### 7.1.1 記憶區塊注入與目標對齊審視 (v1.2 新增)
+
+> [!IMPORTANT]
+> **設計原則**：Persona 的 system prompt 中新增 `[記憶區塊]` 段落，由 M4.3 `build_commitment_context()` 預撈的 active goals 與 upcoming promises 填充。此區塊讓專家「知道」使用者之前設定的目標和即將到期的承諾，從而能主動追蹤進度、提醒偏離、並在適當時機引導更新目標。
+
+```python
+# services/m4_2_persona/prompt_builder.py
+# [v1.2] 記憶區塊注入
+
+def build_system_prompt(persona: dict, role_context: dict) -> str:
+    """
+    組裝 Persona 的完整 system prompt。
+    [記憶區塊] 由 M4.3 RoleContext.active_goals / upcoming_promises 填充，
+    按當前 persona_id 篩選，僅注入屬於此專家的目標/承諾。
+    """
+    persona_id = persona["id"]
+    
+    # 篩選屬於此專家的目標與承諾
+    my_goals = [g for g in role_context.get("active_goals", [])
+                if g["persona_id"] == persona_id]
+    my_promises = [p for p in role_context.get("upcoming_promises", [])
+                   if p["persona_id"] == persona_id]
+    
+    # 組裝 [記憶區塊]（< 200 tokens）
+    memory_block = ""
+    if my_goals:
+        goals_text = "\n".join(
+            f"  - {g['title']}（確立於 {g.get('created_at', '未知')}, 進度 {int(g.get('progress', 0)*100)}%）"
+            for g in my_goals[:3]
+        )
+        memory_block += f"[核心目標]\n{goals_text}\n"
+    
+    if my_promises:
+        promises_text = "\n".join(
+            f"  - {p['text']}（deadline: {p.get('deadline', '未定')}）"
+            for p in my_promises[:5]
+        )
+        memory_block += f"[即將到期的承諾]\n{promises_text}\n"
+    
+    # 組裝完整 system prompt
+    prompt = f"""[角色]
+{persona['personality_prompt']}
+
+[記憶區塊 — AI登錄系統紀錄]
+{memory_block if memory_block else "（目前無已確立的核心目標或即將到期的承諾）"}
+
+[行為指令]
+- 若使用者尚未與你確立核心目標（[核心目標] 為空），在適當時機自然引導使用者說出「找你的最主要目的是什麼」，確立後記錄。
+- 若 [即將到期的承諾] 中有項目，以自然語氣主動提醒（如「對了，你之前提到{'{承諾內容}'}，進度怎麼樣了？」）。
+- 若使用者的對話內容明顯偏離 [核心目標]，溫和地提醒並引導回歸（如「嗯，我記得你之前說你找我最主要是想{'{目標}'}，現在好像聊到別的方向了，要不要先回來？」），或討論是否需要更新目標。
+- 這些提醒應自然融入對話，不可生硬打斷。偏離提醒每個 session 最多 1 次。
+"""
+    return prompt
 ```
 
 ### 7.2 Echo Mode 狀態機
@@ -243,6 +299,91 @@ async def inject_paralinguistic(response: str, persona: Persona) -> str:
             response = response[:position+1] + " " + correction + " " + response[position+1:]
 
     return response
+```
+
+### 7.4.1 多訊息分割器 (Message Splitter)
+
+> [!IMPORTANT]
+> **設計原則**：Persona 的回覆不應永遠是一大段文字。真人聊天的節奏是分段傳送多個短訊息（2–4 個獨立氣泡），中間穿插打字延遲。此分割器將 Persona 的完整回應依據語意斷句拆分為多個獨立訊息，前端以獨立氣泡逐一渲染，模擬真實的聊天體驗。
+
+```python
+# services/m4_2_persona/message_splitter.py
+# [R05 §跨越恐怖谷] 模擬真人分段發言
+
+import random
+from dataclasses import dataclass, field
+
+@dataclass
+class SplitMessage:
+    """單一訊息氣泡"""
+    content: str
+    delay_ms: int  # 與前一個訊息的間隔 (ms)
+
+@dataclass
+class MessageSequence:
+    """多訊息序列，由前端逐一渲染"""
+    messages: list[SplitMessage] = field(default_factory=list)
+
+# 句號、問號、驚嘆號為主要分割點
+SPLIT_DELIMITERS = ["。", "？", "！", "\n\n"]
+
+def split_response(response: str, max_bubbles: int = 4) -> MessageSequence:
+    """
+    將 Persona 的完整回應拆分為 2~4 個獨立訊息氣泡。
+    
+    規則：
+    1. 短回應 (< 60 字) → 不拆分，保持單一氣泡
+    2. 中等回應 (60~200 字) → 拆為 2 個氣泡
+    3. 長回應 (> 200 字) → 拆為 3~4 個氣泡
+    4. 每個氣泡之間插入 300~1500ms 的隨機延遲
+    5. M4.4 套問的 ElicitationPromptFragment.inject_messages 已預先分割，
+       直接作為多氣泡序列輸出，不再經過此分割器
+    """
+    if len(response) < 60:
+        return MessageSequence(messages=[
+            SplitMessage(content=response, delay_ms=0)
+        ])
+    
+    # 依語意斷句切割
+    segments = []
+    current = ""
+    for char in response:
+        current += char
+        if char in SPLIT_DELIMITERS and len(current.strip()) > 15:
+            segments.append(current.strip())
+            current = ""
+    if current.strip():
+        segments.append(current.strip())
+    
+    # 合併過短的段落
+    merged = []
+    buffer = ""
+    for seg in segments:
+        buffer += seg
+        if len(buffer) >= 30:
+            merged.append(buffer)
+            buffer = ""
+    if buffer:
+        if merged:
+            merged[-1] += buffer
+        else:
+            merged.append(buffer)
+    
+    # 限制氣泡數量
+    while len(merged) > max_bubbles:
+        # 合併最短的兩個相鄰段落
+        min_idx = min(range(len(merged) - 1),
+                      key=lambda i: len(merged[i]) + len(merged[i+1]))
+        merged[min_idx] = merged[min_idx] + merged[min_idx + 1]
+        merged.pop(min_idx + 1)
+    
+    # 生成延遲
+    messages = []
+    for i, text in enumerate(merged):
+        delay = 0 if i == 0 else random.randint(300, 1500)
+        messages.append(SplitMessage(content=text, delay_ms=delay))
+    
+    return MessageSequence(messages=messages)
 ```
 
 ### 7.5 異常處理

@@ -15,7 +15,14 @@ _SessionLocal = None
 
 
 def _supabase_url() -> str | None:
-    return os.environ.get("SUPABASE_DB_URL") or None
+    url = os.environ.get("SUPABASE_DB_URL")
+    if not url:
+        try:
+            from config import get_settings
+            url = get_settings().supabase_db_url
+        except Exception:
+            pass
+    return url or None
 
 
 def get_cloud_engine():
