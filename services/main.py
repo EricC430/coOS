@@ -2092,6 +2092,7 @@ async def link_google_account(body: dict[str, Any], request: Request) -> dict[st
     [Stub] Link current local UUID to a Google Account.
     Future: This will update the users.email or a social_links table.
     """
+    google_token = body.get("token")  # noqa: F841
     user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
     
     # Logic: 
