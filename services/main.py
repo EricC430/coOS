@@ -16,8 +16,8 @@ import logging
 import sqlite3
 import time
 import uuid
-from datetime import UTC, datetime, timedelta
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -48,6 +48,7 @@ from m4_3_role_isolation.middleware import RoleIsolationMiddleware
 from m6_2_postgresql.engine import get_cloud_engine, is_cloud_available
 from m6_5_acid_gatekeeper.gatekeeper import XPGatekeeper
 
+settings = get_settings()
 logger = logging.getLogger(__name__)
 _start_time = time.time()
 
@@ -277,7 +278,7 @@ _db_adapter: AsyncDBAdapter | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """[M0_3 SPEC §7.4] 啟動時驗證設定，關閉時清理連線"""
-    settings = get_settings()
+    # Use global settings
 
     # 驗證本地 SQLite data/ 目錄存在
     data_dir = settings.local_db_path.parent
@@ -482,11 +483,14 @@ async def lifespan(app: FastAPI):
             
             # Seed default roles
             roles = [
-                (str(uuid.uuid5(uuid.NAMESPACE_DNS, "uni_001")), default_user_id, "uni_001", "UNI", "#d4915e", "activity", 0),
-                (str(uuid.uuid5(uuid.NAMESPACE_DNS, "csie_001")), default_user_id, "csie_001", "CSIE", "#c47830", "code", 1),
+                (str(uuid.uuid5(uuid.NAMESPACE_DNS, "uni_001")), default_user_id, 
+                 "uni_001", "UNI", "#d4915e", "activity", 0),
+                (str(uuid.uuid5(uuid.NAMESPACE_DNS, "csie_001")), default_user_id, 
+                 "csie_001", "CSIE", "#c47830", "code", 1),
             ]
             cursor.executemany(
-                "INSERT INTO roles (id, user_id, slug, display_name, color_hex, icon_name, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO roles (id, user_id, slug, display_name, color_hex, icon_name, sort_order) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 roles
             )
             
@@ -494,9 +498,9 @@ async def lifespan(app: FastAPI):
             csie_role_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, "csie_001"))
             cursor.execute(
                 "INSERT INTO ai_experts (id, role_id, name, personality_prompt, backstory) VALUES (?, ?, ?, ?, ?)",
-                ("robert_001", csie_role_id, "學長Robert", "你是一個資深的電腦科學系學長...", "在 CSIE 待了四年的傳奇人物")
+                ("robert_001", csie_role_id, "學長Robert", 
+                 "你是一個資深的電腦科學系學長...", "在 CSIE 待了四年的傳奇人物")
             )
-        
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS daily_reflections (
                 id              TEXT PRIMARY KEY,
@@ -705,7 +709,7 @@ async def lifespan(app: FastAPI):
     tunnels = []
 
     async def start_tunnels():
-        settings = get_settings()
+        # Use global settings
         rows = await _db_adapter.fetch_all("SELECT github_repo FROM git_watched_paths WHERE github_repo IS NOT NULL")
         for row in rows:
             repo = row["github_repo"]
@@ -1177,7 +1181,6 @@ async def get_settings_endpoint(role_id: str, request: Request):
         focus_hours_end = _parse_time(role_settings.get("focus_hours_end"), focus_hours_end)
         
     # 3. System Config
-    settings = get_settings()
     
     return {
         "content_capture": content_capture,
@@ -1272,7 +1275,6 @@ async def update_settings_endpoint(role_id: str, payload: SettingsUpdate, reques
         )
         
     # 3. Update System settings in memory & .env file
-    settings = get_settings()
     settings.gemma_model = payload.gemma_model
     settings.ai_local_host = payload.ai_local_host
     settings.ipad_ai_local_host = payload.ipad_ai_local_host
@@ -2090,7 +2092,6 @@ async def link_google_account(body: dict[str, Any], request: Request) -> dict[st
     [Stub] Link current local UUID to a Google Account.
     Future: This will update the users.email or a social_links table.
     """
-    google_token = body.get("token")
     user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
     
     # Logic: 
@@ -2127,7 +2128,6 @@ async def m4_6_events_sse():
 @app.get("/api/m1_4/github_auth_url")
 async def m1_4_github_auth_url() -> dict[str, str]:
     """[M1.4.1] Generate the GitHub OAuth authorization URL."""
-    settings = get_settings()
     client_id = settings.github_client_id
     if not client_id:
         return {"url": "", "error": "GITHUB_CLIENT_ID not configured"}
