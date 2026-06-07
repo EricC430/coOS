@@ -92,8 +92,10 @@
    - *monkeypatch.delenv 無效*：若 Pydantic 讀取 `.env` 檔案而非環境變數，初始化 Settings 時傳入 `_env_file=None`。
    - *InterpolationMissingOptionError*：`configparser` 會嘗試插值 `%(KEY)s`。`.ini` 設定檔中不可使用 `%(...)s`，改在 `env.py` 中進行置換。
    - *UnicodeDecodeError: cp950*：Windows 環境下 locale 為 cp950，設定檔與代碼若有非 ASCII 字元會報錯。應使用純 ASCII。
-5. **Ruff 本地先修**：每次 commit 前在本地先執行 `uv run ruff check . --fix`，不要等到 CI 流程才發現 lint 錯誤。
-6. **Sidecar 依賴測試標記**：測試若依賴啟動 sidecar FastAPI (如 `testing/m0_2/test_tauri_ipc.py`)，必須在檔案頂部加上 skip marker，以防 CI 或本地 sidecar 未啟動時誤報：
+6. **Ruff 本地先修**：每次 commit 前在本地先執行 `uv run ruff check . --fix`，不要等到 CI 流程才發現 lint 錯誤。
+7. **Pydantic Settings 與 .env 同步**：若在 `.env` 新增變數但程式碼讀不到（報 `not set`），務必檢查 `services/config.py` 中的 `Settings` 類別是否已定義該欄位。Pydantic 僅會載入類別中有定義的環境變數。
+8. **Sidecar 依賴測試標記**：測試若依賴啟動 sidecar FastAPI (如 `testing/m0_2/test_tauri_ipc.py`)，必須在檔案頂部加上 skip marker，以防 CI 或本地 sidecar 未啟動時誤報：
+
    ```python
    import pytest
    pytestmark = pytest.mark.skipif(

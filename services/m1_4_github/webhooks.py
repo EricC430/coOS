@@ -9,10 +9,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-import os
 
 from fastapi import APIRouter, HTTPException, Request
 
+from config import get_settings
 from .schema import CommitInfo, GitActivityPayload
 
 logger = logging.getLogger(__name__)
@@ -22,10 +22,12 @@ router = APIRouter(prefix="/api/v1/webhooks")
 
 def _verify_signature(body: bytes, signature: str) -> bool:
     """[M1.4.2] HMAC-SHA256 Webhook signature verification."""
-    secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
+    settings = get_settings()
+    secret = settings.github_webhook_secret
     if not secret:
-        logger.warning("[M1.4.2] GITHUB_WEBHOOK_SECRET not set — rejecting all webhooks")
+        logger.warning("[M1.4.2] GITHUB_WEBHOOK_SECRET not set in config — rejecting all webhooks")
         return False
+    logger.debug("[M1.4.2] Verifying signature with secret length: %d", len(secret))
     expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature, expected)
 

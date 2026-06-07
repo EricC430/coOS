@@ -7,9 +7,15 @@
  */
 
 import * as net from 'net';
+import * as os from 'os';
+import * as path from 'path';
 import type { CodeActivityEvent } from './types';
 
-const PIPE_PATH = '\\\\.\\pipe\\coos_telemetry';
+const PIPE_PATH = process.platform === 'win32'
+  ? '\\\\.\\pipe\\coos_telemetry'
+  : path.join(os.tmpdir(), 'coos_telemetry.sock');
+
+const BACKEND_URL = 'http://127.0.0.1:8000/api/m1_1/event';
 const MAX_BUFFER = 100;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
@@ -40,17 +46,36 @@ export class TelemetrySocket {
     });
   }
 
-  send(event: CodeActivityEvent): void {
+  async send(event: CodeActivityEvent): Promise<void> {
     if (this.connected && this.socket) {
-      const line = JSON.stringify(event) + '\n';
-      this.socket.write(line);
-    } else {
-      // Buffer while disconnected, evict oldest if full
-      if (this.buffer.length >= MAX_BUFFER) {
-        this.buffer.shift();
+      try {
+        const line = JSON.stringify(event) + '\n';
+        this.socket.write(line);
+        return;
+      } catch (e) {
+        this.connected = false;
       }
-      this.buffer.push(event);
     }
+
+    // Fallback: Attempt HTTP POST directly to sidecar
+    try {
+      const response = await fetch(BACKEND_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(event),
+      });
+      if (response.ok) {
+        return;
+      }
+    } catch (e) {
+      // Both socket and HTTP failed
+    }
+
+    // Buffer as last resort, evict oldest if full
+    if (this.buffer.length >= MAX_BUFFER) {
+      this.buffer.shift();
+    }
+    this.buffer.push(event);
   }
 
   dispose(): void {
@@ -63,11 +88,17 @@ export class TelemetrySocket {
     return this.buffer.length;
   }
 
-  private flushBuffer(): void {
+  private async flushBuffer(): Promise<void> {
     while (this.buffer.length > 0 && this.connected && this.socket) {
       const event = this.buffer.shift()!;
-      const line = JSON.stringify(event) + '\n';
-      this.socket.write(line);
+      try {
+        const line = JSON.stringify(event) + '\n';
+        this.socket.write(line);
+      } catch (e) {
+        this.connected = false;
+        this.buffer.unshift(event);
+        break;
+      }
     }
   }
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Awaitable
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ SCAN_INTERVAL_S = 60
 class LocalGitMonitor:
     """[R06 §2.1] Periodically scan local Git repos for new commits."""
 
-    def __init__(self, watched_paths: list[str], emit_fn: Callable[[dict], None]):
+    def __init__(self, watched_paths: list[str], emit_fn: Callable[[dict], Awaitable[None]]):
         self._watched_paths = watched_paths
         self._emit_fn = emit_fn
         # repo_path -> last seen HEAD hash
@@ -73,7 +73,7 @@ class LocalGitMonitor:
                     "commits": commits,
                 },
             }
-            self._emit_fn(event)
+            await self._emit_fn(event)
             self._last_seen[repo_path] = latest_hash
 
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):

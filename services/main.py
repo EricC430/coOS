@@ -27,6 +27,7 @@ from m0_4_logging.schema import LogEvent
 from m1_2_breakpoint.breakpoint_engine import BreakpointEngine
 from m1_4_github.oauth import router as m1_4_oauth_router
 from m1_4_github.webhooks import router as m1_4_webhook_router
+from m1_4_github.local_git_monitor import LocalGitMonitor
 from m2_1_event_debouncer.debouncer import EventDebouncer
 from m2_1_event_debouncer.schema import EventBatch, RawTelemetryEvent
 from m2_2_gemma.pipeline import GemmaInferencePipeline
@@ -64,7 +65,9 @@ class AsyncDBAdapter:
                 "temp_event_queue",
                 "intent_logs",
                 "role_router_rules",
-                "user_consents"
+                "user_consents",
+                "git_watched_paths",
+                "github_tokens"
             ])
             if is_local_table or not self.pg_engine:
                 try:
@@ -97,7 +100,9 @@ class AsyncDBAdapter:
                 "temp_event_queue",
                 "intent_logs",
                 "role_router_rules",
-                "user_consents"
+                "user_consents",
+                "git_watched_paths",
+                "github_tokens"
             ])
             if is_local_table or not self.pg_engine:
                 try:
@@ -133,7 +138,9 @@ class AsyncDBAdapter:
                 "temp_event_queue",
                 "intent_logs",
                 "role_router_rules",
-                "user_consents"
+                "user_consents",
+                "git_watched_paths",
+                "github_tokens"
             ])
             if is_local_table or not self.pg_engine:
                 try:
@@ -280,8 +287,21 @@ async def lifespan(app: FastAPI):
                 updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS git_watched_paths (
+                repo_path TEXT PRIMARY KEY,
+                added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS github_tokens (
+                id TEXT PRIMARY KEY,
+                encrypted_token TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            )
+        """)
         _sqlite_conn.commit()
-        logger.info("[lifespan] user_consents and role_settings tables ensured in local SQLite.")
+        logger.info("[lifespan] user_consents, role_settings, git_watched_paths, and github_tokens tables ensured.")
     except Exception as e:
         logger.warning("[lifespan] Failed to auto-create settings tables in SQLite: %s", e)
 
@@ -358,6 +378,22 @@ async def lifespan(app: FastAPI):
     _eguard_filter = EguardFilter()
     _drift_shield = DriftShield(ai_local_host=settings.ai_local_host)
 
+    # [M1.4.3] Start Local Git Monitor
+    async def _git_emit(event: dict):
+        from m0_4_logging.writer import get_logger
+        log_writer = get_logger()
+        await log_writer.emit(
+            module=event["module"],
+            action=event["action"],
+            level="INFO",
+            payload=event["payload"]
+        )
+
+    watched_paths_rows = await _db_adapter.fetch_all("SELECT repo_path FROM git_watched_paths")
+    watched_paths = [row["repo_path"] for row in watched_paths_rows]
+    git_monitor = LocalGitMonitor(watched_paths, _git_emit)
+    git_task = asyncio.create_task(git_monitor.scan_loop())
+
     # Periodic rule miner task
     async def periodic_rule_miner():
         await asyncio.sleep(60.0)
@@ -377,9 +413,10 @@ async def lifespan(app: FastAPI):
 
     logger.info("[M0.3] coOS sidecar 啟動完成 (local_only=%s)", not settings.gemini_api_key)
     yield
+    git_task.cancel()
     miner_task.cancel()
     try:
-        await miner_task
+        await asyncio.gather(git_task, miner_task, return_exceptions=True)
     except asyncio.CancelledError:
         pass
     if _debouncer:
@@ -1454,12 +1491,58 @@ async def m4_6_events_sse():
 
 @app.get("/api/m1_4/connected_sources")
 async def m1_4_connected_sources() -> list[dict[str, Any]]:
-    return []
+    """[M1.4] List all registered local git repos and connected cloud accounts."""
+    sources = []
+    
+    # 1. Local Git Repos
+    rows = await _db_adapter.fetch_all("SELECT repo_path, added_at FROM git_watched_paths")
+    for row in rows:
+        from pathlib import Path
+        p = Path(row["repo_path"])
+        sources.append({
+            "id": str(row["repo_path"]),
+            "type": "local_git",
+            "name": p.name,
+            "path": str(row["repo_path"]),
+            "connected_at": row["added_at"]
+        })
+        
+    # 2. GitHub Account (Check token table)
+    token_row = await _db_adapter.fetch_one("SELECT created_at FROM github_tokens WHERE id = 'default'")
+    if token_row:
+        sources.append({
+            "id": "github_cloud",
+            "type": "github_oauth",
+            "name": "GitHub Cloud Account",
+            "connected_at": token_row["created_at"]
+        })
+        
+    return sources
 
 
 @app.post("/api/m1_4/bind_source")
 async def m1_4_bind_source(body: dict[str, Any]) -> dict[str, Any]:
-    return {"status": "connected", "source_type": body.get("source_type")}
+    source_type = body.get("source_type")
+    if source_type == "local_git":
+        repo_path = body.get("repo_path")
+        if not repo_path:
+            raise HTTPException(status_code=422, detail="repo_path is required for local_git")
+        
+        # Verify it's a valid git repo
+        from pathlib import Path
+        if not (Path(repo_path) / ".git").exists():
+            raise HTTPException(status_code=400, detail="Not a valid Git repository (missing .git)")
+            
+        await _db_adapter.execute(
+            "INSERT INTO git_watched_paths (repo_path) VALUES (:path) "
+            "ON CONFLICT(repo_path) DO NOTHING",
+            {"path": str(repo_path)}
+        )
+        # Note: LocalGitMonitor won't pick this up until restart in this MVP, 
+        # but the data is saved.
+        return {"status": "connected", "source_type": "local_git", "repo_path": repo_path}
+        
+    return {"status": "connected", "source_type": source_type}
 
 
 @app.post("/api/m1_4/create_trigger")

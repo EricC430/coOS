@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     # === 進階 (Phase 6+) ===
     github_client_id: str = Field(default="")
     github_client_secret: str = Field(default="")
+    github_webhook_secret: str = Field(default="")
     pollinations_api_secret: str = Field(default="")
 
     # === 執行期設定 ===
