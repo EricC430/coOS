@@ -34,15 +34,6 @@ const queryClient = new QueryClient({
 
 type ActiveView = "home" | "report" | "achievements" | "community" | "chat";
 
-// Bootstrap role cache with default roles (replaced by real API in production)
-const DEFAULT_ROLES = [
-  { id: "uni_001", name: "UNI", themeColorPalette: { primary: "#d4915e" }, sortOrder: 0 },
-  { id: "csie_001", name: "CSIE", themeColorPalette: { primary: "#c47830" }, sortOrder: 1 },
-  { id: "family_001", name: "FAMILY", themeColorPalette: { primary: "#e8a556" }, sortOrder: 2 },
-  { id: "counseling_001", name: "諮商", themeColorPalette: { primary: "#8fbc8f" }, sortOrder: 3 },
-  { id: "scholar_001", name: "學者", themeColorPalette: { primary: "#b08d6e" }, sortOrder: 4 },
-];
-
 function ThemeToggle() {
   const [dark, setDark] = useState(false);
 
@@ -70,14 +61,27 @@ function AppContent() {
   const [workflowOpen, setWorkflowOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [_chatRoleId, setChatRoleId] = useState<string | null>(null);
-  const { seedRoleCache } = useCoOSStore();
+  const { currentRole, seedRoleCache } = useCoOSStore();
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Seed default roles until real API is wired
-    seedRoleCache(DEFAULT_ROLES);
+    async function loadRoles() {
+        try {
+            const res = await fetch("/api/m6_2/roles");
+            if (res.ok) {
+                const roles = await res.json();
+                seedRoleCache(roles);
+            }
+        } catch (err) {
+            console.error("Failed to load roles:", err);
+        } finally {
+            setLoading(false);
+        }
+    }
+    loadRoles();
     // Connect Tauri event bridge
     initTauriBridge();
-  }, []);
+  }, [seedRoleCache]);
 
   const goHome = useCallback(() => setActiveView("home"), []);
 
@@ -119,6 +123,10 @@ function AppContent() {
     return () => window.removeEventListener("keydown", handler);
   }, [activeView, goHome]);
 
+  if (loading) {
+    return <div className="loading-screen">coOS Loading...</div>;
+  }
+
   return (
     <div style={{ width: "100vw", height: "100vh", position: "relative", overflow: "hidden" }}>
       {/* Theme toggle */}
@@ -136,7 +144,24 @@ function AppContent() {
 
       {/* Main content — always rendered underneath */}
       <main style={{ width: "100%", height: "100%", position: "relative" }}>
-        <RoleDashboard onEnterChat={handleEnterChat} />
+        {currentRole ? (
+            <RoleDashboard onEnterChat={handleEnterChat} />
+        ) : (
+            <div className="onboarding-overlay" style={{
+                position: "absolute", inset: 0, display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center", background: "var(--bg-main)",
+                zIndex: 10
+            }}>
+                <h1>歡迎來到 coOS</h1>
+                <p>您尚未建立任何角色。請點擊設定來新增第一個角色。</p>
+                <button onClick={() => setSettingsOpen(true)} className="primary-btn">
+                    建立新角色
+                </button>
+                <div style={{ marginTop: "2rem", fontSize: "0.8rem", opacity: 0.6 }}>
+                    Instance ID: {useCoOSStore.getState().currentRole === null ? "Persistent Local Identity Active" : ""}
+                </div>
+            </div>
+        )}
       </main>
 
       {/* Edge triggers — only shown when on home view */}

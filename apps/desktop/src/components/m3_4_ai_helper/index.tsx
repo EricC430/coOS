@@ -24,12 +24,31 @@ interface Props {
 }
 
 export function MultiAgentHelper({ onWorkflowOpen }: Props) {
-  const { activeExpert, currentRole, expertCache, setActiveExpert } = useCoOSStore();
+  const { activeExpert, currentRole, expertCache, setActiveExpert, seedExpertCache } = useCoOSStore();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [threadId] = useState(() => `thread_${Date.now()}`);
   const sseRef = useRef<EventSource | null>(null);
 
-  const activeExperts = Object.values(expertCache).filter((e) => e.isActive);
+  useEffect(() => {
+    if (!currentRole?.id) return;
+    async function loadExperts() {
+        try {
+            const res = await fetch(`/api/m6_2/roles/${currentRole!.id}/experts`);
+            if (res.ok) {
+                const experts = await res.json();
+                seedExpertCache(experts);
+                if (experts.length > 0 && !activeExpert) {
+                    setActiveExpert(experts[0].id);
+                }
+            }
+        } catch (err) {
+            console.error("Failed to load experts:", err);
+        }
+    }
+    loadExperts();
+  }, [currentRole?.id]);
+
+  const activeExperts = Object.values(expertCache);
 
   // [RISK-04] SSE for Observer events -- no Modal popup
   useEffect(() => {

@@ -237,28 +237,34 @@ def build_persona_graph() -> StateGraph:
 # ---------------------------------------------------------------------------
 
 async def _call_gemini(system_prompt: str, user_message: str, tone: str) -> str | None:
-    """呼叫 Gemini API 生成 Persona 回應，超時或失敗回傳 None。"""
+    """呼叫 Gemini API 生成 Persona 回應，使用 M4.1 共用的 client。"""
     try:
-        from google import genai  # type: ignore
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            return None
-        import asyncio
-        client = genai.Client(api_key=api_key)
+        from m4_1_router.routing_engine import get_cloud_llm_client
+        client = get_cloud_llm_client("gemini-2.0-flash")
+        
         full_prompt = (
             f"SYSTEM:\n{system_prompt}\n\n"
             f"USER:\n{user_message}\n\n"
             f"ASSISTANT (以 {tone} 語氣回應，繁體中文):"
         )
-        resp = await asyncio.wait_for(
-            asyncio.to_thread(
-                client.models.generate_content,
-                model="gemini-2.0-flash",
-                contents=full_prompt,
-            ),
-            timeout=5.0,
-        )
-        return resp.text.strip()
+        # 覆蓋預設的 maxOutputTokens 以允許長回應
+        async def complete_with_more_tokens(prompt: str) -> str:
+            import os
+            from config import get_settings
+            import httpx
+            settings = get_settings()
+            api_key = settings.gemini_api_key or os.environ.get("GOOGLE_API_KEY")
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1000}
+            }
+            async with httpx.AsyncClient(timeout=15.0) as http_client:
+                resp = await http_client.post(url, json=payload)
+                resp.raise_for_status()
+                return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+        return await complete_with_more_tokens(full_prompt)
     except Exception as e:
         logger.warning("[M4.2] _call_gemini failed: %s", e)
         return None

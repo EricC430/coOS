@@ -60,6 +60,12 @@ class Settings(BaseSettings):
         description="本地 SQLite 路徑（相對於 services/）",
     )
 
+    # === 使用者識別 (Identity) ===
+    current_user_id: str = Field(
+        default="00000000-0000-0000-0000-000000000000",
+        description="當前使用者 ID。多裝置同步或社群功能開啟後，將改由 Auth Token 取得。",
+    )
+
     # === 進階 (Phase 6+) ===
     github_client_id: str = Field(default="")
     github_client_secret: str = Field(default="")

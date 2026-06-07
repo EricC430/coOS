@@ -90,6 +90,13 @@ export const useCoOSStore = create<CoOSState>()(
     seedRoleCache: (roles) => {
       const roleCache: Record<string, Role> = {};
       for (const r of roles) roleCache[r.id] = r;
+      
+      // Handle empty roles state gracefully
+      if (roles.length === 0) {
+        set({ roleCache, currentRole: null });
+        return;
+      }
+
       const currentRole =
         roles.find((r) => r.sortOrder === 0) ?? roles[0] ?? null;
       set({ roleCache, currentRole });

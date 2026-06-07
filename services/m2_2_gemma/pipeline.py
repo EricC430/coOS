@@ -70,9 +70,9 @@ class GemmaInferencePipeline:
             # Circuit breaker: degrade gracefully (RISK-11 safeguard)
             return self._make_fallback_vector(source_log_id, role_id)
 
-    def _make_fallback_vector(self, source_log_id: str, role_id: str) -> IntentVector:
+    def _make_fallback_vector(self, text: str, source_log_id: str, role_id: str) -> IntentVector:
         """Rule-based fallback -- RISK-05: source_log_id/role_id always preserved."""
-        extracted = self.fallback.extract("")
+        extracted = self.fallback.extract(text)
         return IntentVector(
             source_log_id=source_log_id,
             role_id=role_id,

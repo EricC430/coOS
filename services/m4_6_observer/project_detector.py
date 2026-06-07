@@ -80,19 +80,25 @@ async def detect_and_upsert_project(
     """
     偵測 -> Eguard 過濾 -> 去重 -> upsert -> SSE。回傳最終專案名稱（新建或匹配）或 None。
     """
-    existing_names = [p.name for p in db.projects_for(role_id)]
+    
+    # 1. Fetch existing projects for this role
+    projects = await db.fetch_all(
+        "SELECT name FROM role_projects WHERE role_id = :rid",
+        {"rid": role_id}
+    )
+    existing_names = [p["name"] for p in projects]
 
     candidate = regex_extract_project(user_msg)
     if not candidate:
         # 無顯式「我想做 X」句型時，仍嘗試比對訊息是否再次提及既有專案
-        # （如已知「微積分作業」，使用者說「微積分作業好難」應匹配而非無視）。
         rematch = fuzzy_match(user_msg, existing_names)
-        return rematch  # 命中既有專案則回傳，否則 None（不憑空新建）
+        return rematch
 
     # [RISK-12] Eguard 過濾 PII
-    candidate = eguard.filter_pii(candidate).strip()
-    if not candidate or "[REDACTED]" in candidate:
-        # 過濾後為空或僅剩遮蔽標記 -> 放棄萃取（SPEC §7.7）
+    sanitized = eguard.mask_pii(candidate)
+    candidate = sanitized.sanitized_text.strip()
+    if not candidate or "[REDACTED" in candidate:
+        # 過濾後為空或僅剩遮蔽標記 -> 放記萃取
         return None
 
     matched = fuzzy_match(candidate, existing_names)
@@ -100,6 +106,15 @@ async def detect_and_upsert_project(
         return matched  # 已存在，不新建
 
     # 新建 [R10 §代理工作流]，預設 inferred_by_ai=True
-    db.add_project(role_id=role_id, name=candidate, inferred_by_ai=True)
-    await sse.emit("project_created", {"project_name": candidate, "role_id": role_id})
+    import uuid
+    await db.execute(
+        "INSERT INTO role_projects (id, role_id, name, inferred_by_ai) "
+        "VALUES (:id, :rid, :name, TRUE)",
+        {"id": str(uuid.uuid4()), "rid": role_id, "name": candidate}
+    )
+    
+    # SSE emit placeholder (if sse is available)
+    if hasattr(sse, "emit"):
+        await sse.emit("project_created", {"project_name": candidate, "role_id": role_id})
+    
     return candidate

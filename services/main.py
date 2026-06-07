@@ -11,9 +11,12 @@ coOS FastAPI Sidecar — 主入口
          docs/modules/M1_2_breakpoint_detection_SPEC.md v1.1
 """
 import asyncio
+import json
 import logging
 import sqlite3
 import time
+import uuid
+from datetime import UTC, datetime, timedelta
 from contextlib import asynccontextmanager
 from typing import Any
 from uuid import UUID
@@ -42,7 +45,6 @@ from m4_3_role_isolation.context import build_role_context
 
 # M4 / M6 integration imports
 from m4_3_role_isolation.middleware import RoleIsolationMiddleware
-from m4_5_xp_settlement.engine import settle
 from m6_2_postgresql.engine import get_cloud_engine, is_cloud_available
 from m6_5_acid_gatekeeper.gatekeeper import XPGatekeeper
 
@@ -68,7 +70,18 @@ class AsyncDBAdapter:
                 "role_router_rules",
                 "user_consents",
                 "git_watched_paths",
-                "github_tokens"
+                "github_tokens",
+                "items_dictionary",
+                "user_collections",
+                "roles",
+                "ai_experts",
+                "goals",
+                "promises",
+                "role_projects",
+                "users",
+                "xp_ledger",
+                "daily_reflections",
+                "daily_reflection_segments"
             ])
             if is_local_table or not self.pg_engine:
                 try:
@@ -103,7 +116,18 @@ class AsyncDBAdapter:
                 "role_router_rules",
                 "user_consents",
                 "git_watched_paths",
-                "github_tokens"
+                "github_tokens",
+                "items_dictionary",
+                "user_collections",
+                "roles",
+                "ai_experts",
+                "goals",
+                "promises",
+                "role_projects",
+                "users",
+                "xp_ledger",
+                "daily_reflections",
+                "daily_reflection_segments"
             ])
             if is_local_table or not self.pg_engine:
                 try:
@@ -141,7 +165,18 @@ class AsyncDBAdapter:
                 "role_router_rules",
                 "user_consents",
                 "git_watched_paths",
-                "github_tokens"
+                "github_tokens",
+                "items_dictionary",
+                "user_collections",
+                "roles",
+                "ai_experts",
+                "goals",
+                "promises",
+                "role_projects",
+                "users",
+                "xp_ledger",
+                "daily_reflections",
+                "daily_reflection_segments"
             ])
             if is_local_table or not self.pg_engine:
                 try:
@@ -291,10 +326,21 @@ async def lifespan(app: FastAPI):
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS git_watched_paths (
                 repo_path TEXT PRIMARY KEY,
-                github_repo TEXT,  -- New: e.g. 'owner/repo'
+                github_repo TEXT,
+                last_seen_hash TEXT,  -- New: avoid redundant logging
                 added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             )
         """)
+        # Manual migration: add columns if table exists but they don't
+        try:
+            cursor.execute("ALTER TABLE git_watched_paths ADD COLUMN github_repo TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            cursor.execute("ALTER TABLE git_watched_paths ADD COLUMN last_seen_hash TEXT")
+        except sqlite3.OperationalError:
+            pass
+        _sqlite_conn.commit()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS github_tokens (
                 id TEXT PRIMARY KEY,
@@ -302,8 +348,191 @@ async def lifespan(app: FastAPI):
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS items_dictionary (
+                id          TEXT PRIMARY KEY,
+                name        TEXT UNIQUE NOT NULL,
+                rarity      TEXT NOT NULL,
+                description TEXT,
+                image_url   TEXT,
+                category    TEXT NOT NULL,
+                created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_collections (
+                id          TEXT PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                item_id     TEXT NOT NULL,
+                acquired_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                UNIQUE (user_id, item_id)
+            )
+        """)
+        
+        # Seed items_dictionary if empty
+        cursor.execute("SELECT COUNT(*) FROM items_dictionary")
+        if cursor.fetchone()[0] == 0:
+            badges = [
+                ("badge_001", "首次反思", "common", "完成第一次反思草稿核准", None, "badge"),
+                ("badge_002", "CPE 挑戰者", "rare", "報名 CPE 程式能力檢定", None, "badge"),
+                ("badge_003", "連續 7 天", "epic", "連續 7 天完成反思", None, "badge"),
+                ("badge_004", "學期之星", "legendary", "一學期內獲得最高 XP", None, "badge"),
+            ]
+            cursor.executemany(
+                "INSERT INTO items_dictionary (id, name, rarity, description, image_url, category) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                badges
+            )
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id          TEXT PRIMARY KEY,
+                username    TEXT UNIQUE NOT NULL,
+                current_xp  INTEGER DEFAULT 0,
+                lifetime_xp INTEGER DEFAULT 0,
+                created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS roles (
+                id              TEXT PRIMARY KEY,
+                user_id         TEXT NOT NULL,
+                slug            TEXT NOT NULL,
+                display_name    TEXT NOT NULL,
+                color_hex       TEXT,
+                icon_name       TEXT,
+                sort_order      INTEGER DEFAULT 0,
+                is_active       INTEGER DEFAULT 1,
+                created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                UNIQUE(user_id, slug)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ai_experts (
+                id                  TEXT PRIMARY KEY,
+                role_id             TEXT NOT NULL,
+                name                TEXT NOT NULL,
+                personality_prompt  TEXT,
+                backstory           TEXT,
+                tone_default        TEXT DEFAULT 'empathetic',
+                trust_level         REAL DEFAULT 0.8,
+                avatar_url          TEXT,
+                is_active           INTEGER DEFAULT 1,
+                created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS goals (
+                id              TEXT PRIMARY KEY,
+                role_id         TEXT NOT NULL,
+                persona_id      TEXT,
+                title           TEXT NOT NULL,
+                description     TEXT,
+                progress        REAL DEFAULT 0.0,
+                status          TEXT DEFAULT 'active',
+                created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS promises (
+                id              TEXT PRIMARY KEY,
+                role_id         TEXT NOT NULL,
+                persona_id      TEXT,
+                source_thread_id TEXT,
+                text            TEXT NOT NULL,
+                deadline        TEXT,
+                status          TEXT DEFAULT 'active',
+                created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS role_projects (
+                id              TEXT PRIMARY KEY,
+                role_id         TEXT NOT NULL,
+                name            TEXT NOT NULL,
+                description     TEXT,
+                status          TEXT DEFAULT 'active',
+                inferred_by_ai  INTEGER DEFAULT 0,
+                created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                UNIQUE(role_id, name)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS xp_ledger (
+                id              TEXT PRIMARY KEY,
+                user_id         TEXT NOT NULL,
+                amount          INTEGER NOT NULL,
+                xp_type         TEXT NOT NULL,
+                reason          TEXT,
+                source_module   TEXT,
+                reflection_id   TEXT,
+                segment_id      TEXT,
+                role_id         TEXT,
+                created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+
+        # Seed default user if empty
+        cursor.execute("SELECT COUNT(*) FROM users")
+        if cursor.fetchone()[0] == 0:
+            default_user_id = settings.current_user_id
+            cursor.execute(
+                "INSERT INTO users (id, username, current_xp, lifetime_xp) VALUES (?, ?, ?, ?)",
+                (default_user_id, "default_user", 100, 100)
+            )
+            
+            # Seed default roles
+            roles = [
+                (str(uuid.uuid5(uuid.NAMESPACE_DNS, "uni_001")), default_user_id, "uni_001", "UNI", "#d4915e", "activity", 0),
+                (str(uuid.uuid5(uuid.NAMESPACE_DNS, "csie_001")), default_user_id, "csie_001", "CSIE", "#c47830", "code", 1),
+            ]
+            cursor.executemany(
+                "INSERT INTO roles (id, user_id, slug, display_name, color_hex, icon_name, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                roles
+            )
+            
+            # Seed default expert for CSIE
+            csie_role_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, "csie_001"))
+            cursor.execute(
+                "INSERT INTO ai_experts (id, role_id, name, personality_prompt, backstory) VALUES (?, ?, ?, ?, ?)",
+                ("robert_001", csie_role_id, "學長Robert", "你是一個資深的電腦科學系學長...", "在 CSIE 待了四年的傳奇人物")
+            )
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_reflections (
+                id              TEXT PRIMARY KEY,
+                user_id         TEXT NOT NULL,
+                role_id         TEXT NOT NULL,
+                reflection_date TEXT NOT NULL,
+                ai_summary      TEXT,
+                is_completed    INTEGER DEFAULT 0,
+                completed_at    TEXT,
+                total_activity_minutes INTEGER DEFAULT 0,
+                created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                UNIQUE(user_id, role_id, reflection_date)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_reflection_segments (
+                id              TEXT PRIMARY KEY,
+                reflection_id   TEXT NOT NULL,
+                user_id         TEXT NOT NULL,
+                role_id         TEXT NOT NULL,
+                start_time      TEXT NOT NULL,
+                end_time        TEXT NOT NULL,
+                activity_minutes INTEGER DEFAULT 0,
+                ai_description  TEXT,
+                user_feeling    TEXT,
+                user_action_plan TEXT,
+                user_learned    TEXT,
+                is_draft        INTEGER DEFAULT 1,
+                is_reviewed     INTEGER DEFAULT 0,
+                xp_settled      INTEGER DEFAULT 0,
+                created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                FOREIGN KEY(reflection_id) REFERENCES daily_reflections(id)
+            )
+        """)
         _sqlite_conn.commit()
-        logger.info("[lifespan] user_consents, role_settings, git_watched_paths, and github_tokens tables ensured.")
+        logger.info("[lifespan] All local tables ensured and seeded.")
     except Exception as e:
         logger.warning("[lifespan] Failed to auto-create settings tables in SQLite: %s", e)
 
@@ -311,53 +540,45 @@ async def lifespan(app: FastAPI):
     if is_cloud_available():
         pg_engine = get_cloud_engine()
         logger.info("[lifespan] Cloud PG database available.")
-        try:
-            with pg_engine.connect() as conn:
-                import uuid
-
-                from sqlalchemy import text
-                
-                # 1. Seed default user
-                default_user_id = "00000000-0000-0000-0000-000000000000"
-                conn.execute(text("""
-                    INSERT INTO users (id, display_name, email, current_xp, level, streak_days)
-                    VALUES (:id, 'Default User', 'default@coos.local', 0, 1, 0)
-                    ON CONFLICT (id) DO NOTHING
-                """), {"id": default_user_id})
-                
-                # 2. Seed default roles
-                default_roles = [
-                    {"id_str": "uni_001", "name": "UNI", "color": "#d4915e", "icon": "activity", "sort": 0},
-                    {"id_str": "csie_001", "name": "CSIE", "color": "#c47830", "icon": "code", "sort": 1},
-                    {"id_str": "family_001", "name": "FAMILY", "color": "#e8a556", "icon": "heart", "sort": 2},
-                    {"id_str": "counseling_001", "name": "諮商", "color": "#8fbc8f", "icon": "message-circle", "sort": 3},  # noqa: E501
-                    {"id_str": "scholar_001", "name": "學者", "color": "#b08d6e", "icon": "book", "sort": 4},
-                ]
-                for r in default_roles:
-                    r_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, r["id_str"])
-                    conn.execute(text("""
-                        INSERT INTO roles (
-                            id, user_id, slug, display_name, color_hex, icon_name, sort_order, is_active
-                        )
-                        VALUES (:id, :uid, :slug, :name, :color, :icon, :sort, TRUE)
-                        ON CONFLICT (id) DO NOTHING
-                    """), {
-                        "id": str(r_uuid),
-                        "uid": default_user_id,
-                        "slug": r["id_str"],
-                        "name": r["name"],
-                        "color": r["color"],
-                        "icon": r["icon"],
-                        "sort": r["sort"]
-                    })
-                conn.commit()
-                logger.info("[lifespan] Successfully seeded default user and roles to cloud PG.")
-        except Exception as e:
-            logger.warning("[lifespan] Failed to seed default user/roles in PG: %s", e)
-    else:
-        logger.info("[lifespan] Cloud PG database not available, running in fallback mode.")
 
     _db_adapter = AsyncDBAdapter(_sqlite_conn, pg_engine)
+
+    # [M0.3] Ensure local identity and sync to cloud
+    try:
+        # Check for existing user in SQLite
+        user_row = await _db_adapter.fetch_one("SELECT id FROM users LIMIT 1")
+        
+        if not user_row:
+            # First start: Generate a fresh persistent UUID for this instance
+            instance_user_id = str(uuid.uuid4())
+            logger.info("[lifespan] First start detected. Generated new Instance ID: %s", instance_user_id)
+            await _db_adapter.execute(
+                "INSERT INTO users (id, display_name, email, current_xp, level) VALUES (:id, :name, :email, 0, 1)",
+                {"id": instance_user_id, "name": "Me (Local)", "email": "local@coos.internal"}
+            )
+        else:
+            instance_user_id = user_row["id"]
+            logger.info("[lifespan] Using existing Instance ID: %s", instance_user_id)
+        
+        # Update settings for this session
+        settings.current_user_id = instance_user_id
+
+        # Sync Identity to Cloud (No roles, just the user object)
+        if pg_engine and is_cloud_available():
+            with pg_engine.connect() as conn:
+                from sqlalchemy import text
+                conn.execute(text("""
+                    INSERT INTO users (id, display_name, email, current_xp, level, streak_days)
+                    VALUES (:id, 'Local User', :email, 0, 1, 0)
+                    ON CONFLICT (id) DO NOTHING
+                """), {
+                    "id": settings.current_user_id, 
+                    "email": f"local_{settings.current_user_id[:8]}@coos.internal"
+                })
+                conn.commit()
+                logger.info("[lifespan] Identity verified with cloud.")
+    except Exception as e:
+        logger.warning("[lifespan] Failed to manage identity: %s", e)
 
     # [M0.4] Start AsyncLogWriter background flush worker
     from m0_4_logging.writer import get_logger as get_log_writer
@@ -374,6 +595,43 @@ async def lifespan(app: FastAPI):
     async def _m2_2_flush(batch: EventBatch) -> None:
         """Flush EventBatch to M2.2 for inference (wired in debouncer)"""
         logger.info("[M2.1] batch flushed: size=%d role=%s", batch.size, batch.role_id)
+        
+        # 1. Summarize events for Gemma
+        # We take first 5 and last 5 events if too many
+        if len(batch.events) > 10:
+            events_to_process = batch.events[:5] + batch.events[-5:]
+        else:
+            events_to_process = batch.events
+            
+        summary_text = "\n".join([
+            f"- {e.event_type} (from {e.module}): {json.dumps(e.data, ensure_ascii=False)}"
+            for e in events_to_process
+        ])
+        
+        # 2. Gemma Semantic Compression
+        vector = await _gemma_pipeline.compress(
+            summary_text,
+            source_log_id=batch.batch_id,
+            role_id=batch.role_id
+        )
+        
+        # 3. M2.3 Eguard Filter (sanitize context_summary)
+        sanitized = _eguard_filter.mask_pii(vector.context_summary, role_id=batch.role_id)
+        
+        # 4. Store to intent_logs (M6.1)
+        import uuid
+        await _db_adapter.execute(
+            "INSERT INTO intent_logs (id, source_log_id, role_id, intent_label, context_summary, inference_mode) "
+            "VALUES (:id, :src, :rid, :label, :ctx, :mode)",
+            {
+                "id": str(uuid.uuid4()),
+                "src": batch.batch_id,
+                "rid": batch.role_id,
+                "label": vector.intent_label,
+                "ctx": sanitized.sanitized_text,
+                "mode": vector.inference_mode
+            }
+        )
 
     _debouncer = EventDebouncer(
         role_id="default",
@@ -394,30 +652,55 @@ async def lifespan(app: FastAPI):
             payload=event["payload"]
         )
 
-    watched_paths_rows = await _db_adapter.fetch_all("SELECT repo_path FROM git_watched_paths")
-    watched_paths = [row["repo_path"] for row in watched_paths_rows]
-    git_monitor = LocalGitMonitor(watched_paths, _git_emit)
+    async def _update_git_hash(repo_path: str, last_hash: str):
+        await _db_adapter.execute(
+            "UPDATE git_watched_paths SET last_seen_hash = :h WHERE repo_path = :p",
+            {"h": last_hash, "p": repo_path}
+        )
+
+    watched_paths_rows = await _db_adapter.fetch_all(
+        "SELECT repo_path, last_seen_hash FROM git_watched_paths"
+    )
+    watched_paths = [
+        {"path": row["repo_path"], "last_hash": row["last_seen_hash"]} 
+        for row in watched_paths_rows
+    ]
+    git_monitor = LocalGitMonitor(watched_paths, _git_emit, _update_git_hash)
     git_task = asyncio.create_task(git_monitor.scan_loop())
 
-    # Periodic rule miner task
-    async def periodic_rule_miner():
+    # Periodic maintenance: Rule miner & Zombie cleanup
+    async def periodic_maintenance():
         await asyncio.sleep(60.0)
         while True:
             try:
+                # 1. M2.2 Rule Miner
                 if _gemma_pipeline and _sqlite_conn:
                     from m2_2_gemma.rule_miner import FallbackRuleMiner
                     miner = FallbackRuleMiner(_gemma_pipeline.fallback)
                     new_rules = await miner.mine_rules_from_db(_sqlite_conn, min_occurrences=3, min_correlation=0.8)
                     if new_rules:
-                        logger.info("[M2.2] Periodic rule miner automatically learned %d new fallback rules", len(new_rules))  # noqa: E501
+                        logger.info("[M2.2] Periodic maintenance: learned %d new fallback rules", len(new_rules))
+
+                # 2. M4.5 Zombie Cleanup
+                # Hard delete stale drafts (is_draft=True, not is_reviewed, not xp_settled, > 7 days old)
+                cutoff = (datetime.now(UTC) - timedelta(days=7)).isoformat()
+                await _db_adapter.execute(
+                    "DELETE FROM daily_reflections WHERE is_draft = TRUE AND is_reviewed = FALSE "
+                    "AND xp_settled = FALSE AND created_at < :cutoff",
+                    {"cutoff": cutoff}
+                )
+                await _db_adapter.execute(
+                    "DELETE FROM daily_reflection_segments WHERE is_draft = TRUE AND is_reviewed = FALSE "
+                    "AND xp_settled = FALSE AND created_at < :cutoff",
+                    {"cutoff": cutoff}
+                )
             except Exception as e:
-                logger.warning("[M2.2] Periodic rule miner encountered error: %s", e)
+                logger.warning("[lifespan] Periodic maintenance failed: %s", e)
             await asyncio.sleep(3600.0)
 
-    miner_task = asyncio.create_task(periodic_rule_miner())
+    maintenance_task = asyncio.create_task(periodic_maintenance())
 
     # [M1.4.2] GitHub Webhook Tunnel Manager
-    from m1_4_github.webhooks import router as m1_4_webhook_router
     import subprocess
     tunnels = []
 
@@ -448,9 +731,9 @@ async def lifespan(app: FastAPI):
     for proc in tunnels:
         proc.terminate()
     git_task.cancel()
-    miner_task.cancel()
+    maintenance_task.cancel()
     try:
-        await asyncio.gather(git_task, miner_task, return_exceptions=True)
+        await asyncio.gather(git_task, maintenance_task, return_exceptions=True)
     except asyncio.CancelledError:
         pass
     if _debouncer:
@@ -515,6 +798,14 @@ async def m1_1_event(event: LogEvent) -> dict[str, Any]:
         "payload": event.payload,
     })
 
+    # [M2.3 DRIFT Shield] Security check for content capture
+    if event.action == "content_capture" and event.payload.get("content_raw"):
+        try:
+            await _drift_shield.verify_input(event.payload["content_raw"])
+        except Exception as e:
+            logger.warning("[M2.3] DRIFT blocked content capture for event %s: %s", event.id, e)
+            return {"status": "blocked", "reason": "security_policy"}
+
     # [M2.2 Gemma Background Compression]
     if event.action == "content_capture" and event.payload.get("content_raw"):
         content_raw = event.payload["content_raw"]
@@ -568,7 +859,7 @@ async def m1_1_consent(request: Request) -> dict[str, Any]:
     Reads user_consents table (content_capture_all / content_capture_selected).
     [RISK-15] Never exposes content_raw or content_summary — consent metadata only.
     """
-    user_id = getattr(request.state, "user_id", None) or UUID("00000000-0000-0000-0000-000000000000")
+    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
     consents_rows = await _db_adapter.fetch_all(
         "SELECT consent_type, granted FROM user_consents WHERE user_id = :uid",
         {"uid": str(user_id)},
@@ -580,9 +871,15 @@ async def m1_1_consent(request: Request) -> dict[str, Any]:
         allowed_processes: list[str] = []
     elif consents_dict.get("content_capture_selected") == 1:
         mode = "selected"
-        # allowed_processes stored as JSON array in consent payload (future M6.1 extension)
-        # For now return empty list — UI settings page will extend this in Phase 6
-        allowed_processes = []
+        # allowed_processes stored as JSON array in consent payload
+        row = await _db_adapter.fetch_one(
+            "SELECT payload FROM user_consents WHERE user_id = :uid AND consent_type = 'content_capture_selected'",
+            {"uid": str(user_id)}
+        )
+        try:
+            allowed_processes = json.loads(row["payload"]) if row and row["payload"] else []
+        except Exception:
+            allowed_processes = []
     else:
         mode = "off"
         allowed_processes = []
@@ -826,7 +1123,7 @@ def update_env_file(updates: dict[str, str]):
 
 @app.get("/api/settings")
 async def get_settings_endpoint(role_id: str, request: Request):
-    user_id = getattr(request.state, "user_id", None) or UUID("00000000-0000-0000-0000-000000000000")
+    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
     
     import uuid
     try:
@@ -899,7 +1196,7 @@ async def get_settings_endpoint(role_id: str, request: Request):
 
 @app.post("/api/settings")
 async def update_settings_endpoint(role_id: str, payload: SettingsUpdate, request: Request):
-    user_id = getattr(request.state, "user_id", None) or UUID("00000000-0000-0000-0000-000000000000")
+    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
     
     import uuid
     try:
@@ -989,12 +1286,124 @@ async def update_settings_endpoint(role_id: str, payload: SettingsUpdate, reques
     
     return {"status": "success"}
 
+# --- M6.2 Roles & Experts ---
+
+@app.get("/api/m6_2/roles")
+async def m6_2_list_roles(request: Request) -> list[dict[str, Any]]:
+    """[M6.2] List all roles for the current user."""
+    user_id = getattr(request.state, "user_id", None) or settings.current_user_id
+    rows = await _db_adapter.fetch_all(
+        "SELECT * FROM roles WHERE user_id = :uid AND is_active = 1 ORDER BY sort_order",
+        {"uid": str(user_id)}
+    )
+    return [
+        {
+            "id": r["id"],
+            "name": r["display_name"],
+            "themeColorPalette": {"primary": r["color_hex"]},
+            "sortOrder": r["sort_order"],
+            "slug": r["slug"]
+        } for r in rows
+    ]
+
+
+@app.post("/api/m6_2/roles")
+async def m6_2_create_role(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+    """[M6.2] Create a new role."""
+    user_id = getattr(request.state, "user_id", None) or settings.current_user_id
+    name = body.get("name")
+    if not name:
+        raise HTTPException(status_code=422, detail="name is required")
+    
+    import uuid
+    role_id = str(uuid.uuid4())
+    slug = name.lower().replace(" ", "_")
+    
+    await _db_adapter.execute(
+        "INSERT INTO roles (id, user_id, slug, display_name, color_hex, icon_name, sort_order) "
+        "VALUES (:id, :uid, :slug, :name, :color, :icon, :sort)",
+        {
+            "id": role_id,
+            "uid": str(user_id),
+            "slug": slug,
+            "name": name,
+            "color": body.get("color", "#999999"),
+            "icon": body.get("icon", "activity"),
+            "sort": 10
+        }
+    )
+    return {"id": role_id, "status": "created"}
+
+
+@app.get("/api/m6_2/roles/{role_id}/experts")
+async def m6_2_list_experts(role_id: str) -> list[dict[str, Any]]:
+    """[M6.2] List experts for a specific role."""
+    rows = await _db_adapter.fetch_all(
+        "SELECT * FROM ai_experts WHERE role_id = :rid AND is_active = 1",
+        {"rid": role_id}
+    )
+    return [
+        {
+            "id": r["id"],
+            "expertName": r["name"],
+            "personalityPrompt": r["personality_prompt"],
+            "trustLevel": r["trust_level"],
+            "avatarUrl": r["avatar_url"],
+        } for r in rows
+    ]
+
+
+@app.delete("/api/m6_2/roles/{role_id}")
+async def m6_2_delete_role(role_id: str, request: Request) -> dict[str, Any]:
+    """[M6.2] Soft-delete a role."""
+    user_id = getattr(request.state, "user_id", None) or settings.current_user_id
+    await _db_adapter.execute(
+        "UPDATE roles SET is_active = 0 WHERE id = :rid AND user_id = :uid",
+        {"rid": role_id, "uid": str(user_id)}
+    )
+    return {"status": "deleted"}
+
+
+# --- Monitored Apps Whitelist ---
+
+@app.get("/api/settings/whitelist")
+async def get_app_whitelist(request: Request) -> list[str]:
+    """[M1.1] Fetch the current monitored apps whitelist."""
+    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    row = await _db_adapter.fetch_one(
+        "SELECT payload FROM user_consents WHERE user_id = :uid AND consent_type = 'content_capture_selected'",
+        {"uid": str(user_id)}
+    )
+    if row and row["payload"]:
+        return json.loads(row["payload"])
+    return []
+
+
+@app.post("/api/settings/whitelist")
+async def update_app_whitelist(body: list[str], request: Request) -> dict[str, Any]:
+    """[M1.1] Update the monitored apps whitelist."""
+    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    
+    # Update or insert the consent record
+    await _db_adapter.execute(
+        "INSERT INTO user_consents (id, user_id, consent_type, granted, granted_at, payload) "
+        "VALUES (:id, :uid, 'content_capture_selected', 1, (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), :payload) "
+        "ON CONFLICT(id) DO UPDATE SET payload = :payload, granted = 1",
+        {
+            "id": f"consent_selected_{user_id}",
+            "uid": str(user_id),
+            "payload": json.dumps(body)
+        }
+    )
+    return {"status": "success"}
+
+
 # --- M6.3 Role Context ---
 
 @app.get("/api/m6_3/role_context")
 async def m6_3_role_context(role_id: str, request: Request) -> dict[str, Any]:
     """Context Header 四槽位資料 (Project / Role / Promises / Goal)"""
-    user_id = getattr(request.state, "user_id", None) or UUID("00000000-0000-0000-0000-000000000000")
+    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
     
     import uuid
     if isinstance(role_id, str):
@@ -1046,7 +1455,7 @@ async def m6_4_heatmap(role_id: str) -> list[dict[str, Any]]:
 @app.get("/api/m6_4/daily_timeline")
 async def m6_4_daily_timeline(date: str, role_id: str | None = None) -> list[dict[str, Any]]:
     """當日任務清單（依角色分組）"""
-    user_id = UUID("00000000-0000-0000-0000-000000000000")
+    user_id = UUID(settings.current_user_id)
     
     import uuid
     role_uuid = None
@@ -1175,186 +1584,287 @@ async def m6_4_patch_reflection(reflection_id: str, body: dict[str, Any]) -> dic
 # --- M4.5 XP Settlement ---
 
 @app.patch("/api/m4_5/grant_xp")
-async def m4_5_grant_xp(body: dict[str, Any]) -> dict[str, Any]:
-    """[RISK-01] 只在 is_reviewed=true 後呼叫；回傳發放金額"""
-    if not body.get("is_reviewed"):
-        raise HTTPException(status_code=400, detail="RISK-01: is_reviewed must be true")
-        
-    reflection_id_str = body.get("reflection_id")
-    if not reflection_id_str:
+async def m4_5_grant_xp(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+    """[RISK-01] Settle XP for an approved reflection or segment."""
+    refl_id = body.get("reflection_id")
+    if not refl_id:
         raise HTTPException(status_code=422, detail="reflection_id is required")
-        
-    import uuid
-    try:
-        refl_uuid = uuid.UUID(reflection_id_str)
-    except ValueError:
-        refl_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, reflection_id_str)
-        
-    user_uuid = uuid.UUID("00000000-0000-0000-0000-000000000000")
     
-    refl_data = None
-    is_segment = False
-    if _db_adapter and _db_adapter.pg_engine:
-        try:
-            row = await _db_adapter.fetch_one(
-                "SELECT * FROM daily_reflection_segments WHERE id = :id",
-                {"id": str(refl_uuid)}
-            )
-            if row:
-                refl_data = row
-                is_segment = True
-            else:
-                row = await _db_adapter.fetch_one(
-                    "SELECT * FROM daily_reflections WHERE id = :id",
-                    {"id": str(refl_uuid)}
-                )
-                if row:
-                    refl_data = row
-        except Exception as e:
-            logger.warning("DB lookup failed in grant_xp: %s", e)
-            
-    if not refl_data:
-        refl_data = {
-            "id": refl_uuid,
-            "role_id": uuid.uuid5(uuid.NAMESPACE_DNS, "csie_001"),
-            "is_draft": False,
-            "is_reviewed": True,
-            "user_feeling": body.get("user_feeling") or "感覺良好",
-            "user_action_plan": body.get("user_action_plan") or "繼續保持",
-            "user_learned": body.get("user_learned") or "學到了新東西",
-            "activity_minutes": body.get("activity_minutes") or 90,
-            "goal_aligned": True,
-            "xp_settled": False,
-        }
-        
-    class ReflectionObj:
-        def __init__(self, d):
-            self.id = uuid.UUID(str(d["id"]))
-            self.role_id = uuid.UUID(str(d["role_id"])) if d.get("role_id") else None
-            self.is_draft = bool(d.get("is_draft", True))
-            self.is_reviewed = bool(d.get("is_reviewed", False))
-            self.user_feeling = d.get("user_feeling")
-            self.user_action_plan = d.get("user_action_plan")
-            self.user_learned = d.get("user_learned")
-            self.activity_minutes = d.get("activity_minutes", 0) or 0
-            self.goal_aligned = bool(d.get("is_aligned") or d.get("goal_aligned", False))
-            self.xp_settled = bool(d.get("xp_settled", False))
-            
-    class UserObj:
-        def __init__(self, uid, current_xp=0, lifetime_xp=0):
-            self.id = uid
-            self.current_xp = current_xp
-            self.lifetime_xp = lifetime_xp
-            
-    refl_obj = ReflectionObj(refl_data)
+    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
     
-    user_data = None
-    if _db_adapter and _db_adapter.pg_engine:
-        try:
-            user_data = await _db_adapter.fetch_one(
-                "SELECT current_xp, lifetime_xp FROM users WHERE id = :uid",
-                {"uid": str(user_uuid)}
-            )
-        except Exception:
-            pass
-    if not user_data:
-        user_data = {"current_xp": 100, "lifetime_xp": 100}
-        
-    user_obj = UserObj(user_uuid, user_data.get("current_xp", 0), user_data.get("lifetime_xp", 0))
-    
-    class LocalStore:
-        def __init__(self, u_obj, r_obj):
-            self.users = {u_obj.id: u_obj}
-            self.reflections = {r_obj.id: r_obj}
-            self.ledger = []
-            
-    store = LocalStore(user_obj, refl_obj)
+    store = LiveXPStore(_db_adapter)
     gatekeeper = XPGatekeeper(store)
     
-    result = await settle(refl_obj, user_obj, gatekeeper, approval_duration_seconds=30)
+    refl_uuid = UUID(refl_id)
     
-    if result.granted:
-        if _db_adapter and _db_adapter.pg_engine:
-            try:
-                await _db_adapter.execute(
-                    "UPDATE users SET current_xp = :cxp, lifetime_xp = :lxp, "
-                    "updated_at = CURRENT_TIMESTAMP WHERE id = :uid",
-                    {
-                        "cxp": user_obj.current_xp,
-                        "lxp": user_obj.lifetime_xp,
-                        "uid": str(user_uuid)
-                    }
-                )
-                if is_segment:
-                    await _db_adapter.execute(
-                        "UPDATE daily_reflection_segments SET xp_settled = TRUE, "
-                        "xp_settled_at = CURRENT_TIMESTAMP, earned_xp = :xp WHERE id = :rid",
-                        {"xp": result.amount, "rid": str(refl_uuid)}
-                    )
-                else:
-                    await _db_adapter.execute(
-                        "UPDATE daily_reflections SET xp_settled = TRUE, "
-                        "xp_settled_at = CURRENT_TIMESTAMP, earned_xp = :xp WHERE id = :rid",
-                        {"xp": result.amount, "rid": str(refl_uuid)}
-                    )
-                for entry in store.ledger:
-                    await _db_adapter.execute(
-                        "INSERT INTO xp_ledger (id, user_id, amount, xp_type, reason, "
-                        "source_module, reflection_id, created_at) "
-                        "VALUES (:id, :uid, :amt, :xtype, :reason, :src, :rid, CURRENT_TIMESTAMP)",
-                        {
-                            "id": str(uuid.uuid4()),
-                            "uid": str(user_uuid),
-                            "amt": entry.amount,
-                            "xtype": entry.xp_type,
-                            "reason": entry.reason,
-                            "src": entry.source_module,
-                            "rid": str(refl_uuid)
-                        }
-                    )
-            except Exception as e:
-                logger.error("Failed to persist XP settlement to PG: %s", e)
-        else:
-            try:
-                await _db_adapter.execute(
-                    "INSERT INTO raw_tracking_logs (id, timestamp, module, action, payload) "
-                    "VALUES (:id, (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), 'M4.5', 'XP_GRANTED', :payload)",
-                    {
-                        "id": str(uuid.uuid4()),
-                        "payload": f'{{"reflection_id": "{refl_uuid}", "amount": {result.amount}}}'
-                    }
-                )
-            except Exception:
-                pass
+    # Check segment first
+    segment = await store.segments.get(refl_uuid)
+    if segment:
+        from m4_5_xp_settlement.engine import compute_earned_xp
+        amount = compute_earned_xp(segment)
+        result = await asyncio.to_thread(gatekeeper.settle_segment_xp, refl_uuid, user_id, amount)
+        if result.success:
+            await segment.save(_db_adapter)
+            user_obj = await store.users.get(user_id)
+            await user_obj.save(_db_adapter)
+            return {"granted": True, "amount": amount}
+        return {"granted": False, "reason": result.error_reason}
+    
+    # Check full reflection
+    reflection = await store.reflections.get(refl_uuid)
+    if reflection:
+        from m4_5_xp_settlement.engine import compute_earned_xp
+        amount = compute_earned_xp(reflection)
+        result = await asyncio.to_thread(gatekeeper.settle_earned_xp, refl_uuid, user_id, amount)
+        if result.success:
+            await reflection.save(_db_adapter)
+            user_obj = await store.users.get(user_id)
+            await user_obj.save(_db_adapter)
+            return {"granted": True, "amount": amount}
+        return {"granted": False, "reason": result.error_reason}
                 
-        logger.info("[M4.5] XP granted: reflection_id=%s amount=%d", refl_uuid, result.amount)
-        return {"granted": True, "amount": result.amount}
-    else:
-        return {"granted": False, "reason": result.reason}
+    return {"granted": False, "reason": "Target not found or not approved"}
 
 
-# --- M6.5 Achievements ---
+@app.get("/api/m4_4/time_spent/{task_id}")
+async def m4_4_time_spent(task_id: str):
+    """[M4.4] Aggregate real time spent for a task from raw_tracking_logs."""
+    import json
+    # Simple heuristic: sum duration of logs where payload contains task_id or repo_name
+    query = """
+        SELECT payload FROM raw_tracking_logs 
+        WHERE (payload LIKE :task OR payload LIKE :task_lower)
+    """
+    rows = await _db_adapter.fetch_all(query, {"task": f"%{task_id}%", "task_lower": f"%{task_id.lower()}%"})
+    
+    total_minutes = 0
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+            # Prefer duration_minutes field
+            total_minutes += payload.get("duration_minutes", 0)
+        except Exception:
+            continue
+            
+    return {"task_id": task_id, "time_spent_minutes": total_minutes}
+
+
+@app.get("/api/m1_1/telemetry_estimate/{task_id}")
+async def m1_1_telemetry_estimate(task_id: str):
+    """[M1.1] Aggregate telemetry estimate for a task."""
+    import json
+    query = """
+        SELECT payload FROM raw_tracking_logs 
+        WHERE module IN ('M1.1', 'M1.3.1', 'M1.4.3') 
+        AND (payload LIKE :task OR payload LIKE :task_lower)
+    """
+    rows = await _db_adapter.fetch_all(query, {"task": f"%{task_id}%", "task_lower": f"%{task_id.lower()}%"})
+    
+    total_minutes = 0
+    count = 0
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+            total_minutes += payload.get("duration_minutes", 0)
+            count += 1
+        except Exception:
+            continue
+            
+    confidence = 0.5 if count == 0 else min(0.95, 0.5 + (count * 0.05))
+    return {"task_id": task_id, "confidence": confidence, "estimated_minutes": total_minutes}
+
+
+# --- M6.5 Live Store for XPGatekeeper ---
+
+class LiveXPStore:
+    """Wrapper around AsyncDBAdapter to satisfy XPGatekeeper's store interface."""
+    def __init__(self, db: AsyncDBAdapter):
+        self.db = db
+        self.users = self._UserProxy(db)
+        self.reflections = self._ReflectionProxy(db)
+        self.segments = self._SegmentProxy(db)
+        self.ledger = self._LedgerProxy(db)
+
+    class _UserProxy:
+        def __init__(self, db):
+            self.db = db
+
+        async def get(self, uid):
+            row = await self.db.fetch_one("SELECT * FROM users WHERE id = :uid", {"uid": str(uid)})
+            if not row:
+                return None
+            # Return a simple object that supports += current_xp and lifetime_xp
+            class UserObj:
+                def __init__(self, r):
+                    self.id = r["id"]
+                    self.current_xp = r["current_xp"]
+                    self.lifetime_xp = r["lifetime_xp"]
+
+                async def save(self, db):
+                    await db.execute(
+                        "UPDATE users SET current_xp = :cxp, lifetime_xp = :lxp, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE id = :uid",
+                        {"cxp": self.current_xp, "lxp": self.lifetime_xp, "uid": str(self.id)}
+                    )
+            return UserObj(row)
+
+    class _ReflectionProxy:
+        def __init__(self, db):
+            self.db = db
+
+        async def get(self, rid):
+            row = await self.db.fetch_one("SELECT * FROM daily_reflections WHERE id = :rid", {"rid": str(rid)})
+            if not row:
+                return None
+            class ReflectionObj:
+                def __init__(self, r):
+                    self.__dict__.update(dict(r))
+
+                async def save(self, db):
+                    await db.execute(
+                        "UPDATE daily_reflections SET xp_settled = :s, xp_settled_at = :at, "
+                        "earned_xp = :xp WHERE id = :rid",
+                        {"s": self.xp_settled, "at": self.xp_settled_at, "xp": self.earned_xp, "rid": str(self.id)}
+                    )
+            return ReflectionObj(row)
+
+    class _SegmentProxy:
+        def __init__(self, db):
+            self.db = db
+
+        async def get(self, sid):
+            row = await self.db.fetch_one(
+                "SELECT * FROM daily_reflection_segments WHERE id = :sid",
+                {"sid": str(sid)}
+            )
+            if not row:
+                return None
+            class SegmentObj:
+                def __init__(self, r):
+                    self.__dict__.update(dict(r))
+                    self.is_active = True # Segments are always active in MVP
+
+                async def save(self, db):
+                    await db.execute(
+                        "UPDATE daily_reflection_segments SET xp_settled = :s, xp_settled_at = :at, "
+                        "earned_xp = :xp WHERE id = :sid",
+                        {"s": self.xp_settled, "at": self.xp_settled_at, "xp": self.earned_xp, "sid": str(self.id)}
+                    )
+            return SegmentObj(row)
+
+    class _LedgerProxy:
+        def __init__(self, db):
+            self.db = db
+
+        async def append(self, entry):
+            await self.db.execute(
+                "INSERT INTO xp_ledger (id, user_id, amount, xp_type, reason, "
+                "source_module, reflection_id, segment_id, role_id) "
+                "VALUES (:id, :uid, :amt, :xtype, :reason, :src, :rid, :sid, :role_id)",
+                {
+                    "id": str(uuid.uuid4()),
+                    "uid": str(entry.user_id),
+                    "amt": entry.amount,
+                    "xtype": entry.xp_type,
+                    "reason": entry.reason,
+                    "src": entry.source_module,
+                    "rid": str(getattr(entry, "reflection_id", None)) if hasattr(entry, "reflection_id") else None,
+                    "sid": str(getattr(entry, "segment_id", None)) if hasattr(entry, "segment_id") else None,
+                    "role_id": str(getattr(entry, "role_id", None)) if hasattr(entry, "role_id") else None,
+                }
+            )
+
+# --- End M6.5 Live Store ---
+
+@app.post("/api/m6_5/grant_badge")
+async def m6_5_grant_badge(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+    """[M6.5] Manual grant endpoint for awarding XP via XPGatekeeper."""
+    refl_id = body.get("reflection_id")
+    amount = body.get("amount", 20)
+    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    
+    store = LiveXPStore(_db_adapter)
+    gatekeeper = XPGatekeeper(store)
+    
+    refl_uuid = UUID(refl_id) if refl_id else None
+    
+    if refl_uuid:
+        # Check segment
+        segment = await store.segments.get(refl_uuid)
+        if segment:
+            result = await asyncio.to_thread(gatekeeper.settle_segment_xp, refl_uuid, user_id, amount)
+            if result.success:
+                await segment.save(_db_adapter)
+                user_obj = await store.users.get(user_id)
+                await user_obj.save(_db_adapter)
+                return {"granted": True, "amount": amount}
+            return {"granted": False, "reason": result.error_reason}
+        
+        # Check reflection
+        reflection = await store.reflections.get(refl_uuid)
+        if reflection:
+            result = await asyncio.to_thread(gatekeeper.settle_earned_xp, refl_uuid, user_id, amount)
+            if result.success:
+                await reflection.save(_db_adapter)
+                user_obj = await store.users.get(user_id)
+                await user_obj.save(_db_adapter)
+                return {"granted": True, "amount": amount}
+            return {"granted": False, "reason": result.error_reason}
+                
+    return {"granted": False, "reason": "Target not found or not approved"}
+
+
+@app.post("/api/m6_5/draw_card")
+async def m6_5_draw_card(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+    """[M6.5] Gacha mechanic: spend XP for a random badge."""
+    cost_xp = body.get("cost_xp", 100)
+    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    
+    store = LiveXPStore(_db_adapter)
+    gatekeeper = XPGatekeeper(store)
+    
+    result = await asyncio.to_thread(gatekeeper.deduct_xp_for_gacha, user_id, cost_xp)
+    if result.success:
+        user_obj = await store.users.get(user_id)
+        await user_obj.save(_db_adapter)
+        
+        # Persistent the reward to user_collections
+        reward = result.reward
+        item_id = reward["id"]
+        # In real scenario, we'd pick a real badge from items_dictionary
+        # For now, we'll try to find a matching one or fallback to a seed badge
+        badge_row = await _db_adapter.fetch_one("SELECT id FROM items_dictionary LIMIT 1 OFFSET abs(random()) % 4")
+        if badge_row:
+            item_id = badge_row["id"]
+            
+        await _db_adapter.execute(
+            "INSERT INTO user_collections (id, user_id, item_id) VALUES (:id, :uid, :iid) "
+            "ON CONFLICT DO NOTHING",
+            {"id": str(uuid.uuid4()), "uid": str(user_id), "iid": item_id}
+        )
+        return {"success": True, "reward": reward, "item_id": item_id}
+    
+    return {"success": False, "reason": result.error_reason}
 
 @app.get("/api/m6_5/user_collections")
-async def m6_5_user_collections() -> list[dict[str, Any]]:
-    return [
-        {"id": "badge_001", "name": "首次反思", "rarity": "common",
-         "description": "完成第一次反思草稿核准", "acquired_at": "2026-06-01",
-         "unlock_condition": "核准第一份日報草稿"},
-        {"id": "badge_002", "name": "CPE 挑戰者", "rarity": "rare",
-         "description": "報名 CPE 程式能力檢定", "acquired_at": "2026-05-20",
-         "unlock_condition": "在 CSIE 角色記錄 CPE 準備 Project"},
-    ]
+async def m6_5_user_collections(request: Request) -> list[dict[str, Any]]:
+    """[M6.5] Fetch real user collections from SQLite."""
+    user_id = getattr(request.state, "user_id", None) or settings.current_user_id
+    query = """
+        SELECT i.*, u.acquired_at 
+        FROM user_collections u 
+        JOIN items_dictionary i ON u.item_id = i.id 
+        WHERE u.user_id = :uid
+    """
+    rows = await _db_adapter.fetch_all(query, {"uid": str(user_id)})
+    return [dict(row) for row in rows]
 
 
 @app.get("/api/m6_5/items_dictionary")
 async def m6_5_items_dictionary() -> list[dict[str, Any]]:
-    return [
-        {"id": "badge_001", "name": "首次反思", "rarity": "common"},
-        {"id": "badge_002", "name": "CPE 挑戰者", "rarity": "rare"},
-        {"id": "badge_003", "name": "連續 7 天", "rarity": "epic"},
-        {"id": "badge_004", "name": "學期之星", "rarity": "legendary"},
-    ]
+    """[M6.5] Fetch all available achievements from dictionary."""
+    rows = await _db_adapter.fetch_all("SELECT * FROM items_dictionary ORDER BY rarity DESC")
+    return [dict(row) for row in rows]
 
 
 # --- M4.1 Chat (LangGraph) ---
@@ -1366,7 +1876,18 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     role_id = body.get("role_id", "")
     thread_id = body.get("thread_id")
     
-    user_id = getattr(request.state, "user_id", None) or UUID("00000000-0000-0000-0000-000000000000")
+    # [M2.3 DRIFT Shield] Security check
+    try:
+        await _drift_shield.verify_input(user_msg)
+    except Exception as e:
+        logger.warning("[M2.3] DRIFT blocked chat input: %s", e)
+        return {"content": "對不起，我偵測到輸入內容可能存在安全風險，已暫時阻斷處理。", "persona_id": "system"}
+
+    # [M2.3 Eguard Filter] PII Masking before processing
+    sanitized = _eguard_filter.mask_pii(user_msg, role_id=str(role_id))
+    user_msg = sanitized.sanitized_text
+
+    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
     
     import uuid
     if isinstance(role_id, str):
@@ -1428,7 +1949,31 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     persona_id = (res.get("route_decision") or {}).get("persona_id") or "robert_001"
     reply = res.get("persona_response") or f"學長在這！關於你說的「{user_msg[:20]}」，我們一步步拆解..."
     
+    # [M4.4] Natural Elicitation Injection
     try:
+        from m4_4_elicitation.controller import ElicitationController
+        # Simple singleton-like usage for MVP
+        if not hasattr(app.state, "elicitation_controller"):
+            app.state.elicitation_controller = ElicitationController()
+        
+        ec = app.state.elicitation_controller
+        # Since observer is async, we can't get results immediately here.
+        # But we can check if the user message itself matches project extraction pattern
+        from m4_6_observer.project_detector import regex_extract_project
+        detected_project = regex_extract_project(user_msg)
+        
+        if detected_project and ec.can_elicit(resolved_thread_id, 1): # turn count mock
+            fragment = ec.generate_elicitation(
+                context="general_duration",
+                role_id=str(role_uuid),
+                project_name=detected_project
+            )
+            # Append the first elicitation message to the reply
+            if fragment.inject_messages:
+                reply += "\n\n" + fragment.inject_messages[0]
+                ec.record_elicitation(resolved_thread_id, 1)
+    except Exception as e:
+        logger.warning("[M4.4] Elicitation injection failed: %s", e)
         user_msg_id = str(uuid.uuid4())
         reply_id = str(uuid.uuid4())
         
@@ -1481,7 +2026,7 @@ async def m4_1_match_persona(body: dict[str, Any]) -> dict[str, Any]:
         role_uuid = uuid.uuid4()
         
     role_ctx = await build_role_context(
-        user_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+        user_id=uuid.UUID(settings.current_user_id),
         role_id=role_uuid,
         db=_db_adapter
     )
@@ -1507,7 +2052,59 @@ async def m4_1_match_persona(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# --- M4.6 Observer SSE ---
+@app.post("/api/m1_4/disconnect_source")
+async def m1_4_disconnect_source(body: dict[str, Any]) -> dict[str, Any]:
+    """[M1.4] Remove a registered local git source."""
+    repo_path = body.get("repo_path")
+    if not repo_path:
+        raise HTTPException(status_code=422, detail="repo_path is required")
+    
+    await _db_adapter.execute(
+        "DELETE FROM git_watched_paths WHERE repo_path = :path",
+        {"path": str(repo_path)}
+    )
+    return {"status": "disconnected", "repo_path": repo_path}
+
+
+@app.post("/api/v1/auth/github/disconnect")
+async def github_disconnect() -> dict[str, Any]:
+    """[M1.4.1] Remove the stored GitHub OAuth token."""
+    await _db_adapter.execute("DELETE FROM github_tokens WHERE id = 'default'")
+    return {"status": "disconnected"}
+
+
+# --- Auth & Identity (Future Multi-device) ---
+
+@app.get("/api/auth/me")
+async def get_current_user(request: Request) -> dict[str, Any]:
+    """Return the current active identity (Dev Authenticator)."""
+    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    row = await _db_adapter.fetch_one("SELECT * FROM users WHERE id = :uid", {"uid": str(user_id)})
+    if not row:
+        return {"id": str(user_id), "status": "anonymous_local"}
+    return dict(row)
+
+@app.post("/api/auth/link/google")
+async def link_google_account(body: dict[str, Any], request: Request) -> dict[str, Any]:
+    """
+    [Stub] Link current local UUID to a Google Account.
+    Future: This will update the users.email or a social_links table.
+    """
+    google_token = body.get("token")
+    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    
+    # Logic: 
+    # 1. Verify Google Token
+    # 2. Check if this Google User already exists in cloud
+    # 3. If yes, return the existing UUID to the client to switch to.
+    # 4. If no, update current user with google metadata.
+    
+    logger.info("[Auth] Linking user %s to Google account...", user_id)
+    return {
+        "status": "linked_stub", 
+        "user_id": str(user_id), 
+        "message": "Future implementation will perform OAuth flow."
+    }
 
 @app.get("/api/m4_6/events")
 async def m4_6_events_sse():
@@ -1526,6 +2123,21 @@ async def m4_6_events_sse():
 
 
 # --- M1.4 Workflow / Connected Sources ---
+
+@app.get("/api/m1_4/github_auth_url")
+async def m1_4_github_auth_url() -> dict[str, str]:
+    """[M1.4.1] Generate the GitHub OAuth authorization URL."""
+    settings = get_settings()
+    client_id = settings.github_client_id
+    if not client_id:
+        return {"url": "", "error": "GITHUB_CLIENT_ID not configured"}
+    
+    # scope: 'repo' for PR/Commit access, 'user' for identity
+    scope = "repo,user"
+    redirect_uri = "http://localhost:8000/api/v1/auth/github/callback"
+    url = f"https://github.com/login/oauth/authorize?client_id={client_id}&scope={scope}&redirect_uri={redirect_uri}"
+    return {"url": url}
+
 
 @app.get("/api/m1_4/connected_sources")
 async def m1_4_connected_sources() -> list[dict[str, Any]]:

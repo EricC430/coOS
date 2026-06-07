@@ -1,22 +1,21 @@
-/**
- * M3.2 -- Role Dashboard (Restructured)
- *
- * SPEC: docs/modules/M3_2_role_dashboard_SPEC.md
- * Research: [R08 SS1 SS5] [R09 SS4 SDT] [R06 SS2]
- * Risk mitigation: RISK-04, RISK-06
- *
- * Layout:
- *   Top 75%: TransitionBackground + ContextHeader (with Dashboard & heatmap)
- *   Bottom 25%: Coverflow Rotary Wheel Carousel
- */
-
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useCoOSStore } from "../../stores/m3_1_global_store";
 import { RoleFocusCarouselDock } from "./RoleFocusCarouselDock";
-import { TransitionBackground } from "./TransitionBackground";
-import type { ThemePalette } from "./TransitionBackground/useColorTemperature";
 import { ContextHeaderAggregator } from "./ContextHeaderAggregator";
-import type { HeatmapEntry } from "./ConsistencyHeatmap";
+import { TransitionBackground } from "./TransitionBackground";
+import { RoleCreationModal } from "./RoleCreationModal";
+
+interface HeatmapEntry {
+  date: string;
+  count: number;
+}
+
+interface Props {
+  onEnterChat?: (roleId: string) => void;
+}
+
+type ThemePalette = { primary: string };
 
 async function fetchHeatmapData(roleId: string): Promise<HeatmapEntry[]> {
   const res = await fetch(`/api/m6_4/heatmap?role_id=${roleId}`);
@@ -24,12 +23,9 @@ async function fetchHeatmapData(roleId: string): Promise<HeatmapEntry[]> {
   return res.json();
 }
 
-interface Props {
-  onEnterChat?: (roleId: string) => void;
-}
-
 export function RoleDashboard({ onEnterChat }: Props) {
-  const { currentRole, roleCache, switchRole, setRoleTransitioning } = useCoOSStore();
+  const { currentRole, roleCache, switchRole, setRoleTransitioning, seedRoleCache } = useCoOSStore();
+  const [creationOpen, setCreationOpen] = useState(false);
   const roles = Object.values(roleCache);
 
   const { data: heatmapData = [] } = useQuery<HeatmapEntry[]>({
@@ -51,10 +47,22 @@ export function RoleDashboard({ onEnterChat }: Props) {
   };
 
   const handleAddRole = () => {
-    console.log("[M3.2] Add new role triggered — placeholder");
+    setCreationOpen(true);
   };
 
-  if (!currentRole) {
+  const handleCreated = async () => {
+    try {
+        const res = await fetch("/api/m6_2/roles");
+        if (res.ok) {
+            const roles = await res.json();
+            seedRoleCache(roles);
+        }
+    } catch (err) {
+        console.error("Failed to refresh roles:", err);
+    }
+  };
+
+  if (!currentRole && roles.length > 0) {
     return (
       <div
         style={{
@@ -74,8 +82,8 @@ export function RoleDashboard({ onEnterChat }: Props) {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", position: "relative" }}>
       <TransitionBackground
-        roleId={currentRole.id}
-        palette={currentRole.themeColorPalette as unknown as ThemePalette}
+        roleId={currentRole?.id || "none"}
+        palette={(currentRole?.themeColorPalette as unknown as ThemePalette) || { primary: "#333" }}
         onTransitionEnd={handleTransitionEnd}
       />
 
@@ -86,22 +94,29 @@ export function RoleDashboard({ onEnterChat }: Props) {
             data-testid="dashboard-empty-state"
             style={{
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
               height: "100%",
               color: "var(--text-muted)",
-              fontSize: 14,
+              gap: '24px'
             }}
           >
-            在 AI 幫手中描述你的目標，Dashboard 將自動填入
+            <div style={{ fontSize: '4rem', opacity: 0.2 }}>🌿</div>
+            <div style={{ fontSize: 18, textAlign: 'center' }}>
+                歡迎來到 coOS。<br/>首先，建立一個你的生活角色吧。
+            </div>
+            <button className="settings-save-btn" onClick={handleAddRole} style={{ height: 'auto', padding: '12px 32px', fontSize: '1.1rem' }}>
+              + 建立第一個角色
+            </button>
           </div>
-        ) : (
+        ) : currentRole ? (
           <ContextHeaderAggregator
             roleId={currentRole.id}
             roleName={currentRole.name}
             heatmapData={heatmapData}
           />
-        )}
+        ) : null}
       </div>
 
       {/* Bottom 25%: Coverflow Rotary Wheel Carousel */}
@@ -119,12 +134,18 @@ export function RoleDashboard({ onEnterChat }: Props) {
             name: r.name,
             colorHex: r.themeColorPalette?.primary,
           }))}
-          activeRoleId={currentRole.id}
+          activeRoleId={currentRole?.id || ""}
           onRoleSnap={handleSnap}
           onCenterClick={handleCenterClick}
           onAddRole={handleAddRole}
         />
       </div>
+
+      <RoleCreationModal 
+        isOpen={creationOpen} 
+        onClose={() => setCreationOpen(false)} 
+        onCreated={handleCreated} 
+      />
     </div>
   );
 }

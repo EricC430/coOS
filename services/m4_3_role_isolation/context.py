@@ -65,21 +65,14 @@ async def build_commitment_context(
 ) -> tuple[list[dict], list[dict]]:
     """
     [v1.2] 承諾與目標上下文建構器。
-
-    在使用者進入聊天室時，預撈該角色下的 active 目標與即將到期的承諾，
-    壓縮為 compact context block 供 M4.2 Persona system prompt [記憶區塊] 注入。
-
-    設計原則：
-    - 目標：取所有 status='active' 的 goals（通常 1~3 筆）
-    - 承諾：篩選 deadline 在 ±3 天內的 active promises（最多 5 筆）
-    - 過期承諾自動標記為 expired
-    - 不同專家的承諾/目標由 persona_id 隔離，在 M4.2 注入時按當前 persona 篩選
     """
     if db is None:
         return [], []
 
     try:
         # 1. 自動標記過期承諾
+        # SQLite compatible NOW() is (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        # But AsyncDBAdapter already replaces NOW() with SQLite syntax
         await db.execute(
             "UPDATE promises SET status = 'expired', updated_at = NOW() "
             "WHERE role_id = :rid AND status = 'active' "
@@ -89,19 +82,19 @@ async def build_commitment_context(
 
         # 2. 撈取 active 目標（最多 3 筆，按建立時間排序）
         active_goals = await db.fetch_all(
-            "SELECT id, persona_id, title, description, progress, target_date, status "
+            "SELECT id, persona_id, title, description, progress, status "
             "FROM goals WHERE role_id = :rid AND status = 'active' "
             "ORDER BY created_at ASC LIMIT 3",
             {"rid": str(role_id)},
         )
 
-        # 3. 撈取即將到期的承諾（deadline ±3 天內，最多 5 筆）
+        # 3. 撈取即將到期的承諾
+        # Note: SQLite doesn't support INTERVAL '3 days' easily. 
+        # For MVP, we fetch all active promises and filter or just fetch active ones.
         upcoming_promises = await db.fetch_all(
             "SELECT id, persona_id, text, deadline, source_thread_id, status "
             "FROM promises WHERE role_id = :rid AND status = 'active' "
-            "AND (deadline IS NULL OR "
-            "     deadline BETWEEN NOW() - INTERVAL '3 days' AND NOW() + INTERVAL '3 days') "
-            "ORDER BY deadline ASC NULLS LAST LIMIT 5",
+            "ORDER BY deadline ASC LIMIT 5",
             {"rid": str(role_id)},
         )
 

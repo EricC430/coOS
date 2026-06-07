@@ -96,6 +96,9 @@ async def _do_extraction(
     db: Any,
     eguard: Any,
     sse: Any,
+    gemma: Any = None,
+    thread_id: str = "",
+    persona_id: str = "",
 ) -> ObserverResult:
     """執行所有萃取步驟。慢/失敗的子步驟不應拖垮整體（由上層 timeout 守護）。"""
     result = ObserverResult(role_id=role_id)
@@ -114,6 +117,27 @@ async def _do_extraction(
     # 4. 成就偵測 [RISK-12 預設 private]
     result.achievement = _detect_achievement(user_msg)
 
+    # 5. v1.2: 承諾萃取 (LLM)
+    if gemma and thread_id:
+        from .promise_extractor import extract_promises
+        result.promises_detected = await extract_promises(
+            user_msg, thread_id, role_id, persona_id, gemma, eguard, db, sse
+        )
+
+    # 6. v1.2: 目標確立偵測 (LLM)
+    if gemma and persona_id:
+        from .goal_detector import detect_goal_establishment
+        # Fetch existing goals for dedup
+        rows = await db.fetch_all("SELECT title FROM goals WHERE role_id = :rid", {"rid": role_id})
+        existing_goals = [dict(r) for r in rows]
+
+        # We need assistant_msg; for now we only have user_msg in this call.
+        # Goal detector might need the conversation history or just user intent.
+        # In this MVP, we pass empty string for assistant_msg or skip if not available.
+        result.goal_established = await detect_goal_establishment(
+            user_msg, "", thread_id, role_id, persona_id, existing_goals, gemma, eguard, db, sse
+        )
+
     return result
 
 
@@ -123,25 +147,30 @@ async def run_observer(
     db: Any,
     eguard: Any,
     sse: Any,
+    gemma: Any = None,
+    thread_id: str = "",
+    persona_id: str = "",
     timeout: float = OBSERVER_TIMEOUT_SECS,
 ) -> ObserverResult:
     """
     一次性背景萃取入口。
-
-    [決策] 全程 timeout 守護；超時 -> 靜默失敗，回傳 timed_out=True。
     """
     start = time.monotonic()
     try:
         result = await asyncio.wait_for(
-            _do_extraction(user_msg, role_id=role_id, db=db, eguard=eguard, sse=sse),
+            _do_extraction(
+                user_msg, role_id, db, eguard, sse, 
+                gemma=gemma, thread_id=thread_id, persona_id=persona_id
+            ),
             timeout=timeout,
         )
-    except TimeoutError:
-        logger.warning("[M4.6] observer_timeout role=%s", role_id)
+    except Exception as e:
+        logger.warning("[M4.6] observer_failed or timeout role=%s: %s", role_id, e)
         return ObserverResult(role_id=role_id, timed_out=True,
                               elapsed_seconds=time.monotonic() - start)
     result.elapsed_seconds = time.monotonic() - start
     return result
+
 
 
 async def observer_extract(
@@ -152,10 +181,19 @@ async def observer_extract(
     """
     [R10 §代理工作流] 非同步萃取的 timeout 包裝，不阻塞 Persona。
     [決策] 超時靜默失敗 -> timed_out=True。
-
-    `_impl` 可注入以利測試（預設為 no-op 萃取，實際萃取由 run_observer 驅動）。
     """
-    impl = _impl or _noop_impl
+    from services.main import _db_adapter, _eguard_filter
+    
+    async def real_impl(t: dict) -> ObserverResult:
+        return await _do_extraction(
+            user_msg=t.get("user_message", ""),
+            role_id=t.get("role_id", ""),
+            db=_db_adapter,
+            eguard=_eguard_filter,
+            sse=None # SSE will be implemented in Phase 3
+        )
+
+    impl = _impl or real_impl
     try:
         return await asyncio.wait_for(impl(task), timeout=timeout)
     except TimeoutError:

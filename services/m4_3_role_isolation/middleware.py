@@ -19,6 +19,10 @@ EXEMPT_PATHS = {
     "/api/auth/login",
     "/api/m6_2/roles",
     "/api/m4_6/events",
+    "/api/m6_5/user_collections",
+    "/api/m6_5/items_dictionary",
+    "/api/m4_4/time_spent",
+    "/api/m1_1/telemetry_estimate",
 }
 
 
@@ -37,7 +41,8 @@ class RoleIsolationMiddleware(BaseHTTPMiddleware):
         self._owned_roles = owned_roles
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path in EXEMPT_PATHS:
+        path = request.url.path
+        if path in EXEMPT_PATHS or any(path.startswith(p + "/") for p in EXEMPT_PATHS):
             return await call_next(request)
 
         # 只安全攔截 /api/m4_* 與 /api/m6_* 路徑
@@ -99,8 +104,19 @@ class RoleIsolationMiddleware(BaseHTTPMiddleware):
 
 
 async def _validate_role_ownership(user_id: str, role_id: str) -> bool:
-    """Production 用：從 DB 驗證 role 屬於 user（MVP 階段直接回 True，等 M3.1 auth 接入）。"""
-    return True
+    """Production 用：從 DB 驗證 role 屬於 user。"""
+    from services.main import _db_adapter
+    if not _db_adapter:
+        return True # Fallback for early startup
+        
+    try:
+        # role_id can be UUID string or slug
+        query = "SELECT id FROM roles WHERE user_id = :uid AND (id = :rid OR slug = :rid)"
+        row = await _db_adapter.fetch_one(query, {"uid": user_id, "rid": role_id})
+        return row is not None
+    except Exception as e:
+        logger.error("[M4.3] Role ownership validation error: %s", e)
+        return False
 
 
 def create_test_app(owned_roles: set[str] | None = None) -> FastAPI:

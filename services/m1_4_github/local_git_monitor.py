@@ -26,16 +26,25 @@ SCAN_INTERVAL_S = 60
 class LocalGitMonitor:
     """[R06 §2.1] Periodically scan local Git repos for new commits."""
 
-    def __init__(self, watched_paths: list[str], emit_fn: Callable[[dict], Awaitable[None]]):
+    def __init__(
+        self, 
+        watched_paths: list[dict], 
+        emit_fn: Callable[[dict], Awaitable[None]],
+        update_hash_fn: Callable[[str, str], Awaitable[None]]
+    ):
+        # watched_paths: list of {"path": str, "last_hash": str | None}
         self._watched_paths = watched_paths
         self._emit_fn = emit_fn
+        self._update_hash_fn = update_hash_fn
         # repo_path -> last seen HEAD hash
-        self._last_seen: dict[str, str] = {}
+        self._last_seen: dict[str, str | None] = {
+            row["path"]: row["last_hash"] for row in watched_paths
+        }
 
     async def scan_loop(self) -> None:
         """Background loop — call as asyncio task."""
         while True:
-            for path in self._watched_paths:
+            for path in self._last_seen.keys():
                 await self._check_repo(path)
             await asyncio.sleep(SCAN_INTERVAL_S)
 
@@ -47,12 +56,21 @@ class LocalGitMonitor:
                 return
 
             last_seen = self._last_seen.get(repo_path)
+            
+            # Baseline establishment: if never seen, just store current HEAD and skip
+            if last_seen is None:
+                self._last_seen[repo_path] = latest_hash
+                await self._update_hash_fn(repo_path, latest_hash)
+                logger.info("[M1.4.3] Established baseline for %s at %s", repo_path, latest_hash[:12])
+                return
+
             if last_seen == latest_hash:
                 return  # no new commits
 
             commits = self._get_new_commits(repo_path, since_hash=last_seen)
             if not commits:
                 self._last_seen[repo_path] = latest_hash
+                await self._update_hash_fn(repo_path, latest_hash)
                 return
 
             stats = self._get_diff_stats(repo_path, since_hash=last_seen)
@@ -75,6 +93,7 @@ class LocalGitMonitor:
             }
             await self._emit_fn(event)
             self._last_seen[repo_path] = latest_hash
+            await self._update_hash_fn(repo_path, latest_hash)
 
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             # Repo gone or git not installed — silently skip

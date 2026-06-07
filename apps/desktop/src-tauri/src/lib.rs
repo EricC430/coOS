@@ -6,13 +6,15 @@ mod socket_server;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|_app| {
             // Start the local socket server for telemetry
-            tokio::spawn(socket_server::start_socket_server());
-            
+            tauri::async_runtime::spawn(socket_server::start_socket_server());
+
             // FastAPI sidecar は Phase 0 では手動起動。Phase 1 以降で自動化。
             Ok(())
         })
+
         .invoke_handler(tauri::generate_handler![
             commands::get_system_health,
         ])

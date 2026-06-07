@@ -24,13 +24,9 @@ class ObserverTask:
     visibility: str = "private"  # [RISK-12] 預設 private
 
 
-async def _run_observer(task: ObserverTask) -> None:
+async def _run_observer(task: ObserverTask, persona_id: str = "") -> None:
     """
     [M4.6] 實際背景萃取由 M4.6 Observer Agent 執行。
-
-    [RISK-12] M4.6 內部對萃取結果做 Eguard 過濾，自動成就預設 visibility='private'。
-    本派發層維持「並行、不阻塞、靜默失敗」契約：任何萃取/相依不可用都不得拋出，
-    以免汙染主對話流（SPEC M4.1 §8 反模式 / M4.6 §7.7）。
     """
     logger.debug("[M4.1.3] Observer task dispatched: thread=%s targets=%s",
                  task.thread_id, task.extract_targets)
@@ -40,15 +36,18 @@ async def _run_observer(task: ObserverTask) -> None:
         from .observer_deps import resolve_observer_deps
         deps = resolve_observer_deps(task.role_id)
         if deps is None:
-            return  # 相依未就緒（如測試環境無 DB）-> 靜默跳過
+            return 
         await run_observer(
             user_msg=task.user_msg,
             role_id=task.role_id,
             db=deps.db,
             eguard=deps.eguard,
             sse=deps.sse,
+            gemma=deps.gemma,
+            thread_id=task.thread_id,
+            persona_id=persona_id,
         )
-    except Exception as e:  # 任何失敗都不得阻塞主對話
+    except Exception as e:
         logger.warning("[M4.1.3] observer run failed silently: %s", e)
 
 
@@ -56,11 +55,14 @@ async def dispatch_observer(state: dict) -> dict:
     """
     [R10 §代理工作流] Observer 與 Persona 並行，不阻塞對話。
     """
+    decision = state.get("route_decision") or {}
+    persona_id = decision.get("persona_id", "")
+    
     task = ObserverTask(
         thread_id=state.get("thread_id", ""),
         user_msg=state.get("user_message", ""),
         extract_targets=["project", "intent", "time_span"],
         role_id=state.get("role_id", ""),
     )
-    asyncio.create_task(_run_observer(task))
+    asyncio.create_task(_run_observer(task, persona_id=persona_id))
     return state

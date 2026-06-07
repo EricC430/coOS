@@ -69,29 +69,40 @@ def get_cloud_llm_client(model_name: str):
 
 
 class _CloudLLMClient:
-    """Thin wrapper around google.genai for routing LLM calls."""
+    """Thin wrapper around Google AI Studio API for routing LLM calls."""
 
     def __init__(self, model_name: str):
         self.model_name = model_name
 
     async def complete(self, prompt: str) -> str:
         import os
-        try:
-            from google import genai  # type: ignore
-        except ImportError:
-            raise ImportError("google.genai not available, use langchain fallback")
 
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        from config import get_settings
+        settings = get_settings()
+        api_key = settings.gemini_api_key or os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             raise ServiceUnavailableError("GEMINI_API_KEY not set")
 
-        client = genai.Client(api_key=api_key)
-        resp = await asyncio.to_thread(
-            client.models.generate_content,
-            model=self.model_name,
-            contents=prompt,
-        )
-        return resp.text.strip()
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={api_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 100}
+        }
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 429:
+                raise RateLimitError("429 Rate Limit")
+            if resp.status_code >= 500:
+                raise ServiceUnavailableError(f"Cloud API error: {resp.status_code}")
+            resp.raise_for_status()
+            
+            data = resp.json()
+            try:
+                return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            except (KeyError, IndexError):
+                logger.error("[M4.1.1] Unexpected API response format: %s", data)
+                raise ServiceUnavailableError("Invalid API response")
 
 
 async def call_cloud_llm_with_fallback(prompt: str, task_difficulty: str) -> str:
