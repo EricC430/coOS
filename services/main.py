@@ -291,7 +291,8 @@ async def lifespan(app: FastAPI):
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS git_watched_paths (
                 repo_path TEXT PRIMARY KEY,
-                added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                github_repo TEXT,  -- New: e.g. 'owner/repo'
+                added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             )
         """)
         cursor.execute("""
@@ -415,8 +416,37 @@ async def lifespan(app: FastAPI):
 
     miner_task = asyncio.create_task(periodic_rule_miner())
 
+    # [M1.4.2] GitHub Webhook Tunnel Manager
+    from m1_4_github.webhooks import router as m1_4_webhook_router
+    import subprocess
+    tunnels = []
+
+    async def start_tunnels():
+        settings = get_settings()
+        rows = await _db_adapter.fetch_all("SELECT github_repo FROM git_watched_paths WHERE github_repo IS NOT NULL")
+        for row in rows:
+            repo = row["github_repo"]
+            url = f"http://127.0.0.1:{settings.fastapi_port}/api/v1/webhooks/github"
+            logger.info("[M1.4.2] Starting GitHub webhook tunnel for %s", repo)
+            try:
+                # Spawn 'gh webhook forward' as a background process
+                proc = subprocess.Popen(
+                    ["gh", "webhook", "forward", f"--repo={repo}", f"--url={url}"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                tunnels.append(proc)
+            except Exception as e:
+                logger.warning("[M1.4.2] Failed to start tunnel for %s: %s", repo, e)
+
+    tunnel_task = asyncio.create_task(start_tunnels())
+
     logger.info("[M0.3] coOS sidecar 啟動完成 (local_only=%s)", not settings.gemini_api_key)
     yield
+    # Cleanup
+    tunnel_task.cancel()
+    for proc in tunnels:
+        proc.terminate()
     git_task.cancel()
     miner_task.cancel()
     try:
@@ -1533,6 +1563,7 @@ async def m1_4_bind_source(body: dict[str, Any]) -> dict[str, Any]:
     source_type = body.get("source_type")
     if source_type == "local_git":
         repo_path = body.get("repo_path")
+        github_repo = body.get("github_repo")  # Optional: e.g. "owner/repo"
         if not repo_path:
             raise HTTPException(status_code=422, detail="repo_path is required for local_git")
         
@@ -1542,13 +1573,11 @@ async def m1_4_bind_source(body: dict[str, Any]) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail="Not a valid Git repository (missing .git)")
             
         await _db_adapter.execute(
-            "INSERT INTO git_watched_paths (repo_path) VALUES (:path) "
-            "ON CONFLICT(repo_path) DO NOTHING",
-            {"path": str(repo_path)}
+            "INSERT INTO git_watched_paths (repo_path, github_repo) VALUES (:path, :repo) "
+            "ON CONFLICT(repo_path) DO UPDATE SET github_repo = :repo",
+            {"path": str(repo_path), "repo": github_repo}
         )
-        # Note: LocalGitMonitor won't pick this up until restart in this MVP, 
-        # but the data is saved.
-        return {"status": "connected", "source_type": "local_git", "repo_path": repo_path}
+        return {"status": "connected", "source_type": "local_git", "repo_path": repo_path, "github_repo": github_repo}
         
     return {"status": "connected", "source_type": source_type}
 
