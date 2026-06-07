@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections import defaultdict
-from typing import Any
 import sqlite3
+from collections import defaultdict
 
 from .fallback import RuleBasedExtractor
 

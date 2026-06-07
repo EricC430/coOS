@@ -12,8 +12,8 @@ coOS FastAPI Sidecar — 主入口
 """
 import asyncio
 import logging
-import time
 import sqlite3
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 from uuid import UUID
@@ -21,13 +21,14 @@ from uuid import UUID
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from config import get_settings
 from m0_4_logging.schema import LogEvent
 from m1_2_breakpoint.breakpoint_engine import BreakpointEngine
+from m1_4_github.local_git_monitor import LocalGitMonitor
 from m1_4_github.oauth import router as m1_4_oauth_router
 from m1_4_github.webhooks import router as m1_4_webhook_router
-from m1_4_github.local_git_monitor import LocalGitMonitor
 from m2_1_event_debouncer.debouncer import EventDebouncer
 from m2_1_event_debouncer.schema import EventBatch, RawTelemetryEvent
 from m2_2_gemma.pipeline import GemmaInferencePipeline
@@ -36,13 +37,13 @@ from m2_3_eguard.drift import DriftShield
 from m2_3_eguard.exceptions import InjectionDetectedException
 from m2_3_eguard.filter import EguardFilter
 from m2_3_eguard.schema import RawTextPayload, SanitizedPayload
+from m4_1_router.graph import get_router_graph
+from m4_3_role_isolation.context import build_role_context
 
 # M4 / M6 integration imports
 from m4_3_role_isolation.middleware import RoleIsolationMiddleware
-from m4_3_role_isolation.context import build_role_context
-from m4_1_router.graph import get_router_graph
-from m6_2_postgresql.engine import get_cloud_engine, is_cloud_available
 from m4_5_xp_settlement.engine import settle
+from m6_2_postgresql.engine import get_cloud_engine, is_cloud_available
 from m6_5_acid_gatekeeper.gatekeeper import XPGatekeeper
 
 logger = logging.getLogger(__name__)
@@ -169,7 +170,7 @@ class AsyncDBAdapter:
                     "id": "robert_001",
                     "name": "學長Robert",
                     "role_id": role_id,
-                    "personality_prompt": "你是一個資深的電腦科學系學長，熱心解答問題，用字精準且帶有程式設計師的幽默。",
+                    "personality_prompt": "你是一個資深的電腦科學系學長，熱心解答問題，用字精準且帶有程式設計師的幽默。",  # noqa: E501
                     "backstory": "在 CSIE 待了四年的傳奇人物",
                     "tone_default": "authoritative",
                     "trust_level": 0.85,
@@ -311,8 +312,9 @@ async def lifespan(app: FastAPI):
         logger.info("[lifespan] Cloud PG database available.")
         try:
             with pg_engine.connect() as conn:
-                from sqlalchemy import text
                 import uuid
+
+                from sqlalchemy import text
                 
                 # 1. Seed default user
                 default_user_id = "00000000-0000-0000-0000-000000000000"
@@ -327,13 +329,15 @@ async def lifespan(app: FastAPI):
                     {"id_str": "uni_001", "name": "UNI", "color": "#d4915e", "icon": "activity", "sort": 0},
                     {"id_str": "csie_001", "name": "CSIE", "color": "#c47830", "icon": "code", "sort": 1},
                     {"id_str": "family_001", "name": "FAMILY", "color": "#e8a556", "icon": "heart", "sort": 2},
-                    {"id_str": "counseling_001", "name": "諮商", "color": "#8fbc8f", "icon": "message-circle", "sort": 3},
+                    {"id_str": "counseling_001", "name": "諮商", "color": "#8fbc8f", "icon": "message-circle", "sort": 3},  # noqa: E501
                     {"id_str": "scholar_001", "name": "學者", "color": "#b08d6e", "icon": "book", "sort": 4},
                 ]
                 for r in default_roles:
                     r_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, r["id_str"])
                     conn.execute(text("""
-                        INSERT INTO roles (id, user_id, slug, display_name, color_hex, icon_name, sort_order, is_active)
+                        INSERT INTO roles (
+                            id, user_id, slug, display_name, color_hex, icon_name, sort_order, is_active
+                        )
                         VALUES (:id, :uid, :slug, :name, :color, :icon, :sort, TRUE)
                         ON CONFLICT (id) DO NOTHING
                     """), {
@@ -404,7 +408,7 @@ async def lifespan(app: FastAPI):
                     miner = FallbackRuleMiner(_gemma_pipeline.fallback)
                     new_rules = await miner.mine_rules_from_db(_sqlite_conn, min_occurrences=3, min_correlation=0.8)
                     if new_rules:
-                        logger.info("[M2.2] Periodic rule miner automatically learned %d new fallback rules", len(new_rules))
+                        logger.info("[M2.2] Periodic rule miner automatically learned %d new fallback rules", len(new_rules))  # noqa: E501
             except Exception as e:
                 logger.warning("[M2.2] Periodic rule miner encountered error: %s", e)
             await asyncio.sleep(3600.0)
@@ -517,7 +521,7 @@ async def m1_1_event(event: LogEvent) -> dict[str, Any]:
                                     "payload": json.dumps(payload, ensure_ascii=False)
                                 }
                             )
-                            logger.info("[M1.1] Async Gemma compression completed & updated database for event %s", evt_id)
+                            logger.info("[M1.1] Async Gemma compression completed & updated database for event %s", evt_id)  # noqa: E501
                 except Exception as ex:
                     logger.warning("[M1.1] Async Gemma background execution failed: %s", ex)
 
@@ -746,7 +750,7 @@ async def test_stream():
 # ---------------------------------------------------------------------------
 
 # --- Settings API ---
-from pydantic import BaseModel
+
 
 class SettingsUpdate(BaseModel):
     content_capture: str
@@ -880,7 +884,7 @@ async def update_settings_endpoint(role_id: str, payload: SettingsUpdate, reques
         {"uid": str(user_id)}
     )
     
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
     now_str = datetime.now(tz=UTC).strftime('%Y-%m-%dT%H:%M:%fZ')
     
     consent_mappings = [
@@ -1243,7 +1247,8 @@ async def m4_5_grant_xp(body: dict[str, Any]) -> dict[str, Any]:
         if _db_adapter and _db_adapter.pg_engine:
             try:
                 await _db_adapter.execute(
-                    "UPDATE users SET current_xp = :cxp, lifetime_xp = :lxp, updated_at = CURRENT_TIMESTAMP WHERE id = :uid",
+                    "UPDATE users SET current_xp = :cxp, lifetime_xp = :lxp, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = :uid",
                     {
                         "cxp": user_obj.current_xp,
                         "lxp": user_obj.lifetime_xp,
@@ -1252,17 +1257,20 @@ async def m4_5_grant_xp(body: dict[str, Any]) -> dict[str, Any]:
                 )
                 if is_segment:
                     await _db_adapter.execute(
-                        "UPDATE daily_reflection_segments SET xp_settled = TRUE, xp_settled_at = CURRENT_TIMESTAMP, earned_xp = :xp WHERE id = :rid",
+                        "UPDATE daily_reflection_segments SET xp_settled = TRUE, "
+                        "xp_settled_at = CURRENT_TIMESTAMP, earned_xp = :xp WHERE id = :rid",
                         {"xp": result.amount, "rid": str(refl_uuid)}
                     )
                 else:
                     await _db_adapter.execute(
-                        "UPDATE daily_reflections SET xp_settled = TRUE, xp_settled_at = CURRENT_TIMESTAMP, earned_xp = :xp WHERE id = :rid",
+                        "UPDATE daily_reflections SET xp_settled = TRUE, "
+                        "xp_settled_at = CURRENT_TIMESTAMP, earned_xp = :xp WHERE id = :rid",
                         {"xp": result.amount, "rid": str(refl_uuid)}
                     )
                 for entry in store.ledger:
                     await _db_adapter.execute(
-                        "INSERT INTO xp_ledger (id, user_id, amount, xp_type, reason, source_module, reflection_id, created_at) "
+                        "INSERT INTO xp_ledger (id, user_id, amount, xp_type, reason, "
+                        "source_module, reflection_id, created_at) "
                         "VALUES (:id, :uid, :amt, :xtype, :reason, :src, :rid, CURRENT_TIMESTAMP)",
                         {
                             "id": str(uuid.uuid4()),

@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
-from collections.abc import Callable, Awaitable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 logger = logging.getLogger(__name__)

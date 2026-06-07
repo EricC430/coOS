@@ -13,6 +13,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 
 from config import get_settings
+
 from .schema import CommitInfo, GitActivityPayload
 
 logger = logging.getLogger(__name__)

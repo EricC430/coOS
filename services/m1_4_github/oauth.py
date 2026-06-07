@@ -9,11 +9,13 @@ MVP: encryption via Fernet (symmetric, 128-bit AES-CBC with HMAC).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import sqlite3
+
 import httpx
-import asyncio
 from fastapi import APIRouter, HTTPException, Query, Request
+
 from config import get_settings
 
 logger = logging.getLogger(__name__)

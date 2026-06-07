@@ -10,10 +10,10 @@ Risk: RISK-03 (焦慮鏡像禁止，強制 State Inversion)
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class ImplicitStateLabel(str, Enum):
+class ImplicitStateLabel(StrEnum):
     """隱性狀態標籤（M4.8 推論輸出）。"""
     ANXIETY = "anxiety"
     AVOIDANCE = "avoidance"

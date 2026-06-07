@@ -13,6 +13,7 @@ import logging
 import re
 import threading
 from pathlib import Path
+
 from config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ class RuleBasedExtractor:
                     # Ensure values are correct types
                     self._frustration_signals = {k: float(v) for k, v in self._frustration_signals.items()}
             except Exception as e:
-                logger.warning("Failed to load fallback rules from %s, using in-memory defaults. Error: %s", self._rules_path, e)
+                logger.warning("Failed to load fallback rules from %s, using in-memory defaults. Error: %s", self._rules_path, e)  # noqa: E501
 
     def save_rules(self) -> None:
         """Write the current in-memory rules back to data/fallback_rules.json."""

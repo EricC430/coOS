@@ -8,12 +8,12 @@ Note: M4.9 將提供完整 ARPM；此模組為 MVP 版本，僅做切換合法�
 """
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from .echo_mode import LEGAL_TRANSITIONS, ToneState
 
 
-class ValidationResult(str, Enum):
+class ValidationResult(StrEnum):
     LEGAL = "legal"
     DRIFT_DETECTED = "drift_detected"
 

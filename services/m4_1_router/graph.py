@@ -12,10 +12,11 @@ from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from m4_2_persona.graph import get_persona_graph
+
 from .drift import drift_validate
 from .observer_dispatch import dispatch_observer
 from .routing_engine import route_with_confidence
-from m4_2_persona.graph import get_persona_graph
 
 logger = logging.getLogger(__name__)
 

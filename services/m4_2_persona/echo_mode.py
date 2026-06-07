@@ -8,10 +8,10 @@ Risk: RISK-02 (Echo Mode 切換不觸發 ARPM 還原)
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class ToneState(str, Enum):
+class ToneState(StrEnum):
     """[R03 §3.2] Persona 音調狀態，對應 Agency 值域。"""
     AUTHORITATIVE = "authoritative"  # Agency 0.80-0.90
     PROBING = "probing"              # Agency 0.55-0.70
