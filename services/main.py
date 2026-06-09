@@ -53,6 +53,19 @@ logger = logging.getLogger(__name__)
 _start_time = time.time()
 
 
+def get_safe_user_id(request: Request) -> UUID:
+    """Helper to safely get user_id from request state or settings."""
+    uid_str = getattr(request.state, "user_id", None) or settings.current_user_id
+    try:
+        if isinstance(uid_str, UUID):
+            return uid_str
+        return UUID(str(uid_str))
+    except ValueError:
+        # Fallback to a zero-UUID if the configured ID is malformed
+        logger.warning("[Auth] Malformed UUID detected: %s. Falling back to zero-UUID.", uid_str)
+        return UUID("00000000-0000-0000-0000-000000000000")
+
+
 class AsyncDBAdapter:
     def __init__(self, sqlite_conn, pg_engine=None):
         self.sqlite_conn = sqlite_conn
@@ -863,7 +876,7 @@ async def m1_1_consent(request: Request) -> dict[str, Any]:
     Reads user_consents table (content_capture_all / content_capture_selected).
     [RISK-15] Never exposes content_raw or content_summary — consent metadata only.
     """
-    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    user_id = get_safe_user_id(request)
     consents_rows = await _db_adapter.fetch_all(
         "SELECT consent_type, granted FROM user_consents WHERE user_id = :uid",
         {"uid": str(user_id)},
@@ -1127,7 +1140,7 @@ def update_env_file(updates: dict[str, str]):
 
 @app.get("/api/settings")
 async def get_settings_endpoint(role_id: str, request: Request):
-    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    user_id = get_safe_user_id(request)
     
     import uuid
     try:
@@ -1199,7 +1212,7 @@ async def get_settings_endpoint(role_id: str, request: Request):
 
 @app.post("/api/settings")
 async def update_settings_endpoint(role_id: str, payload: SettingsUpdate, request: Request):
-    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    user_id = get_safe_user_id(request)
     
     import uuid
     try:
@@ -1293,7 +1306,7 @@ async def update_settings_endpoint(role_id: str, payload: SettingsUpdate, reques
 @app.get("/api/m6_2/roles")
 async def m6_2_list_roles(request: Request) -> list[dict[str, Any]]:
     """[M6.2] List all roles for the current user."""
-    user_id = getattr(request.state, "user_id", None) or settings.current_user_id
+    user_id = str(get_safe_user_id(request))
     rows = await _db_adapter.fetch_all(
         "SELECT * FROM roles WHERE user_id = :uid AND is_active = 1 ORDER BY sort_order",
         {"uid": str(user_id)}
@@ -1312,7 +1325,7 @@ async def m6_2_list_roles(request: Request) -> list[dict[str, Any]]:
 @app.post("/api/m6_2/roles")
 async def m6_2_create_role(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     """[M6.2] Create a new role."""
-    user_id = getattr(request.state, "user_id", None) or settings.current_user_id
+    user_id = str(get_safe_user_id(request))
     name = body.get("name")
     if not name:
         raise HTTPException(status_code=422, detail="name is required")
@@ -1358,7 +1371,7 @@ async def m6_2_list_experts(role_id: str) -> list[dict[str, Any]]:
 @app.delete("/api/m6_2/roles/{role_id}")
 async def m6_2_delete_role(role_id: str, request: Request) -> dict[str, Any]:
     """[M6.2] Soft-delete a role."""
-    user_id = getattr(request.state, "user_id", None) or settings.current_user_id
+    user_id = str(get_safe_user_id(request))
     await _db_adapter.execute(
         "UPDATE roles SET is_active = 0 WHERE id = :rid AND user_id = :uid",
         {"rid": role_id, "uid": str(user_id)}
@@ -1371,7 +1384,7 @@ async def m6_2_delete_role(role_id: str, request: Request) -> dict[str, Any]:
 @app.get("/api/settings/whitelist")
 async def get_app_whitelist(request: Request) -> list[str]:
     """[M1.1] Fetch the current monitored apps whitelist."""
-    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    user_id = get_safe_user_id(request)
     row = await _db_adapter.fetch_one(
         "SELECT payload FROM user_consents WHERE user_id = :uid AND consent_type = 'content_capture_selected'",
         {"uid": str(user_id)}
@@ -1384,7 +1397,7 @@ async def get_app_whitelist(request: Request) -> list[str]:
 @app.post("/api/settings/whitelist")
 async def update_app_whitelist(body: list[str], request: Request) -> dict[str, Any]:
     """[M1.1] Update the monitored apps whitelist."""
-    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    user_id = get_safe_user_id(request)
     
     # Update or insert the consent record
     await _db_adapter.execute(
@@ -1405,7 +1418,7 @@ async def update_app_whitelist(body: list[str], request: Request) -> dict[str, A
 @app.get("/api/m6_3/role_context")
 async def m6_3_role_context(role_id: str, request: Request) -> dict[str, Any]:
     """Context Header 四槽位資料 (Project / Role / Promises / Goal)"""
-    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    user_id = get_safe_user_id(request)
     
     import uuid
     if isinstance(role_id, str):
@@ -1592,7 +1605,7 @@ async def m4_5_grant_xp(request: Request, body: dict[str, Any]) -> dict[str, Any
     if not refl_id:
         raise HTTPException(status_code=422, detail="reflection_id is required")
     
-    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    user_id = get_safe_user_id(request)
     
     store = LiveXPStore(_db_adapter)
     gatekeeper = XPGatekeeper(store)
@@ -1783,7 +1796,7 @@ async def m6_5_grant_badge(request: Request, body: dict[str, Any]) -> dict[str, 
     """[M6.5] Manual grant endpoint for awarding XP via XPGatekeeper."""
     refl_id = body.get("reflection_id")
     amount = body.get("amount", 20)
-    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    user_id = get_safe_user_id(request)
     
     store = LiveXPStore(_db_adapter)
     gatekeeper = XPGatekeeper(store)
@@ -1820,7 +1833,7 @@ async def m6_5_grant_badge(request: Request, body: dict[str, Any]) -> dict[str, 
 async def m6_5_draw_card(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     """[M6.5] Gacha mechanic: spend XP for a random badge."""
     cost_xp = body.get("cost_xp", 100)
-    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    user_id = get_safe_user_id(request)
     
     store = LiveXPStore(_db_adapter)
     gatekeeper = XPGatekeeper(store)
@@ -1851,7 +1864,7 @@ async def m6_5_draw_card(request: Request, body: dict[str, Any]) -> dict[str, An
 @app.get("/api/m6_5/user_collections")
 async def m6_5_user_collections(request: Request) -> list[dict[str, Any]]:
     """[M6.5] Fetch real user collections from SQLite."""
-    user_id = getattr(request.state, "user_id", None) or settings.current_user_id
+    user_id = str(get_safe_user_id(request))
     query = """
         SELECT i.*, u.acquired_at 
         FROM user_collections u 
@@ -1889,7 +1902,7 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     sanitized = _eguard_filter.mask_pii(user_msg, role_id=str(role_id))
     user_msg = sanitized.sanitized_text
 
-    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    user_id = get_safe_user_id(request)
     
     import uuid
     if isinstance(role_id, str):
@@ -2080,7 +2093,7 @@ async def github_disconnect() -> dict[str, Any]:
 @app.get("/api/auth/me")
 async def get_current_user(request: Request) -> dict[str, Any]:
     """Return the current active identity (Dev Authenticator)."""
-    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    user_id = get_safe_user_id(request)
     row = await _db_adapter.fetch_one("SELECT * FROM users WHERE id = :uid", {"uid": str(user_id)})
     if not row:
         return {"id": str(user_id), "status": "anonymous_local"}
@@ -2093,7 +2106,7 @@ async def link_google_account(body: dict[str, Any], request: Request) -> dict[st
     Future: This will update the users.email or a social_links table.
     """
     google_token = body.get("token")  # noqa: F841
-    user_id = getattr(request.state, "user_id", None) or UUID(settings.current_user_id)
+    user_id = get_safe_user_id(request)
     
     # Logic: 
     # 1. Verify Google Token
