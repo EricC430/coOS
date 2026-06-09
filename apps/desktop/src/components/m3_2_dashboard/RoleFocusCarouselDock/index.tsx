@@ -142,16 +142,18 @@ export function RoleFocusCarouselDock({
 
   const handleItemClick = (index: number) => {
     const item = allItems[index];
-    if (item.id === "__add__") {
-      onAddRole?.();
+
+    if (index !== activeIndex) {
+      // Side item — always just snap to center; never open chat or add dialog
+      navigateTo(index);
       return;
     }
-    if (index === activeIndex) {
-      // Click center → enter chat
-      onCenterClick(item.id);
+
+    // Center item clicked
+    if (item.id === "__add__") {
+      onAddRole?.();
     } else {
-      // Click side → scroll to center
-      navigateTo(index);
+      onCenterClick(item.id);
     }
   };
 

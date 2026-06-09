@@ -211,70 +211,7 @@ class AsyncDBAdapter:
         await asyncio.to_thread(_sync)
 
     def _get_mock_fallback(self, query: str, params: dict) -> list[dict]:
-        query_lower = query.lower()
-        role_id = params.get("rid") or "csie_001"
-        if "ai_experts" in query_lower:
-            return [
-                {
-                    "id": "robert_001",
-                    "name": "學長Robert",
-                    "role_id": role_id,
-                    "personality_prompt": "你是一個資深的電腦科學系學長，熱心解答問題，用字精準且帶有程式設計師的幽默。",  # noqa: E501
-                    "backstory": "在 CSIE 待了四年的傳奇人物",
-                    "tone_default": "authoritative",
-                    "trust_level": 0.85,
-                    "avatar_url": None,
-                    "is_active": True,
-                }
-            ]
-        elif "role_projects" in query_lower:
-            return [
-                {
-                    "id": "project_demo_1",
-                    "role_id": role_id,
-                    "name": "期末考準備",
-                    "description": "複習微積分與演算法",
-                    "status": "active",
-                }
-            ]
-        elif "role_settings" in query_lower:
-            return [
-                {
-                    "id": "settings_demo_1",
-                    "role_id": role_id,
-                    "theme": "dark",
-                    "notification_enabled": True,
-                    "daily_report_time": "22:00",
-                    "focus_hours_start": "09:00",
-                    "focus_hours_end": "18:00",
-                }
-            ]
-        elif "goals" in query_lower:
-            return [
-                {
-                    "id": "goal_demo_1",
-                    "persona_id": "robert_001",
-                    "title": "通過資料結構期末考",
-                    "description": "刷完 LeetCode 100 題",
-                    "progress": 0.45,
-                    "status": "active",
-                }
-            ]
-        elif "promises" in query_lower:
-            return [
-                {
-                    "id": "promise_demo_1",
-                    "persona_id": "robert_001",
-                    "text": "每天寫 1 小時程式",
-                    "status": "active",
-                },
-                {
-                    "id": "promise_demo_2",
-                    "persona_id": "robert_001",
-                    "text": "本週完成微積分作業",
-                    "status": "active",
-                }
-            ]
+        """[M0.4] Fallback method. Returning empty list instead of mocks in Phase 5+."""
         return []
 
 
@@ -399,13 +336,33 @@ async def lifespan(app: FastAPI):
             )
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id          TEXT PRIMARY KEY,
-                username    TEXT UNIQUE NOT NULL,
-                current_xp  INTEGER DEFAULT 0,
-                lifetime_xp INTEGER DEFAULT 0,
-                created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                id              TEXT PRIMARY KEY,
+                username        TEXT UNIQUE,
+                display_name    TEXT,
+                email           TEXT,
+                google_id       TEXT,
+                google_email    TEXT,
+                current_xp      INTEGER DEFAULT 0,
+                lifetime_xp     INTEGER DEFAULT 0,
+                level           INTEGER DEFAULT 1,
+                streak_days     INTEGER DEFAULT 0,
+                created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             )
         """)
+        # Migration: add google_id and google_email and display_name
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN display_name TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN google_id TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN google_email TEXT")
+        except sqlite3.OperationalError:
+            pass
+        
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS roles (
                 id              TEXT PRIMARY KEY,
@@ -414,12 +371,18 @@ async def lifespan(app: FastAPI):
                 display_name    TEXT NOT NULL,
                 color_hex       TEXT,
                 icon_name       TEXT,
+                avatar_url      TEXT,
                 sort_order      INTEGER DEFAULT 0,
                 is_active       INTEGER DEFAULT 1,
                 created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                 UNIQUE(user_id, slug)
             )
         """)
+        # Migration: add avatar_url if this table already exists without it
+        try:
+            cursor.execute("ALTER TABLE roles ADD COLUMN avatar_url TEXT")
+        except Exception:
+            pass
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS ai_experts (
                 id                  TEXT PRIMARY KEY,
@@ -485,35 +448,7 @@ async def lifespan(app: FastAPI):
             )
         """)
 
-        # Seed default user if empty
-        cursor.execute("SELECT COUNT(*) FROM users")
-        if cursor.fetchone()[0] == 0:
-            default_user_id = settings.current_user_id
-            cursor.execute(
-                "INSERT INTO users (id, username, current_xp, lifetime_xp) VALUES (?, ?, ?, ?)",
-                (default_user_id, "default_user", 100, 100)
-            )
-            
-            # Seed default roles
-            roles = [
-                (str(uuid.uuid5(uuid.NAMESPACE_DNS, "uni_001")), default_user_id, 
-                 "uni_001", "UNI", "#d4915e", "activity", 0),
-                (str(uuid.uuid5(uuid.NAMESPACE_DNS, "csie_001")), default_user_id, 
-                 "csie_001", "CSIE", "#c47830", "code", 1),
-            ]
-            cursor.executemany(
-                "INSERT INTO roles (id, user_id, slug, display_name, color_hex, icon_name, sort_order) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                roles
-            )
-            
-            # Seed default expert for CSIE
-            csie_role_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, "csie_001"))
-            cursor.execute(
-                "INSERT INTO ai_experts (id, role_id, name, personality_prompt, backstory) VALUES (?, ?, ?, ?, ?)",
-                ("robert_001", csie_role_id, "學長Robert", 
-                 "你是一個資深的電腦科學系學長...", "在 CSIE 待了四年的傳奇人物")
-            )
+        # No default user seed — identity is managed in the lifespan identity block below
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS daily_reflections (
                 id              TEXT PRIMARY KEY,
@@ -562,38 +497,73 @@ async def lifespan(app: FastAPI):
 
     # [M0.3] Ensure local identity and sync to cloud
     try:
-        # Check for existing user in SQLite
-        user_row = await _db_adapter.fetch_one("SELECT id FROM users LIMIT 1")
-        
+        # Check for existing user in local SQLite (bypass AsyncDBAdapter to avoid routing issues)
+        def _get_local_user():
+            cur = _sqlite_conn.cursor()
+            cur.execute("SELECT id FROM users LIMIT 1")
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+        user_row = await asyncio.to_thread(_get_local_user)
+
         if not user_row:
-            # First start: Generate a fresh persistent UUID for this instance
+            # First start: generate a fresh persistent UUID for this instance
             instance_user_id = str(uuid.uuid4())
             logger.info("[lifespan] First start detected. Generated new Instance ID: %s", instance_user_id)
-            await _db_adapter.execute(
-                "INSERT INTO users (id, display_name, email, current_xp, level) VALUES (:id, :name, :email, 0, 1)",
-                {"id": instance_user_id, "name": "Me (Local)", "email": "local@coos.internal"}
-            )
+
+            def _insert_local_user():
+                cur = _sqlite_conn.cursor()
+                cur.execute(
+                    "INSERT INTO users (id, username, display_name, email, current_xp, lifetime_xp, level) "
+                    "VALUES (?, ?, ?, ?, 0, 0, 1)",
+                    (instance_user_id, "local_user", "Me (Local)", f"local_{instance_user_id[:8]}@coos.internal")
+                )
+                _sqlite_conn.commit()
+
+            await asyncio.to_thread(_insert_local_user)
         else:
             instance_user_id = user_row["id"]
+            # Validate it is a proper UUID — regenerate if malformed (e.g. empty string)
+            try:
+                uuid.UUID(instance_user_id)
+            except (ValueError, AttributeError):
+                instance_user_id = str(uuid.uuid4())
+                logger.warning("[lifespan] Stored ID was malformed, regenerated: %s", instance_user_id)
+
+                def _fix_local_user():
+                    cur = _sqlite_conn.cursor()
+                    cur.execute("DELETE FROM users")
+                    cur.execute(
+                        "INSERT INTO users (id, username, display_name, email, current_xp, lifetime_xp, level) "
+                        "VALUES (?, ?, ?, ?, 0, 0, 1)",
+                        (instance_user_id, "local_user", "Me (Local)", f"local_{instance_user_id[:8]}@coos.internal")
+                    )
+                    _sqlite_conn.commit()
+
+                await asyncio.to_thread(_fix_local_user)
+
             logger.info("[lifespan] Using existing Instance ID: %s", instance_user_id)
-        
+
         # Update settings for this session
         settings.current_user_id = instance_user_id
 
         # Sync Identity to Cloud (No roles, just the user object)
         if pg_engine and is_cloud_available():
-            with pg_engine.connect() as conn:
-                from sqlalchemy import text
-                conn.execute(text("""
-                    INSERT INTO users (id, display_name, email, current_xp, level, streak_days)
-                    VALUES (:id, 'Local User', :email, 0, 1, 0)
-                    ON CONFLICT (id) DO NOTHING
-                """), {
-                    "id": settings.current_user_id, 
-                    "email": f"local_{settings.current_user_id[:8]}@coos.internal"
-                })
-                conn.commit()
-                logger.info("[lifespan] Identity verified with cloud.")
+            try:
+                with pg_engine.connect() as conn:
+                    from sqlalchemy import text
+                    conn.execute(text("""
+                        INSERT INTO users (id, display_name, email, current_xp, level, streak_days)
+                        VALUES (:id, 'Local User', :email, 0, 1, 0)
+                        ON CONFLICT (id) DO NOTHING
+                    """), {
+                        "id": instance_user_id,
+                        "email": f"local_{instance_user_id[:8]}@coos.internal"
+                    })
+                    conn.commit()
+                    logger.info("[lifespan] Identity verified with cloud.")
+            except Exception as cloud_err:
+                logger.warning("[lifespan] Cloud identity sync failed (non-fatal): %s", cloud_err)
     except Exception as e:
         logger.warning("[lifespan] Failed to manage identity: %s", e)
 
@@ -699,16 +669,15 @@ async def lifespan(app: FastAPI):
                         logger.info("[M2.2] Periodic maintenance: learned %d new fallback rules", len(new_rules))
 
                 # 2. M4.5 Zombie Cleanup
-                # Hard delete stale drafts (is_draft=True, not is_reviewed, not xp_settled, > 7 days old)
+                # Hard delete stale incomplete reflections and segments (> 7 days old)
                 cutoff = (datetime.now(UTC) - timedelta(days=7)).isoformat()
                 await _db_adapter.execute(
-                    "DELETE FROM daily_reflections WHERE is_draft = TRUE AND is_reviewed = FALSE "
-                    "AND xp_settled = FALSE AND created_at < :cutoff",
+                    "DELETE FROM daily_reflections WHERE is_completed = 0 AND created_at < :cutoff",
                     {"cutoff": cutoff}
                 )
                 await _db_adapter.execute(
-                    "DELETE FROM daily_reflection_segments WHERE is_draft = TRUE AND is_reviewed = FALSE "
-                    "AND xp_settled = FALSE AND created_at < :cutoff",
+                    "DELETE FROM daily_reflection_segments "
+                    "WHERE is_approved = 0 AND xp_settled = 0 AND created_at < :cutoff",
                     {"cutoff": cutoff}
                 )
             except Exception as e:
@@ -1317,7 +1286,8 @@ async def m6_2_list_roles(request: Request) -> list[dict[str, Any]]:
             "name": r["display_name"],
             "themeColorPalette": {"primary": r["color_hex"]},
             "sortOrder": r["sort_order"],
-            "slug": r["slug"]
+            "slug": r["slug"],
+            "avatarUrl": r.get("avatar_url"),
         } for r in rows
     ]
 
@@ -1329,14 +1299,14 @@ async def m6_2_create_role(request: Request, body: dict[str, Any]) -> dict[str, 
     name = body.get("name")
     if not name:
         raise HTTPException(status_code=422, detail="name is required")
-    
+
     import uuid
     role_id = str(uuid.uuid4())
     slug = name.lower().replace(" ", "_")
-    
+
     await _db_adapter.execute(
-        "INSERT INTO roles (id, user_id, slug, display_name, color_hex, icon_name, sort_order) "
-        "VALUES (:id, :uid, :slug, :name, :color, :icon, :sort)",
+        "INSERT INTO roles (id, user_id, slug, display_name, color_hex, icon_name, avatar_url, sort_order) "
+        "VALUES (:id, :uid, :slug, :name, :color, :icon, :avatar, :sort)",
         {
             "id": role_id,
             "uid": str(user_id),
@@ -1344,6 +1314,7 @@ async def m6_2_create_role(request: Request, body: dict[str, Any]) -> dict[str, 
             "name": name,
             "color": body.get("color", "#999999"),
             "icon": body.get("icon", "activity"),
+            "avatar": body.get("avatar_url"),
             "sort": 10
         }
     )
@@ -1413,6 +1384,99 @@ async def update_app_whitelist(body: list[str], request: Request) -> dict[str, A
     return {"status": "success"}
 
 
+# --- Google OAuth Stubs (L3 identity — future multi-device sync) ---
+# Architecture: Google OAuth token is only stored as a foreign key reference.
+# The google_id + google_email are stored in the LOCAL users table (L1).
+# The cloud PostgreSQL users table only receives an upsert with the google_id
+# once consent is granted. Raw OAuth tokens are never persisted.
+
+@app.get("/api/auth/google/url")
+async def google_auth_url() -> dict[str, Any]:
+    """Return the Google OAuth authorization URL for the client to open in browser."""
+    from config import get_settings as _gs
+    s = _gs()
+    client_id = getattr(s, "google_client_id", "") or ""
+    if not client_id:
+        # Stub mode: return a placeholder URL so the UI can show a disabled state
+        return {"url": None, "stub": True, "message": "Google OAuth not configured (GOOGLE_CLIENT_ID missing)"}
+    redirect_uri = f"http://localhost:{s.fastapi_port}/api/auth/google/callback"
+    scope = "openid email profile"
+    url = (
+        f"https://accounts.google.com/o/oauth2/v2/auth"
+        f"?client_id={client_id}"
+        f"&redirect_uri={redirect_uri}"
+        f"&response_type=code"
+        f"&scope={scope}"
+        f"&access_type=offline"
+        f"&prompt=consent"
+    )
+    return {"url": url, "stub": False}
+
+
+@app.get("/api/auth/google/callback")
+async def google_auth_callback(code: str, request: Request) -> dict[str, Any]:
+    """Handle Google OAuth callback: exchange code → store google_id + email locally."""
+    from config import get_settings as _gs
+    s = _gs()
+    client_id = getattr(s, "google_client_id", "") or ""
+    client_secret = getattr(s, "google_client_secret", "") or ""
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=501, detail="Google OAuth not configured")
+
+    import httpx
+    redirect_uri = f"http://localhost:{s.fastapi_port}/api/auth/google/callback"
+    async with httpx.AsyncClient() as client:
+        token_resp = await client.post("https://oauth2.googleapis.com/token", data={
+            "code": code,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+        })
+        token_resp.raise_for_status()
+        tokens = token_resp.json()
+
+        userinfo_resp = await client.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+        )
+        userinfo_resp.raise_for_status()
+        userinfo = userinfo_resp.json()
+
+    google_id = userinfo.get("id", "")
+    google_email = userinfo.get("email", "")
+    display_name = userinfo.get("name", "")
+
+    # Store google_id + email in local users table (L1 — never raw token)
+    user_id = settings.current_user_id
+    def _link_google():
+        cur = _sqlite_conn.cursor()
+        cur.execute(
+            "UPDATE users SET google_id = ?, google_email = ?, display_name = ? WHERE id = ?",
+            (google_id, google_email, display_name, user_id)
+        )
+        _sqlite_conn.commit()
+    await asyncio.to_thread(_link_google)
+
+    logger.info("[Auth] Google account linked: %s -> user %s", google_email, user_id)
+    return {"status": "linked", "google_email": google_email, "display_name": display_name}
+
+
+@app.get("/api/auth/google/status")
+async def google_auth_status(request: Request) -> dict[str, Any]:
+    """Return whether current local user has a linked Google account."""
+    user_id = settings.current_user_id
+    def _get_google():
+        cur = _sqlite_conn.cursor()
+        cur.execute("SELECT google_id, google_email, display_name FROM users WHERE id = ?", (user_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+    row = await asyncio.to_thread(_get_google)
+    if row and row.get("google_id"):
+        return {"linked": True, "google_email": row["google_email"], "display_name": row["display_name"]}
+    return {"linked": False}
+
+
 # --- M6.3 Role Context ---
 
 @app.get("/api/m6_3/role_context")
@@ -1453,24 +1517,28 @@ async def m6_3_role_context(role_id: str, request: Request) -> dict[str, Any]:
 # --- M6.4 Daily Reflections ---
 
 @app.get("/api/m6_4/heatmap")
-async def m6_4_heatmap(role_id: str) -> list[dict[str, Any]]:
-    """過去 365 天的活躍度熱圖資料"""
-    import random
-    from datetime import date, timedelta
-    today = date.today()
-    result = []
-    for i in range(365):
-        d = today - timedelta(days=364 - i)
-        count = random.choices([0, 0, 0, 1, 2, 3, 5], weights=[4, 2, 2, 3, 2, 1, 1])[0]
-        if count:
-            result.append({"date": d.isoformat(), "count": count})
-    return result
+async def m6_4_heatmap(request: Request, role_id: str) -> list[dict[str, Any]]:
+    """過去 365 天的活躍度熱圖資料 (Real Data)"""
+    user_id = get_safe_user_id(request)
+    
+    # [M6.4] Query real daily reflections count grouped by date for the last 365 days
+    query = """
+        SELECT date(created_at) as event_date, COUNT(*) as count
+        FROM daily_reflections
+        WHERE user_id = :uid AND role_id = :rid
+          AND created_at >= date('now', '-365 days')
+        GROUP BY date(created_at)
+        ORDER BY event_date ASC
+    """
+    rows = await _db_adapter.fetch_all(query, {"uid": str(user_id), "rid": role_id})
+    
+    return [{"date": row["event_date"], "count": row["count"]} for row in rows]
 
 
 @app.get("/api/m6_4/daily_timeline")
-async def m6_4_daily_timeline(date: str, role_id: str | None = None) -> list[dict[str, Any]]:
+async def m6_4_daily_timeline(request: Request, date: str, role_id: str | None = None) -> list[dict[str, Any]]:
     """當日任務清單（依角色分組）"""
-    user_id = UUID(settings.current_user_id)
+    user_id = get_safe_user_id(request)
     
     import uuid
     role_uuid = None

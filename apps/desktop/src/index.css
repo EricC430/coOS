@@ -304,16 +304,19 @@ body {
   bottom: 0;
   width: 100%;
   height: 120%;
-  object-fit: contain;
+  object-fit: cover;
   object-position: bottom center;
   pointer-events: none;
   transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1),
               filter 0.4s ease;
   transform: scale(1) translateY(0);
+  /* This ensures the bottom half is clipped as a perfect semicircle matching the container, while the top remains unclipped */
+  border-radius: 0 0 999px 999px;
+  overflow: hidden;
 }
 
 .is-center .role-avatar-image {
-  transform: scale(1.15) translateY(-12%);
+  transform: scale(1.15) translateY(-8%);
   filter: drop-shadow(0 8px 16px rgba(0,0,0,0.25));
 }
 
@@ -886,11 +889,12 @@ body {
   border: 1px solid var(--glass-border);
   background: transparent;
   color: var(--text-secondary);
-  border-radius: 8px;
+  border-radius: 999px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
+  white-space: nowrap;
 }
 
 .settings-cancel-btn:hover {
@@ -903,17 +907,31 @@ body {
   border: none;
   background: var(--gold-accent);
   color: white;
-  border-radius: 8px;
+  border-radius: 999px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
   box-shadow: 0 4px 12px rgba(244, 162, 97, 0.15);
+  white-space: nowrap;
 }
 
 .settings-save-btn:hover {
   background: var(--coral-accent);
   transform: translateY(-1px);
+}
+
+.primary-btn {
+  padding: 12px 24px;
+  background: var(--gold-accent);
+  color: white;
+  border: none;
+  border-radius: 999px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(244,162,97,0.2);
+  transition: all 0.2s ease;
+  white-space: nowrap;
 }
 
 .settings-save-btn:disabled,

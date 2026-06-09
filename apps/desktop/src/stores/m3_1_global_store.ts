@@ -14,6 +14,8 @@ export interface Role {
   name: string;
   themeColorPalette: Record<string, string>;
   sortOrder?: number;
+  avatarUrl?: string;
+  slug?: string;
 }
 
 export interface Expert {

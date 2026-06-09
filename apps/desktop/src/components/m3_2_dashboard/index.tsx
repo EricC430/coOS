@@ -13,6 +13,7 @@ interface HeatmapEntry {
 
 interface Props {
   onEnterChat?: (roleId: string) => void;
+  onFirstRoleCreated?: () => void;
 }
 
 type ThemePalette = { primary: string };
@@ -23,7 +24,7 @@ async function fetchHeatmapData(roleId: string): Promise<HeatmapEntry[]> {
   return res.json();
 }
 
-export function RoleDashboard({ onEnterChat }: Props) {
+export function RoleDashboard({ onEnterChat, onFirstRoleCreated }: Props) {
   const { currentRole, roleCache, switchRole, setRoleTransitioning, seedRoleCache } = useCoOSStore();
   const [creationOpen, setCreationOpen] = useState(false);
   const roles = Object.values(roleCache);
@@ -52,13 +53,17 @@ export function RoleDashboard({ onEnterChat }: Props) {
 
   const handleCreated = async () => {
     try {
-        const res = await fetch("/api/m6_2/roles");
-        if (res.ok) {
-            const roles = await res.json();
-            seedRoleCache(roles);
+      const res = await fetch("/api/m6_2/roles");
+      if (res.ok) {
+        const updatedRoles = await res.json();
+        seedRoleCache(updatedRoles);
+        // If this is the very first role, notify parent (exits onboarding)
+        if (roles.length === 0 && onFirstRoleCreated) {
+          onFirstRoleCreated();
         }
+      }
     } catch (err) {
-        console.error("Failed to refresh roles:", err);
+      console.error("Failed to refresh roles:", err);
     }
   };
 
@@ -133,6 +138,7 @@ export function RoleDashboard({ onEnterChat }: Props) {
             id: r.id,
             name: r.name,
             colorHex: r.themeColorPalette?.primary,
+            avatarUrl: r.avatarUrl,
           }))}
           activeRoleId={currentRole?.id || ""}
           onRoleSnap={handleSnap}

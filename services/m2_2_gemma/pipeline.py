@@ -50,7 +50,7 @@ class GemmaInferencePipeline:
         RISK-05: source_log_id and role_id are always set regardless of mode.
         """
         if self._edge_offline:
-            return self._make_fallback_vector(source_log_id, role_id)
+            return self._make_fallback_vector(text, source_log_id, role_id)
 
         try:
             raw = await self._client.generate(text)
@@ -68,7 +68,7 @@ class GemmaInferencePipeline:
             )
         except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError, ValueError):  # noqa: BLE001
             # Circuit breaker: degrade gracefully (RISK-11 safeguard)
-            return self._make_fallback_vector(source_log_id, role_id)
+            return self._make_fallback_vector(text, source_log_id, role_id)
 
     def _make_fallback_vector(self, text: str, source_log_id: str, role_id: str) -> IntentVector:
         """Rule-based fallback -- RISK-05: source_log_id/role_id always preserved."""

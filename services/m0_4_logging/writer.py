@@ -243,7 +243,7 @@ class AsyncLogWriter:
         await loop.run_in_executor(None, self._sync_write_batch, batch)
 
     def _sync_write_batch(self, batch: list[LogEvent]) -> None:
-        conn = sqlite3.connect(self._db_path)
+        conn = sqlite3.connect(self._db_path, timeout=10.0)
         try:
             conn.executemany(
                 _INSERT_SQL,

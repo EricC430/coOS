@@ -25,6 +25,7 @@ import { WorkflowModal } from "./components/m3_6_workflow_modal";
 import { EdgeNavigationTrigger } from "./components/EdgeNavigationTrigger";
 import { PageTransition } from "./components/PageTransition";
 import { SettingsModal } from "./components/SettingsModal";
+import { OnboardingScreen } from "./components/OnboardingScreen";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,12 +36,24 @@ const queryClient = new QueryClient({
 type ActiveView = "home" | "report" | "achievements" | "community" | "chat";
 
 function ThemeToggle() {
-  const [dark, setDark] = useState(false);
+  const [dark, setDark] = useState(() =>
+    document.documentElement.getAttribute("data-theme") === "dark"
+  );
+
+  // Stay in sync when settings modal changes the theme
+  useEffect(() => {
+    const handler = (e: Event) => {
+      setDark((e as CustomEvent<string>).detail === "dark");
+    };
+    window.addEventListener("coos:theme-changed", handler);
+    return () => window.removeEventListener("coos:theme-changed", handler);
+  }, []);
 
   const toggle = () => {
     const next = !dark;
     setDark(next);
     document.documentElement.setAttribute("data-theme", next ? "dark" : "light");
+    window.dispatchEvent(new CustomEvent("coos:theme-changed", { detail: next ? "dark" : "light" }));
   };
 
   return (
@@ -61,27 +74,33 @@ function AppContent() {
   const [workflowOpen, setWorkflowOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [_chatRoleId, setChatRoleId] = useState<string | null>(null);
-  const { currentRole, seedRoleCache } = useCoOSStore();
+  const { currentRole, seedRoleCache, roleCache } = useCoOSStore();
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function loadRoles() {
-        try {
-            const res = await fetch("/api/m6_2/roles");
-            if (res.ok) {
-                const roles = await res.json();
-                seedRoleCache(roles);
-            }
-        } catch (err) {
-            console.error("Failed to load roles:", err);
-        } finally {
-            setLoading(false);
-        }
+  // isOnboarding = true while there are no roles at all
+  const hasRoles = Object.keys(roleCache).length > 0;
+  const isOnboarding = !loading && !hasRoles;
+
+  const refreshRoles = useCallback(async () => {
+    try {
+      const res = await fetch("/api/m6_2/roles");
+      if (res.ok) {
+        const roles = await res.json();
+        seedRoleCache(roles);
+      }
+    } catch (err) {
+      console.error("Failed to load roles:", err);
     }
-    loadRoles();
-    // Connect Tauri event bridge
-    initTauriBridge();
   }, [seedRoleCache]);
+
+  useEffect(() => {
+    async function init() {
+      await refreshRoles();
+      setLoading(false);
+    }
+    init();
+    initTauriBridge();
+  }, [refreshRoles]);
 
   const goHome = useCallback(() => setActiveView("home"), []);
 
@@ -90,10 +109,10 @@ function AppContent() {
     setActiveView("chat");
   }, []);
 
-  // Keyboard navigation
+  // Keyboard navigation — disabled during onboarding
   useEffect(() => {
+    if (isOnboarding) return;
     const handler = (e: KeyboardEvent) => {
-      // Don't intercept when typing in inputs
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement
@@ -101,30 +120,30 @@ function AppContent() {
         return;
 
       if (activeView === "home") {
-        if (e.key === "ArrowLeft") {
-          e.preventDefault();
-          setActiveView("report");
-        } else if (e.key === "ArrowRight") {
-          e.preventDefault();
-          setActiveView("community");
-        } else if (e.key === "ArrowUp") {
-          e.preventDefault();
-          setActiveView("achievements");
-        }
+        if (e.key === "ArrowLeft") { e.preventDefault(); setActiveView("report"); }
+        else if (e.key === "ArrowRight") { e.preventDefault(); setActiveView("community"); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); setActiveView("achievements"); }
       } else {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          goHome();
-        }
+        if (e.key === "Escape") { e.preventDefault(); goHome(); }
       }
     };
-
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeView, goHome]);
+  }, [activeView, goHome, isOnboarding]);
 
   if (loading) {
     return <div className="loading-screen">coOS Loading...</div>;
+  }
+
+  // Onboarding: full-screen lock — no nav, no settings, no theme toggle
+  if (isOnboarding) {
+    return (
+      <OnboardingScreen
+        onRolesCreated={async () => {
+          await refreshRoles();
+        }}
+      />
+    );
   }
 
   return (
@@ -142,89 +161,43 @@ function AppContent() {
         ⚙️
       </button>
 
-      {/* Main content — always rendered underneath */}
+      {/* Main content */}
       <main style={{ width: "100%", height: "100%", position: "relative" }}>
         {currentRole ? (
-            <RoleDashboard onEnterChat={handleEnterChat} />
+          <RoleDashboard onEnterChat={handleEnterChat} />
         ) : (
-            <div className="onboarding-overlay" style={{
-                position: "absolute", inset: 0, display: "flex", flexDirection: "column",
-                alignItems: "center", justifyContent: "center", background: "var(--bg-main)",
-                zIndex: 10
-            }}>
-                <h1>歡迎來到 coOS</h1>
-                <p>您尚未建立任何角色。請點擊設定來新增第一個角色。</p>
-                <button onClick={() => setSettingsOpen(true)} className="primary-btn">
-                    建立新角色
-                </button>
-                <div style={{ marginTop: "2rem", fontSize: "0.8rem", opacity: 0.6 }}>
-                    Instance ID: {useCoOSStore.getState().currentRole === null ? "Persistent Local Identity Active" : ""}
-                </div>
-            </div>
+          // Roles exist but none selected yet — dashboard handles this
+          <RoleDashboard onEnterChat={handleEnterChat} />
         )}
       </main>
 
       {/* Edge triggers — only shown when on home view */}
       {activeView === "home" && (
         <>
-          <EdgeNavigationTrigger
-            side="left"
-            label="日報"
-            arrowIcon="‹"
-            onClick={() => setActiveView("report")}
-          />
-          <EdgeNavigationTrigger
-            side="right"
-            label="社群"
-            arrowIcon="›"
-            onClick={() => setActiveView("community")}
-          />
-          <EdgeNavigationTrigger
-            side="top"
-            label="成就"
-            arrowIcon="▲"
-            onClick={() => setActiveView("achievements")}
-          />
+          <EdgeNavigationTrigger side="left" label="日報" arrowIcon="‹" onClick={() => setActiveView("report")} />
+          <EdgeNavigationTrigger side="right" label="社群" arrowIcon="›" onClick={() => setActiveView("community")} />
+          <EdgeNavigationTrigger side="top" label="成就" arrowIcon="▲" onClick={() => setActiveView("achievements")} />
         </>
       )}
 
       {/* Overlay pages with directional transitions */}
-      <PageTransition
-        isOpen={activeView === "report"}
-        direction="left"
-        onBack={goHome}
-      >
+      <PageTransition isOpen={activeView === "report"} direction="left" onBack={goHome}>
         <DailyReportModule />
       </PageTransition>
 
-      <PageTransition
-        isOpen={activeView === "community"}
-        direction="right"
-        onBack={goHome}
-      >
+      <PageTransition isOpen={activeView === "community"} direction="right" onBack={goHome}>
         <CommunityUI stubMode />
       </PageTransition>
 
-      <PageTransition
-        isOpen={activeView === "achievements"}
-        direction="top"
-        onBack={goHome}
-      >
+      <PageTransition isOpen={activeView === "achievements"} direction="top" onBack={goHome}>
         <AchievementDisplay />
       </PageTransition>
 
-      <PageTransition
-        isOpen={activeView === "chat"}
-        direction="bottom"
-        onBack={goHome}
-      >
+      <PageTransition isOpen={activeView === "chat"} direction="bottom" onBack={goHome}>
         <MultiAgentHelper onWorkflowOpen={() => setWorkflowOpen(true)} />
       </PageTransition>
 
-      {/* M3.6 Workflow Modal -- in-context, no page navigation */}
       <WorkflowModal open={workflowOpen} onClose={() => setWorkflowOpen(false)} />
-
-      {/* Settings Modal */}
       <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );

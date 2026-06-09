@@ -66,6 +66,10 @@ class Settings(BaseSettings):
         description="當前使用者 ID。多裝置同步或社群功能開啟後，將改由 Auth Token 取得。",
     )
 
+    # === Google OAuth (L3 identity — multi-device sync) ===
+    google_client_id: str = Field(default="", description="Google OAuth Client ID (optional)")
+    google_client_secret: str = Field(default="", description="Google OAuth Client Secret (optional)")
+
     # === 進階 (Phase 6+) ===
     github_client_id: str = Field(default="")
     github_client_secret: str = Field(default="")

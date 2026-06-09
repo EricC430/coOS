@@ -63,6 +63,7 @@ export function ContextHeaderAggregator({ roleId, roleName, heatmapData }: Props
     queryFn: () => fetchRoleContext(roleId),
     staleTime: 60_000,
     retry: 2,
+    enabled: !!roleId,
   });
 
   if (isLoading) {

@@ -74,7 +74,7 @@ async def build_commitment_context(
         # SQLite compatible NOW() is (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
         # But AsyncDBAdapter already replaces NOW() with SQLite syntax
         await db.execute(
-            "UPDATE promises SET status = 'expired', updated_at = NOW() "
+            "UPDATE promises SET status = 'expired' "
             "WHERE role_id = :rid AND status = 'active' "
             "AND deadline IS NOT NULL AND deadline < NOW()",
             {"rid": str(role_id)},

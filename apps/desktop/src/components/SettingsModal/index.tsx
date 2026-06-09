@@ -208,12 +208,16 @@ export function SettingsModal({ isOpen, onClose }: Props) {
         body: JSON.stringify(settings),
       });
       
-      if (settings.theme === "dark" || settings.theme === "light") {
-        document.documentElement.setAttribute("data-theme", settings.theme);
-      } else {
-        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-        document.documentElement.setAttribute("data-theme", prefersDark ? "dark" : "light");
+      const resolvedTheme =
+        settings.theme === "dark" || settings.theme === "light"
+          ? settings.theme
+          : document.documentElement.getAttribute("data-theme") || 
+            (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      
+      if (settings.theme !== "default") {
+          document.documentElement.setAttribute("data-theme", resolvedTheme);
       }
+      window.dispatchEvent(new CustomEvent("coos:theme-changed", { detail: resolvedTheme }));
       
       onClose();
     } catch (err) {
@@ -266,9 +270,15 @@ export function SettingsModal({ isOpen, onClose }: Props) {
               >
                 🌿 Git 與工作流
               </button>
-            </div>
+              <button
+                className={`settings-tab-btn ${activeTab === "accounts" ? "active" : ""}`}
+                onClick={() => setActiveTab("accounts")}
+              >
+                🔗 帳號連結
+              </button>
+              </div>
 
-            <div className="settings-content">
+              <div className="settings-content">
               {activeTab === "privacy" && (
                 <div className="settings-section">
                   <h3>隱私授權選項</h3>
@@ -442,6 +452,36 @@ export function SettingsModal({ isOpen, onClose }: Props) {
                     ) : (
                         <button className="settings-save-btn" style={{ width: '100%' }} onClick={handleLinkGithub}>透過 OAuth 連結 GitHub</button>
                     )}
+                  </div>
+                </div>
+              )}
+              {activeTab === "accounts" && (
+                <div className="settings-section">
+                  <h3>帳號與跨裝置同步</h3>
+                  <div className="settings-field">
+                    <label><strong>Google 帳號</strong></label>
+                    <p className="field-desc" style={{ marginBottom: "12px" }}>
+                      連結 Google 帳號後，您可以在其他裝置上登入相同的帳號以同步資料。<br/>
+                      目前連線需要後端設定 GCP Client ID，若未設定則處於展示 (Stub) 狀態。
+                    </p>
+                    <button 
+                        className="primary-btn" 
+                        onClick={async () => {
+                            try {
+                                const res = await fetch("/api/m1_4/github_auth_url");
+                                const data = await res.json();
+                                if (data.error) alert(data.error);
+                                else alert("開發中: 此處將引導至 OAuth 授權頁面");
+                            } catch (e) {
+                                alert("網路錯誤");
+                            }
+                        }}
+                    >
+                      連結 Google 帳號
+                    </button>
+                    <div style={{ marginTop: "1rem", fontSize: "0.85rem", opacity: 0.6 }}>
+                      當前設備身分 ID: {useCoOSStore.getState().currentRole === null ? "尚未載入" : "已啟用持久化本地識別"}
+                    </div>
                   </div>
                 </div>
               )}
