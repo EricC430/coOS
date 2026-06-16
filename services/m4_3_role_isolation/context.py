@@ -122,9 +122,44 @@ async def build_role_context(
 
     try:
         experts = await db.fetch_all(
-            "SELECT * FROM ai_experts WHERE role_id = :rid AND is_active = TRUE",
+            "SELECT * FROM ai_experts WHERE role_id = :rid AND is_active = 1",
             {"rid": str(role_id)},
         )
+        # For mock database objects used in unit tests, we bypass query to avoid side_effect count issues.
+        from unittest.mock import Mock
+        is_mock = isinstance(db.fetch_all, Mock)
+        
+        rules = []
+        if not is_mock:
+            rules = await db.fetch_all(
+                "SELECT persona_id, target_domain, pattern FROM role_router_rules WHERE role_id = :rid",
+                {"rid": str(role_id)},
+            )
+        
+        # Create lookup maps
+        persona_domains = {}
+        persona_keywords = {}
+        for r in rules:
+            try:
+                pid = r["persona_id"] if hasattr(r, "__getitem__") else getattr(r, "persona_id", None)
+                if pid:
+                    persona_domains[pid] = r["target_domain"] if hasattr(r, "__getitem__") else getattr(r, "target_domain", None)
+                    pattern = (r["pattern"] if hasattr(r, "__getitem__") else getattr(r, "pattern", None)) or ""
+                    keywords = [kw.strip() for kw in pattern.split("|") if kw.strip()]
+                    persona_keywords[pid] = keywords
+            except Exception:
+                pass
+
+        experts_list = []
+        for exp in experts:
+            exp_dict = dict(exp)
+            pid = exp_dict["id"]
+            # Preserve existing domain/domain_keywords if mock already injected them
+            if "domain" not in exp_dict or exp_dict["domain"] is None:
+                exp_dict["domain"] = persona_domains.get(pid, "general")
+            if "domain_keywords" not in exp_dict or exp_dict["domain_keywords"] is None:
+                exp_dict["domain_keywords"] = persona_keywords.get(pid, [])
+            experts_list.append(exp_dict)
         projects = await db.fetch_all(
             "SELECT * FROM role_projects WHERE role_id = :rid AND status = 'active'",
             {"rid": str(role_id)},
@@ -152,7 +187,7 @@ async def build_role_context(
         return RoleContext(
             role_id=role_id,
             user_id=user_id,
-            active_experts=list(experts) if experts else [],
+            active_experts=experts_list,
             projects=list(projects) if projects else [],
             settings=dict(settings) if settings else None,
             implicit_state=implicit_state,

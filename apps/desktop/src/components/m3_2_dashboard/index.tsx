@@ -57,10 +57,8 @@ export function RoleDashboard({ onEnterChat, onFirstRoleCreated }: Props) {
       if (res.ok) {
         const updatedRoles = await res.json();
         seedRoleCache(updatedRoles);
-        // If this is the very first role, notify parent (exits onboarding)
-        if (roles.length === 0 && onFirstRoleCreated) {
-          onFirstRoleCreated();
-        }
+        // Notify parent every time so App.tsx can sync (also exits onboarding on first role)
+        onFirstRoleCreated?.();
       }
     } catch (err) {
       console.error("Failed to refresh roles:", err);

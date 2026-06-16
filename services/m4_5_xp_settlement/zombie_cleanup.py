@@ -39,7 +39,8 @@ async def run_zombie_cleanup_cron(
     now: datetime | None = None,
 ) -> list:
     """
-    清理過期未審草稿。回傳被刪除的 reflection id 清單。
+    清理過期未審草稿（in-memory store 版，用於測試）。
+    回傳被刪除的 reflection id 清單。
 
     [RISK-13] 受保護的反思（已核准/已結算/非草稿）一律跳過。
     """
@@ -61,3 +62,35 @@ async def run_zombie_cleanup_cron(
         logger.info("[M4.5] zombie_draft_deleted reflection=%s", rid)
 
     return deleted
+
+
+async def run_zombie_cleanup_sql(
+    db_adapter: Any,
+    threshold_days: int | None = None,
+    now: datetime | None = None,
+) -> None:
+    """
+    [GAP-B4] 生產環境版：直接對 SQLite/PostgreSQL 執行 SQL DELETE。
+    由 main.py lifespan periodic_maintenance 呼叫，取代原本的內聯 DELETE。
+
+    [RISK-13] WHERE 條件確保僅刪除 is_draft=1 AND is_reviewed=0 AND xp_settled=0 的過期記錄。
+    """
+    if now is None:
+        now = datetime.now(UTC)
+    threshold = threshold_days or DEFAULT_STALE_THRESHOLD_DAYS
+    cutoff = (now - timedelta(days=threshold)).isoformat()
+
+    try:
+        await db_adapter.execute(
+            "DELETE FROM daily_reflections "
+            "WHERE is_completed = 0 AND created_at < :cutoff",
+            {"cutoff": cutoff},
+        )
+        await db_adapter.execute(
+            "DELETE FROM daily_reflection_segments "
+            "WHERE is_reviewed = 0 AND xp_settled = 0 AND created_at < :cutoff",
+            {"cutoff": cutoff},
+        )
+        logger.info("[M4.5] zombie_cleanup_sql executed, cutoff=%s", cutoff)
+    except Exception as e:
+        logger.warning("[M4.5] zombie_cleanup_sql failed: %s", e)

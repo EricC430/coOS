@@ -179,3 +179,123 @@ class TestLogPrivacy:
                 level="INFO",
                 payload={"raw_text": "user typed secret"},
             )
+
+
+class TestSeparatedLogging:
+    def test_llm_inference_log_writes_to_sqlite(self, tmp_path):
+        """Verify that LLM calls are written directly to llm_inference_logs table."""
+        import sqlite3
+        from services.m0_4_logging.writer import LogWriter
+
+        db_path = tmp_path / "test_llm.db"
+        writer = LogWriter(db_path=str(db_path))
+        writer.init_table()
+
+        writer.write_llm_log(
+            model_name="gemini-3.5-pro",
+            caller_module="M4.1",
+            prompt_text="What is 2+2?",
+            response_text="4",
+            prompt_tokens=10,
+            completion_tokens=2,
+            latency_ms=150,
+            temperature=0.7,
+            status="success"
+        )
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            rows = conn.execute("SELECT * FROM llm_inference_logs").fetchall()
+            assert len(rows) == 1
+            row = rows[0]
+            assert row[2] == "gemini-3.5-pro"
+            assert row[3] == "M4.1"
+            assert row[4] == "What is 2+2?"
+            assert row[5] == "4"
+            assert row[6] == 10  # prompt_tokens
+            assert row[7] == 2   # completion_tokens
+            assert row[8] == 150 # latency_ms
+            assert row[9] == 0.7 # temperature
+            assert row[10] == "success"
+        finally:
+            conn.close()
+
+    def test_system_execution_log_writes_to_sqlite(self, tmp_path):
+        """Verify that system execution logs are written directly to system_execution_logs table."""
+        import sqlite3
+        from services.m0_4_logging.writer import LogWriter
+
+        db_path = tmp_path / "test_exec.db"
+        writer = LogWriter(db_path=str(db_path))
+        writer.init_table()
+
+        writer.write_execution_log(
+            module="main",
+            action="db_error",
+            level="ERROR",
+            message="Database connection timed out",
+            exception_trace="Traceback: ...",
+            payload={"retry_attempt": 3}
+        )
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            rows = conn.execute("SELECT * FROM system_execution_logs").fetchall()
+            assert len(rows) == 1
+            row = rows[0]
+            assert row[2] == "main"
+            assert row[3] == "db_error"
+            assert row[4] == "ERROR"
+            assert row[5] == "Database connection timed out"
+            assert row[6] == "Traceback: ..."
+            import json
+            payload = json.loads(row[7])
+            assert payload["retry_attempt"] == 3
+        finally:
+            conn.close()
+
+    def test_async_multi_table_batch_write(self, tmp_path):
+        """Verify that AsyncLogWriter can write to all three tables concurrently and asynchronously."""
+        import sqlite3
+        from services.m0_4_logging.writer import AsyncLogWriter
+
+        db_path = str(tmp_path / "async_multi.db")
+        writer = AsyncLogWriter(db_path=db_path)
+
+        async def run():
+            await writer.start()
+            await writer.emit(module="M0.4", action="RTL_event")
+            await writer.emit_llm_log(
+                model_name="gemini-flash",
+                caller_module="M4.1",
+                prompt_text="Hello prompt",
+                response_text="Hello response"
+            )
+            await writer.emit_execution_log(
+                module="main",
+                action="test_error",
+                message="Test error message"
+            )
+            await writer.stop()
+
+        import asyncio
+        asyncio.run(run())
+
+        conn = sqlite3.connect(db_path)
+        try:
+            rtl = conn.execute("SELECT * FROM raw_tracking_logs").fetchall()
+            assert len(rtl) == 1
+            assert rtl[0][3] == "RTL_event"
+
+            lil = conn.execute("SELECT * FROM llm_inference_logs").fetchall()
+            assert len(lil) == 1
+            assert lil[0][2] == "gemini-flash"
+            assert lil[0][4] == "Hello prompt"
+
+            sel = conn.execute("SELECT * FROM system_execution_logs").fetchall()
+            assert len(sel) == 1
+            assert sel[0][2] == "main"
+            assert sel[0][5] == "Test error message"
+        finally:
+            conn.close()
+

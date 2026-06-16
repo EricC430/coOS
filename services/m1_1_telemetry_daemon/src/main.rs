@@ -60,6 +60,7 @@ async fn main() {
     let mut last_consent_refresh = Instant::now();
 
     let mut last_app = String::new();
+    let mut last_title = Option::<String>::None;
     let mut last_burst_emit = Instant::now();
 
     loop {
@@ -79,8 +80,9 @@ async fn main() {
             // Apply CaptureMode policy — produces WindowCapture with optional content
             let capture = process_window(&win, &consent);
 
-            if win.app_name != last_app {
-                // App switched
+            let title_changed = win.window_title != last_title;
+            if win.app_name != last_app || title_changed {
+                // App or title switched
                 let wpm = debouncer.current_wpm();
                 let key_count = debouncer.drain_key_count();
 
@@ -98,15 +100,17 @@ async fn main() {
                     emitter.emit(burst_ev).await;
                 }
 
-                // Emit focus_session_ended for previous app if long enough
-                if let Some(session_ev) = tracker.on_focus_changed(
-                    &win.app_name,
-                    win.app_bucket.clone(),
-                    wpm,
-                    0,   // mouse_clicks — Phase 5+
-                    0.0, // mouse_distance_norm — Phase 5+
-                ) {
-                    emitter.emit(session_ev).await;
+                // Emit focus_session_ended for previous app if app changed and long enough
+                if win.app_name != last_app {
+                    if let Some(session_ev) = tracker.on_focus_changed(
+                        &win.app_name,
+                        win.app_bucket.clone(),
+                        wpm,
+                        0,   // mouse_clicks — Phase 5+
+                        0.0, // mouse_distance_norm — Phase 5+
+                    ) {
+                        emitter.emit(session_ev).await;
+                    }
                 }
 
                 // Emit window_changed — payload varies by CaptureMode
@@ -140,6 +144,7 @@ async fn main() {
                 let ev = TelemetryEvent::new("M1.1.1", "window_changed", ev_payload);
                 emitter.emit(ev).await;
                 last_app = win.app_name;
+                last_title = win.window_title.clone();
             }
         } else {
             debouncer.set_foreground_active(false);

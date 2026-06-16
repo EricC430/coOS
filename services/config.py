@@ -9,8 +9,30 @@ M0.3 — 全域設定管理
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
+
+
+def normalize_ipv6_host(url_or_host: str) -> str:
+    if not url_or_host:
+        return url_or_host
+    scheme = ""
+    rest = url_or_host
+    if "://" in url_or_host:
+        scheme, rest = url_or_host.split("://", 1)
+        scheme += "://"
+    
+    if rest.count(":") > 1:
+        if not rest.startswith("["):
+            parts = rest.rsplit(":", 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                ip_part = parts[0]
+                port_part = parts[1]
+                if ip_part.count(":") > 0:
+                    rest = f"[{ip_part}]:{port_part}"
+            else:
+                rest = f"[{rest}]"
+    return scheme + rest
 
 
 class Settings(BaseSettings):
@@ -88,6 +110,12 @@ class Settings(BaseSettings):
         # 允許額外欄位（避免 .env 有未定義的 key 時 crash）
         "extra": "ignore",
     }
+
+    @model_validator(mode="after")
+    def normalize_hosts(self) -> "Settings":
+        self.ipad_ai_local_host = normalize_ipv6_host(self.ipad_ai_local_host)
+        self.ai_local_host = normalize_ipv6_host(self.ai_local_host)
+        return self
 
 
 @lru_cache

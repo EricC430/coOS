@@ -9,15 +9,17 @@ interface Props {
   expert: Expert & { isToolType?: boolean };
   isActive: boolean;
   onClick: () => void;
+  icon?: string;
+  onDelete?: (expertId: string) => void;
 }
 
-export function ExpertItem({ expert, isActive, onClick }: Props) {
+export function ExpertItem({ expert, isActive, onClick, icon, onDelete }: Props) {
   const isToolType = expert.isToolType ?? false;
   return (
     <div
       data-testid="expert-item"
       data-type={isToolType ? "tool" : "persona"}
-      className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
+      className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors group ${
         isActive
           ? "bg-indigo-100 text-indigo-700"
           : "hover:bg-gray-100"
@@ -29,17 +31,30 @@ export function ExpertItem({ expert, isActive, onClick }: Props) {
         {expert.avatarUrl ? (
           <img src={expert.avatarUrl} alt="" className="w-full h-full rounded-full object-cover" />
         ) : (
-          isToolType ? "🔧" : expert.expertName.slice(0, 1)
+          icon ?? (isToolType ? "🤖" : expert.expertName.slice(0, 1))
         )}
       </div>
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         {expert.title && (
           <div className="text-xs text-gray-400 truncate">{expert.title}</div>
         )}
         <div className="text-sm font-medium truncate">
-          {isToolType ? "工具型 AI" : expert.expertName}
+          {expert.expertName}
         </div>
       </div>
+      {!isToolType && onDelete && (
+        <button
+          data-testid="expert-delete-btn"
+          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity text-xs px-1"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(expert.id);
+          }}
+          title="移除專家"
+        >
+          ✕
+        </button>
+      )}
     </div>
   );
 }

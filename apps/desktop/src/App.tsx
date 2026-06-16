@@ -163,12 +163,10 @@ function AppContent() {
 
       {/* Main content */}
       <main style={{ width: "100%", height: "100%", position: "relative" }}>
-        {currentRole ? (
-          <RoleDashboard onEnterChat={handleEnterChat} />
-        ) : (
-          // Roles exist but none selected yet — dashboard handles this
-          <RoleDashboard onEnterChat={handleEnterChat} />
-        )}
+        <RoleDashboard
+          onEnterChat={handleEnterChat}
+          onFirstRoleCreated={refreshRoles}
+        />
       </main>
 
       {/* Edge triggers — only shown when on home view */}

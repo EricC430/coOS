@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import random
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,14 +47,19 @@ class RoleContext:
 
 
 # ---------------------------------------------------------------------------
-# [5.1 LLM Tiering] 模型難度對照表
+# [5.1 LLM Tiering] 模型難度對照表 (Free Tier 可用模型 2026-06)
+# gemini-2.0-flash / lite / gemini-2.5-pro 已無 Free Tier 配額，不列入
 # ---------------------------------------------------------------------------
 MODEL_MAP: dict[str, list[str]] = {
-    "tier1": ["gemma-4-31b", "gemma-4-26b"],
-    "tier2": ["gemini-2.0-flash-lite", "gemma-4-31b"],
-    "tier3": ["gemini-2.0-flash", "gemini-2.0-flash-lite"],
-    "tier4": ["gemini-2.5-pro", "gemini-2.0-flash"],
+    "tier1": ["gemma-4-26b-a4b-it"],
+    "tier2": ["gemini-3.1-flash-lite", "gemma-4-31b-it"],
+    "tier3": ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite"],
+    "tier4": ["gemini-3.5-flash", "gemini-3.0-flash", "gemini-3.1-flash-lite"],
 }
+
+# Persona 回應用模型（優先選 RPM 最高者）
+PERSONA_MODEL = "gemini-3.1-flash-lite"
+PERSONA_MODEL_FALLBACK = "gemini-2.5-flash-lite"
 
 
 class RateLimitError(Exception):
@@ -63,58 +70,192 @@ class ServiceUnavailableError(Exception):
     pass
 
 
+# ---------------------------------------------------------------------------
+# 全域 Token Bucket Rate Limiter
+# Free Tier RPM (保留 2 RPM 緩衝):
+#   gemini-3.1-flash-lite : 15 RPM → 13 tokens/min
+#   gemini-2.5-flash-lite : 10 RPM → 8  tokens/min
+#   gemini-3.5-flash      :  5 RPM → 3  tokens/min
+#   gemini-3.0-flash      :  5 RPM → 3  tokens/min
+#   gemma-4-26b-a4b-it           : 15 RPM → 13 tokens/min  (unlimited TPM)
+# ---------------------------------------------------------------------------
+class _GeminiRateLimiter:
+    _MODEL_RPM: dict[str, int] = {
+        "gemini-3.1-flash-lite": 13,
+        "gemini-2.5-flash-lite": 8,
+        "gemini-3.5-flash": 3,
+        "gemini-3.0-flash": 3,
+        "gemma-4-26b-a4b-it": 13,
+    }
+    _DEFAULT_RPM = 3
+
+    def __init__(self) -> None:
+        self._tokens: dict[str, float] = {}
+        self._last_refill: dict[str, float] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _ensure(self, model: str) -> None:
+        if model not in self._locks:
+            rpm = self._MODEL_RPM.get(model, self._DEFAULT_RPM)
+            self._tokens[model] = float(rpm)
+            self._last_refill[model] = time.monotonic()
+            self._locks[model] = asyncio.Lock()  # safe: always called from async context
+
+    async def acquire(self, model: str) -> None:
+        self._ensure(model)
+        async with self._locks[model]:
+            rpm = self._MODEL_RPM.get(model, self._DEFAULT_RPM)
+            refill_rate = rpm / 60.0
+            now = time.monotonic()
+            self._tokens[model] = min(
+                float(rpm),
+                self._tokens[model] + (now - self._last_refill[model]) * refill_rate,
+            )
+            self._last_refill[model] = now
+            if self._tokens[model] < 1.0:
+                wait = (1.0 - self._tokens[model]) / refill_rate
+                logger.info("[RateLimit] %s: bucket empty, waiting %.1fs", model, wait)
+                await asyncio.sleep(wait)
+                self._tokens[model] = 0.0
+            else:
+                self._tokens[model] -= 1.0
+
+
+_rate_limiter = _GeminiRateLimiter()
+
+
 def get_cloud_llm_client(model_name: str):
-    """Return a simple async LLM client wrapper for the given model."""
+    """Return a shared async LLM client with built-in rate limiting and backoff."""
     return _CloudLLMClient(model_name)
 
 
 class _CloudLLMClient:
-    """Thin wrapper around Google AI Studio API for routing LLM calls."""
+    """Gemini API client with token-bucket rate limiting and exponential backoff."""
+
+    _MAX_RETRIES = 3
+    _BASE_BACKOFF = 2.0  # seconds
 
     def __init__(self, model_name: str):
         self.model_name = model_name
 
-    async def complete(self, prompt: str) -> str:
+    async def complete(self, prompt: str, max_output_tokens: int = 100, temperature: float = 0.1) -> str:
         import os
-
         from config import get_settings
         settings = get_settings()
         api_key = settings.gemini_api_key or os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             raise ServiceUnavailableError("GEMINI_API_KEY not set")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={api_key}"
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{self.model_name}:generateContent?key={api_key}"
+        )
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 100}
+            "generationConfig": {"temperature": temperature, "maxOutputTokens": max_output_tokens},
         }
-        
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code == 429:
-                raise RateLimitError("429 Rate Limit")
-            if resp.status_code >= 500:
-                raise ServiceUnavailableError(f"Cloud API error: {resp.status_code}")
-            resp.raise_for_status()
-            
-            data = resp.json()
+
+        t_start = time.monotonic()
+        last_err: Exception | None = None
+        for attempt in range(self._MAX_RETRIES):
+            await _rate_limiter.acquire(self.model_name)
             try:
-                return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            except (KeyError, IndexError):
-                logger.error("[M4.1.1] Unexpected API response format: %s", data)
-                raise ServiceUnavailableError("Invalid API response")
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.post(url, json=payload)
+                    if resp.status_code == 429:
+                        wait = min(60.0, (self._BASE_BACKOFF ** attempt) + random.uniform(0, 1))
+                        logger.warning(
+                            "[M4.1.1] %s 429 on attempt %d, retrying in %.1fs",
+                            self.model_name, attempt + 1, wait,
+                        )
+                        await asyncio.sleep(wait)
+                        last_err = RateLimitError(f"429 after {attempt + 1} attempts")
+                        continue
+                    if resp.status_code >= 500:
+                        raise ServiceUnavailableError(f"Cloud API error: {resp.status_code}")
+                    resp.raise_for_status()
+                    data = resp.json()
+                    try:
+                        result_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    except (KeyError, IndexError):
+                        logger.error("[M4.1.1] Unexpected API response: %s", data)
+                        raise ServiceUnavailableError("Invalid API response")
+
+                    # Extract usage metadata if available
+                    prompt_tokens = None
+                    completion_tokens = None
+                    if "usageMetadata" in data:
+                        prompt_tokens = data["usageMetadata"].get("promptTokenCount")
+                        completion_tokens = data["usageMetadata"].get("candidatesTokenCount")
+
+                    # [W8] LLM 呼叫除錯日誌 → llm_inference_logs (L1, never leaves device)
+                    latency_ms = int((time.monotonic() - t_start) * 1000)
+                    asyncio.ensure_future(self._emit_llm_log(
+                        prompt=prompt, response=result_text,
+                        latency_ms=latency_ms, temperature=temperature,
+                        max_output_tokens=max_output_tokens,
+                        status="success", error=None,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                    ))
+                    return result_text
+            except (RateLimitError, asyncio.TimeoutError, httpx.TimeoutException) as e:
+                last_err = e
+                wait = min(60.0, (self._BASE_BACKOFF ** attempt) + random.uniform(0, 1))
+                logger.warning("[M4.1.1] %s attempt %d failed (%s), retrying in %.1fs",
+                               self.model_name, attempt + 1, e, wait)
+                await asyncio.sleep(wait)
+            except ServiceUnavailableError:
+                raise
+
+        # [W8] Log failure
+        latency_ms = int((time.monotonic() - t_start) * 1000)
+        asyncio.ensure_future(self._emit_llm_log(
+            prompt=prompt, response="",
+            latency_ms=latency_ms, temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            status="exhausted", error=str(last_err),
+        ))
+        raise last_err or RateLimitError(f"{self.model_name} exceeded max retries")
+
+    async def _emit_llm_log(
+        self, *, prompt: str, response: str,
+        latency_ms: int, temperature: float,
+        max_output_tokens: int, status: str, error: str | None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+    ) -> None:
+        """[W8] Emit structured LLM call log to llm_inference_logs."""
+        try:
+            from m0_4_logging.writer import get_logger as get_log_writer
+            log_writer = get_log_writer()
+            await log_writer.emit_llm_log(
+                model_name=self.model_name,
+                caller_module="M4.1",
+                prompt_text=prompt,
+                response_text=response,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                latency_ms=latency_ms,
+                temperature=temperature,
+                status=status,
+                error_message=error,
+            )
+        except Exception as e:
+            logger.debug("[W8] Failed to emit LLM log: %s", e)
 
 
-async def call_cloud_llm_with_fallback(prompt: str, task_difficulty: str) -> str:
+
+async def call_cloud_llm_with_fallback(prompt: str, task_difficulty: str, **kwargs) -> str:
     """
     [5.1 LLM Tiering] 根據任務難度選擇優先模型，遇到 429/503 自動降級。
     """
-    models = MODEL_MAP.get(task_difficulty, ["gemini-2.0-flash"])
+    models = MODEL_MAP.get(task_difficulty, [PERSONA_MODEL, PERSONA_MODEL_FALLBACK])
     last_err: Exception | None = None
     for model_name in models:
         try:
             client = get_cloud_llm_client(model_name)
-            response = await client.complete(prompt)
+            response = await client.complete(prompt, **kwargs)
             return response
         except (RateLimitError, ServiceUnavailableError, httpx.HTTPStatusError) as e:
             logger.warning("[M4.1.1] Model %s failed: %s. Trying next.", model_name, e)

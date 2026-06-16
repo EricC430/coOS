@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, patch as mock_patch
 
 import pytest
 from fastapi.testclient import TestClient
+from config import Settings
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -30,10 +31,17 @@ WEBHOOK_SECRET = "test_webhook_secret_32chars_fixed"
 
 
 @pytest.fixture
-def client():
-    """FastAPI TestClient with M1.4 router registered."""
+def mock_settings():
+    """Return a Settings instance with the test webhook secret (bypasses .env cache)."""
+    return Settings(github_webhook_secret=WEBHOOK_SECRET, _env_file=None)
+
+
+@pytest.fixture
+def client(mock_settings):
+    """FastAPI TestClient with M1.4 router registered and settings patched."""
     from services.main import app
-    return TestClient(app)
+    with patch("m1_4_github.webhooks.get_settings", return_value=mock_settings):
+        yield TestClient(app)
 
 
 @pytest.fixture
@@ -93,42 +101,39 @@ class TestWebhookSignatureVerification:
         """AC-1: 正確 HMAC-SHA256 簽名的 Webhook 回傳 200。"""
         body = json.dumps(_push_payload()).encode()
         sig = _sign(webhook_secret, body)
-        with patch.dict(os.environ, {"GITHUB_WEBHOOK_SECRET": webhook_secret}):
-            resp = client.post(
-                "/api/v1/webhooks/github",
-                content=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-GitHub-Event": "push",
-                    "X-Hub-Signature-256": sig,
-                },
-            )
+        resp = client.post(
+            "/api/v1/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "push",
+                "X-Hub-Signature-256": sig,
+            },
+        )
         assert resp.status_code == 200
 
     def test_invalid_signature_rejected(self, client):
         """AC-2: 錯誤簽名回傳 403。"""
         body = json.dumps(_push_payload()).encode()
-        with patch.dict(os.environ, {"GITHUB_WEBHOOK_SECRET": WEBHOOK_SECRET}):
-            resp = client.post(
-                "/api/v1/webhooks/github",
-                content=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-GitHub-Event": "push",
-                    "X-Hub-Signature-256": "sha256=invalid",
-                },
-            )
+        resp = client.post(
+            "/api/v1/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "push",
+                "X-Hub-Signature-256": "sha256=invalid",
+            },
+        )
         assert resp.status_code == 403
 
     def test_missing_signature_rejected(self, client):
         """AC-2b: 無簽名標頭回傳 403。"""
         body = json.dumps(_push_payload()).encode()
-        with patch.dict(os.environ, {"GITHUB_WEBHOOK_SECRET": WEBHOOK_SECRET}):
-            resp = client.post(
-                "/api/v1/webhooks/github",
-                content=body,
-                headers={"Content-Type": "application/json", "X-GitHub-Event": "push"},
-            )
+        resp = client.post(
+            "/api/v1/webhooks/github",
+            content=body,
+            headers={"Content-Type": "application/json", "X-GitHub-Event": "push"},
+        )
         assert resp.status_code == 403
 
 
@@ -143,24 +148,19 @@ class TestPushEventProcessing:
         body = json.dumps(payload).encode()
         sig = _sign(WEBHOOK_SECRET, body)
 
-        with patch.dict(os.environ, {"GITHUB_WEBHOOK_SECRET": WEBHOOK_SECRET}):
-            with patch("m1_4_github.webhooks.emit_log", new_callable=AsyncMock) as mock_emit:
-                mock_emit.return_value = None
-                resp = client.post(
-                    "/api/v1/webhooks/github",
-                    content=body,
-                    headers={
-                        "Content-Type": "application/json",
-                        "X-GitHub-Event": "push",
-                        "X-Hub-Signature-256": sig,
-                    },
-                )
+        with patch("m1_4_github.webhooks.emit_log", new_callable=AsyncMock) as mock_emit:
+            mock_emit.return_value = None
+            resp = client.post(
+                "/api/v1/webhooks/github",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-GitHub-Event": "push",
+                    "X-Hub-Signature-256": sig,
+                },
+            )
         assert resp.status_code == 200
         mock_emit.assert_called_once()
-        call_kwargs = mock_emit.call_args[1] if mock_emit.call_args[1] else {}
-        call_args = mock_emit.call_args[0] if mock_emit.call_args[0] else ()
-        # accept both positional and keyword
-        emitted = call_kwargs or {}
 
     def test_pr_event_creates_log(self, client):
         """AC-3b: [R06 §2.1] PR 事件寫入 raw_tracking_logs。"""
@@ -168,18 +168,17 @@ class TestPushEventProcessing:
         body = json.dumps(payload).encode()
         sig = _sign(WEBHOOK_SECRET, body)
 
-        with patch.dict(os.environ, {"GITHUB_WEBHOOK_SECRET": WEBHOOK_SECRET}):
-            with patch("m1_4_github.webhooks.emit_log", new_callable=AsyncMock) as mock_emit:
-                mock_emit.return_value = None
-                resp = client.post(
-                    "/api/v1/webhooks/github",
-                    content=body,
-                    headers={
-                        "Content-Type": "application/json",
-                        "X-GitHub-Event": "pull_request",
-                        "X-Hub-Signature-256": sig,
-                    },
-                )
+        with patch("m1_4_github.webhooks.emit_log", new_callable=AsyncMock) as mock_emit:
+            mock_emit.return_value = None
+            resp = client.post(
+                "/api/v1/webhooks/github",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-GitHub-Event": "pull_request",
+                    "X-Hub-Signature-256": sig,
+                },
+            )
         assert resp.status_code == 200
         mock_emit.assert_called_once()
 
@@ -188,16 +187,15 @@ class TestPushEventProcessing:
         body = json.dumps({"action": "starred"}).encode()
         sig = _sign(WEBHOOK_SECRET, body)
 
-        with patch.dict(os.environ, {"GITHUB_WEBHOOK_SECRET": WEBHOOK_SECRET}):
-            resp = client.post(
-                "/api/v1/webhooks/github",
-                content=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-GitHub-Event": "star",
-                    "X-Hub-Signature-256": sig,
-                },
-            )
+        resp = client.post(
+            "/api/v1/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "star",
+                "X-Hub-Signature-256": sig,
+            },
+        )
         assert resp.status_code == 204
 
 
@@ -217,17 +215,16 @@ class TestWebhookPrivacy:
         async def capture_emit(*args, **kwargs):
             captured.update(kwargs)
 
-        with patch.dict(os.environ, {"GITHUB_WEBHOOK_SECRET": WEBHOOK_SECRET}):
-            with patch("m1_4_github.webhooks.emit_log", side_effect=capture_emit):
-                client.post(
-                    "/api/v1/webhooks/github",
-                    content=body,
-                    headers={
-                        "Content-Type": "application/json",
-                        "X-GitHub-Event": "push",
-                        "X-Hub-Signature-256": sig,
-                    },
-                )
+        with patch("m1_4_github.webhooks.emit_log", side_effect=capture_emit):
+            client.post(
+                "/api/v1/webhooks/github",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-GitHub-Event": "push",
+                    "X-Hub-Signature-256": sig,
+                },
+            )
         payload_data = captured.get("payload", {})
         commits = payload_data.get("commits", [])
         assert any("user login" in c.get("message", "") for c in commits)
@@ -243,17 +240,16 @@ class TestWebhookPrivacy:
         async def capture_emit(*args, **kwargs):
             captured.update(kwargs)
 
-        with patch.dict(os.environ, {"GITHUB_WEBHOOK_SECRET": WEBHOOK_SECRET}):
-            with patch("m1_4_github.webhooks.emit_log", side_effect=capture_emit):
-                client.post(
-                    "/api/v1/webhooks/github",
-                    content=body,
-                    headers={
-                        "Content-Type": "application/json",
-                        "X-GitHub-Event": "push",
-                        "X-Hub-Signature-256": sig,
-                    },
-                )
+        with patch("m1_4_github.webhooks.emit_log", side_effect=capture_emit):
+            client.post(
+                "/api/v1/webhooks/github",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-GitHub-Event": "push",
+                    "X-Hub-Signature-256": sig,
+                },
+            )
         files = captured.get("payload", {}).get("files", [])
         assert any("api_keys.py" in f for f in files)
         assert not any(f.startswith("C:") or "/Users/" in f or "\\Users\\" in f for f in files)
@@ -282,11 +278,22 @@ class TestOAuthFlow:
 # ---------------------------------------------------------------------------
 
 class TestLocalGitMonitor:
-    def test_detects_new_commit_in_repo(self, tmp_path):
-        """AC (M1.4.3): [R06 §2.1] 本地 Git 掃描偵測到新 commit。"""
+    def _make_monitor(self, tmp_path, emitted):
+        """Helper: create LocalGitMonitor with new API (dict paths + async callbacks)."""
         from services.m1_4_github.local_git_monitor import LocalGitMonitor
+        path_str = str(tmp_path)
+        emit_fn = AsyncMock(side_effect=lambda event: emitted.append(event))
+        update_hash_fn = AsyncMock()
+        monitor = LocalGitMonitor(
+            watched_paths=[{"path": path_str, "last_hash": None}],
+            emit_fn=emit_fn,
+            update_hash_fn=update_hash_fn,
+        )
+        return monitor
 
-        # Init bare git repo with one commit
+    def test_detects_new_commit_in_repo(self, tmp_path):
+        """AC (M1.4.3): [R06 §2.1] 本地 Git 掃描偵測到新 commit after baseline."""
+        # Init repo with one commit
         subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@test.com"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True, capture_output=True)
@@ -295,21 +302,28 @@ class TestLocalGitMonitor:
         subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "init: first commit"], check=True, capture_output=True)
 
         emitted = []
-        monitor = LocalGitMonitor(watched_paths=[str(tmp_path)], emit_fn=emitted.append)
+        monitor = self._make_monitor(tmp_path, emitted)
 
         import asyncio
+        # First scan: establishes baseline (no emit)
         asyncio.run(monitor._check_repo(str(tmp_path)))
+        assert len(emitted) == 0, "baseline scan should not emit"
 
+        # Add a second commit
+        (tmp_path / "file2.py").write_text("x = 2")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "feat: second commit"], check=True, capture_output=True)
+
+        # Second scan: detects new commit
+        asyncio.run(monitor._check_repo(str(tmp_path)))
         assert len(emitted) == 1
         event = emitted[0]
         assert event["action"] == "local_commit"
         assert event["payload"]["repo_name"] == tmp_path.name
-        assert "init: first commit" in str(event["payload"]["commits"])
+        assert "second commit" in str(event["payload"]["commits"])
 
     def test_no_duplicate_emit_on_rescan(self, tmp_path):
         """AC (M1.4.3): [R02 §1.2] 同一 commit 不重複 emit。"""
-        from services.m1_4_github.local_git_monitor import LocalGitMonitor
-
         subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@test.com"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True, capture_output=True)
@@ -318,31 +332,36 @@ class TestLocalGitMonitor:
         subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "feat: x"], check=True, capture_output=True)
 
         emitted = []
-        monitor = LocalGitMonitor(watched_paths=[str(tmp_path)], emit_fn=emitted.append)
+        monitor = self._make_monitor(tmp_path, emitted)
 
         import asyncio
-        asyncio.run(monitor._check_repo(str(tmp_path)))
+        asyncio.run(monitor._check_repo(str(tmp_path)))  # baseline
         asyncio.run(monitor._check_repo(str(tmp_path)))  # second scan, same HEAD
 
-        assert len(emitted) == 1  # only once
+        assert len(emitted) == 0  # baseline only, no new commits
 
     def test_repo_path_stored_in_payload(self, tmp_path):
         """AC (M1.4.3): repo_path 絕對路徑存入 payload (本地識別用)。"""
-        from services.m1_4_github.local_git_monitor import LocalGitMonitor
-
         subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@test.com"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True, capture_output=True)
         (tmp_path / "a.py").write_text("a = 1")
         subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
-        subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "chore: a"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "chore: init"], check=True, capture_output=True)
 
         emitted = []
-        monitor = LocalGitMonitor(watched_paths=[str(tmp_path)], emit_fn=emitted.append)
+        monitor = self._make_monitor(tmp_path, emitted)
 
         import asyncio
+        asyncio.run(monitor._check_repo(str(tmp_path)))  # baseline
+
+        # Add a second commit to trigger an emit
+        (tmp_path / "b.py").write_text("b = 2")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(tmp_path), "commit", "-m", "chore: b"], check=True, capture_output=True)
         asyncio.run(monitor._check_repo(str(tmp_path)))
 
+        assert len(emitted) == 1
         assert emitted[0]["payload"]["repo_path"] == str(tmp_path)
 
     def test_nonexistent_repo_does_not_crash(self):
@@ -350,9 +369,13 @@ class TestLocalGitMonitor:
         from services.m1_4_github.local_git_monitor import LocalGitMonitor
 
         emitted = []
-        monitor = LocalGitMonitor(watched_paths=["/nonexistent/path"], emit_fn=emitted.append)
+        emit_fn = AsyncMock(side_effect=lambda event: emitted.append(event))
+        monitor = LocalGitMonitor(
+            watched_paths=[{"path": "/nonexistent/path", "last_hash": None}],
+            emit_fn=emit_fn,
+            update_hash_fn=AsyncMock(),
+        )
 
         import asyncio
-        # Should not raise
         asyncio.run(monitor._check_repo("/nonexistent/path"))
         assert len(emitted) == 0

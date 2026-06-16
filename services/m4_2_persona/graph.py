@@ -9,7 +9,6 @@ Risk: RISK-02, RISK-03, RISK-06, RISK-08
 from __future__ import annotations
 
 import logging
-import os
 from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -17,6 +16,7 @@ from langgraph.graph import END, StateGraph
 from .arpm import ARPMValidator, ValidationResult
 from .bdi import BDIInput, reconcile_bdi
 from .echo_mode import EchoModeController, ToneState
+from .message_splitter import split_response  # [GAP-B2] 多訊息分割器
 from .paralinguistic import inject_paralinguistic
 from .prompt_builder import PersonaConfig, build_system_prompt
 from .reactance import detect_reactance
@@ -37,6 +37,7 @@ class PersonaState(TypedDict, total=False):
     persona_id: str
     persona_config: dict        # PersonaConfig 序列化
     implicit_state: str | None  # M4.8 輸入（ImplicitStateLabel）
+    chat_history: list | None   # 近期對話紀錄，供 persona 保持連貫
     bdi_belief: str
     bdi_desire: str
     bdi_intention: str | None
@@ -44,7 +45,10 @@ class PersonaState(TypedDict, total=False):
     current_agency: float
     raw_response: str | None    # LLM 生成的裸回應
     final_response: str | None  # 注入副語言後的最終回應
+    split_messages: list | None  # [GAP-B2] message_splitter 拆分後的多氣泡序列
     arpm_blocked: bool
+    active_goals: list | None       # [R03 §3] 角色目標，由 M4.1 傳入，注入記憶區塊
+    upcoming_promises: list | None  # [R03 §3] 角色承諾，由 M4.1 傳入，注入記憶區塊
 
 
 # ---------------------------------------------------------------------------
@@ -122,12 +126,31 @@ async def echo_mode_node(state: PersonaState) -> PersonaState:
 async def persona_responder_node(state: PersonaState) -> PersonaState:
     """
     M4.2 主回應節點：呼叫雲端 LLM 生成 Persona 回應。
+    [W3] PersonaCard v2 編譯 → 取代原始 personality_prompt。
+    [W4] MI 選擇器注入行為策略指令。
     注入 BDI intention + 隱性狀態 + 系統提示詞後生成。
     """
     config_dict = state.get("persona_config") or {}
+
+    # [W3] 嘗試從 persona_card JSON 編譯結構化提示詞
+    compiled_prompt = None
+    anti_sycophancy_stances = None
+    raw_card_str = config_dict.get("persona_card")
+    if raw_card_str:
+        try:
+            import json
+            card_data = json.loads(raw_card_str) if isinstance(raw_card_str, str) else raw_card_str
+            from .persona_card import persona_card_from_dict, compile_to_prompt
+            card = persona_card_from_dict(card_data)
+            compiled_prompt = compile_to_prompt(card)
+            anti_sycophancy_stances = card_data.get("stances")
+            logger.info("[M4.2] PersonaCard v2 compiled for %s", config_dict.get("name", "?"))
+        except Exception as e:
+            logger.warning("[M4.2] PersonaCard compile fallback: %s", e)
+
     config = PersonaConfig(
         name=config_dict.get("name", "AI 幫手"),
-        personality_prompt=config_dict.get("personality_prompt", "你是一個有幫助的 AI 助手。"),
+        personality_prompt=compiled_prompt or config_dict.get("personality_prompt", "你是一個有幫助的 AI 助手。"),
         backstory=config_dict.get("backstory", ""),
         tone_default=config_dict.get("tone_default", "authoritative"),
         trust_level=config_dict.get("trust_level", 0.5),
@@ -135,7 +158,37 @@ async def persona_responder_node(state: PersonaState) -> PersonaState:
 
     role_id = state.get("role_id", "default")
     user_id = state.get("user_id", "")
-    system_prompt = build_system_prompt(config, role_id=role_id, user_id=user_id)
+    persona_id = state.get("persona_id", "")
+
+    # [W4] MI 選擇器：根據阻抗/隱性狀態/使用者訊息選擇 MI 行為策略
+    mi_directive_str = None
+    try:
+        from .mi_selector import select_mi_technique
+        reactance_score = state.get("_reactance_score", 0.0)
+        implicit_state = state.get("implicit_state")
+        user_message = state.get("user_message", "")
+        mi_result = select_mi_technique(
+            reactance_score=reactance_score,
+            implicit_state=implicit_state,
+            tone_state=state.get("current_tone", "authoritative"),
+            user_message=user_message,
+        )
+        mi_directive_str = mi_result.instruction
+        if mi_result.forbidden_actions:
+            mi_directive_str += "\n禁止：" + "、".join(mi_result.forbidden_actions)
+    except Exception as e:
+        logger.warning("[M4.2] MI selector failed: %s", e)
+
+    system_prompt = build_system_prompt(
+        config,
+        role_id=role_id,
+        user_id=user_id,
+        persona_id=persona_id,
+        active_goals=state.get("active_goals") or [],
+        upcoming_promises=state.get("upcoming_promises") or [],
+        mi_directive=mi_directive_str,
+        anti_sycophancy_stances=anti_sycophancy_stances,
+    )
 
     # 注入隱性狀態情境 (REMT)
     implicit_label_str = state.get("implicit_state")
@@ -154,7 +207,8 @@ async def persona_responder_node(state: PersonaState) -> PersonaState:
 
     # 呼叫 Gemini API
     user_message = state.get("user_message", "")
-    response = await _call_gemini(system_prompt, user_message, config.tone_default)
+    chat_history = state.get("chat_history") or []
+    response = await _call_gemini(system_prompt, user_message, config.tone_default, chat_history)
 
     return {**state, "raw_response": response}
 
@@ -173,13 +227,71 @@ async def paralinguistic_node(state: PersonaState) -> PersonaState:
     return {**state, "final_response": final}
 
 
+async def message_splitter_node(state: PersonaState) -> PersonaState:
+    """
+    [GAP-B2 修復][R05 §跨越恐怖谷] 多訊息分割器節點。
+    [R05] 模擬真人分段發言，拆為 1~4 個氣泡（依回應長度分級）。
+    skip 條件：final_response 為 None（已被上游阻斷）。
+    """
+    final = state.get("final_response")
+    if not final:
+        return {**state, "split_messages": []}
+
+    seq = split_response(final)
+    # 序列化為可 JSON 的 list[dict]
+    bubbles = [
+        {"content": msg.content, "delay_ms": msg.delay_ms}
+        for msg in seq.messages
+    ]
+    return {**state, "split_messages": bubbles}
+
+
 async def arpm_audit_node(state: PersonaState) -> PersonaState:
     """
     [R03 §2] ARPM 監督節點：記錄狀態切換事件。
+    [W5] ARPM-lite Claim Ledger：背景抽取 persona 事實宣稱，偵測矛盾。
     完整 ARPM 由 M4.9 實作，此處僅記錄 raw_tracking_logs。
     """
     if state.get("arpm_blocked"):
         logger.info("[M4.2] ARPM audit: transition blocked, logged.")
+
+    # [W5] Claim Ledger: 非阻塞式背景抽取
+    final_response = state.get("final_response")
+    if final_response:
+        try:
+            from .claim_ledger import ClaimLedger
+            # Per-persona ledger (MVP: in-memory, per-invocation; future: persist per persona_id)
+            ledger = ClaimLedger()
+            claims = ledger.extract_claims(final_response)
+            if claims:
+                drift_events = ledger.check_contradictions()
+                if drift_events:
+                    logger.warning(
+                        "[M4.2] ARPM-lite drift detected: %d contradictions in %s",
+                        len(drift_events), state.get("persona_id", "?"),
+                    )
+                    # Emit to raw_tracking_logs (non-blocking)
+                    try:
+                        from m0_4_logging.writer import get_logger as get_log_writer
+                        log_writer = get_log_writer()
+                        import json
+                        await log_writer.emit(
+                            module="M4.2",
+                            action="persona_drift_detected",
+                            level="WARNING",
+                            payload=json.dumps({
+                                "persona_id": state.get("persona_id", ""),
+                                "drift_count": len(drift_events),
+                                "claims_count": len(claims),
+                                "sample_contradiction": drift_events[0].contradiction_reason if drift_events else "",
+                            }, ensure_ascii=False),
+                            role_id=state.get("role_id", ""),
+                        )
+                    except Exception as log_err:
+                        logger.debug("[M4.2] Failed to emit drift log: %s", log_err)
+        except Exception as e:
+            logger.debug("[M4.2] Claim ledger extraction failed: %s", e)
+
     return state
 
 
@@ -202,7 +314,10 @@ def build_persona_graph() -> StateGraph:
     """
     [R03 §1] 建構 M4.2 Persona 狀態機 LangGraph 圖。
     節點順序：drift_filter → bdi_reconciler → reactance_detector
-              → echo_mode → persona_responder → paralinguistic → arpm_audit
+              → echo_mode → persona_responder → paralinguistic
+              → message_splitter → arpm_audit
+
+    [GAP-B2] message_splitter 已接入 paralinguistic 之後，解決多氣泡缺失問題。
     """
     graph = StateGraph(PersonaState)
 
@@ -212,6 +327,7 @@ def build_persona_graph() -> StateGraph:
     graph.add_node("echo_mode", echo_mode_node)
     graph.add_node("persona_responder", persona_responder_node)
     graph.add_node("paralinguistic", paralinguistic_node)
+    graph.add_node("message_splitter", message_splitter_node)  # [GAP-B2]
     graph.add_node("arpm_audit", arpm_audit_node)
 
     graph.set_entry_point("drift_filter")
@@ -226,7 +342,8 @@ def build_persona_graph() -> StateGraph:
         "continue": "persona_responder",
     })
     graph.add_edge("persona_responder", "paralinguistic")
-    graph.add_edge("paralinguistic", "arpm_audit")
+    graph.add_edge("paralinguistic", "message_splitter")  # [GAP-B2]
+    graph.add_edge("message_splitter", "arpm_audit")      # [GAP-B2]
     graph.add_edge("arpm_audit", END)
 
     return graph.compile()
@@ -236,38 +353,58 @@ def build_persona_graph() -> StateGraph:
 # LLM 呼叫 (與 M4.1 共用 Gemini client)
 # ---------------------------------------------------------------------------
 
-async def _call_gemini(system_prompt: str, user_message: str, tone: str) -> str | None:
-    """呼叫 Gemini API 生成 Persona 回應，使用 M4.1 共用的 client。"""
-    try:
-        from m4_1_router.routing_engine import get_cloud_llm_client
-        client = get_cloud_llm_client("gemini-2.0-flash")
-        
-        full_prompt = (
-            f"SYSTEM:\n{system_prompt}\n\n"
-            f"USER:\n{user_message}\n\n"
-            f"ASSISTANT (以 {tone} 語氣回應，繁體中文):"
-        )
-        # 覆蓋預設的 maxOutputTokens 以允許長回應
-        async def complete_with_more_tokens(prompt: str) -> str:
-            import os
-            from config import get_settings
-            import httpx
-            settings = get_settings()
-            api_key = settings.gemini_api_key or os.environ.get("GOOGLE_API_KEY")
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1000}
-            }
-            async with httpx.AsyncClient(timeout=15.0) as http_client:
-                resp = await http_client.post(url, json=payload)
-                resp.raise_for_status()
-                return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+async def _call_gemini(
+    system_prompt: str,
+    user_message: str,
+    tone: str,
+    chat_history: list[dict] | None = None,
+) -> str | None:
+    """呼叫 Gemini API 生成 Persona 回應。使用 M4.1 共用 client（含 rate limiting + backoff）。"""
+    from m4_1_router.routing_engine import (
+        PERSONA_MODEL,
+        PERSONA_MODEL_FALLBACK,
+        RateLimitError,
+        ServiceUnavailableError,
+        get_cloud_llm_client,
+    )
 
-        return await complete_with_more_tokens(full_prompt)
-    except Exception as e:
-        logger.warning("[M4.2] _call_gemini failed: %s", e)
-        return None
+    # 組裝近期對話歷史（最多 8 輪 = 16 條）
+    history_block = ""
+    if chat_history:
+        recent = chat_history[-16:]
+        lines = []
+        for h in recent:
+            role_label = "使用者" if h.get("role") == "user" else "你"
+            lines.append(f"{role_label}：{h.get('content', '')}")
+        history_block = "\n【近期對話】\n" + "\n".join(lines) + "\n"
+
+    output_rules = (
+        "\n【回應格式規則】\n"
+        "- 繁體中文，口語自然，2~4句話\n"
+        "- 禁止每次都用問句結尾——若已連續問過，改用陳述句或提供具體建議\n"
+        "- 禁止使用條列式\n"
+        "- 保持你的個人語氣和過往經歷，不要說「我是AI」\n"
+    )
+
+    full_prompt = (
+        f"SYSTEM:\n{system_prompt}{output_rules}"
+        f"{history_block}\n"
+        f"使用者：{user_message}\n\n"
+        f"你（以 {tone} 語氣，繁體中文）："
+    )
+
+    for model in (PERSONA_MODEL, PERSONA_MODEL_FALLBACK):
+        try:
+            client = get_cloud_llm_client(model)
+            return await client.complete(full_prompt, max_output_tokens=400, temperature=0.75)
+        except (RateLimitError, ServiceUnavailableError) as e:
+            logger.warning("[M4.2] _call_gemini %s failed: %s, trying fallback", model, e)
+        except Exception as e:
+            logger.warning("[M4.2] _call_gemini unexpected error: %s", e)
+            return None
+
+    logger.error("[M4.2] _call_gemini: all models exhausted")
+    return None
 
 
 _compiled_graph = None

@@ -48,9 +48,11 @@ def rule_based_reactance(user_msg: str) -> ReactanceScore:
 
     if hit_count == 0:
         # 輕量語調分析：感嘆號、否定詞密度
+        # [W9.5] 修補：否定詞 < 3 個不計入（排除「不是A也不是B，其實是C」等修辭場景）
         negations = len(re.findall(r"(不|沒|別|不要|沒有)", user_msg))
         exclamations = user_msg.count("！") + user_msg.count("!")
-        soft_score = min((negations * 0.08 + exclamations * 0.05), 0.29)
+        neg_score = (negations * 0.08) if negations >= 3 else 0.0
+        soft_score = min(neg_score + exclamations * 0.05, 0.29)
         return ReactanceScore(score=soft_score, source="rule")
 
     # 第一個命中 0.75，每增一個 +0.10，上限 0.95

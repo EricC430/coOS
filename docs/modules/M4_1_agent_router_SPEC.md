@@ -488,8 +488,8 @@ def _compute_confidence(keyword_match: bool, intent_match: bool, hit_count: int)
 # [5.1 LLM Tiering] 任務複雜度與雲端模型對照表
 # Tier 1 RPD 1500 (Gemma 4 31B/26B), Tier 2 RPD 500 (Gemini 3.1 Flash Lite), Tier 3 RPD 10 (Gemini 3.5/3 Flash, Gemini 2.5 Flash/Lite)
 MODEL_MAP = {
-    "tier1": ["gemma-4-31b", "gemma-4-26b"],
-    "tier2": ["gemini-3.1-flash-lite", "gemma-4-31b", "gemma-4-26b"],
+    "tier1": ["gemma-4-31b-it", "gemma-4-26b-a4b-it"],
+    "tier2": ["gemini-3.1-flash-lite", "gemma-4-31b-it", "gemma-4-26b-a4b-it"],
     "tier3": ["gemini-3.5-flash", "gemini-3-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite"],
     "tier4": ["gemini-3.5-pro", "gemini-3.5-flash"],
 }

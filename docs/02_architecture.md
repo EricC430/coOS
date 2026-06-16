@@ -158,6 +158,20 @@ arq==0.25.*    # 排程
 | Pollinations.ai | 生圖 (MVP) | 無 | 免費 |
 | Leonardo.ai | 生圖 (Beta) | Free tier | 150 點/日 |
 
+ **Gemini Free Tier Limits:**
+   | Model | RPM | TPM | RPD |
+   |-------|-----|-----|-----|
+   | `gemini-2.0-flash` | 0 | 0 | 0 |
+   | `gemini-2.0-flash-lite` | 0 | 0 | 0 |
+   | `gemini-3.5-flash` | 5 | 250,000 | 20 |
+   | `gemini-3.0-flash` | 5 | 250,000 | 20 |
+   | `gemini-3.1-flash-lite` | 15 | 250,000 | 500 |
+   | `gemini-2.5-flash-lite` | 10 | 250,000 | 20 |
+   | `gemini-2.5-flash` | 5 | 250,000 | 20 |
+   | `gemini-2.5-pro` | 0 | 0 | 0 |
+   | `Gemma 4 26B` | 15 | unlimited | 1500 |
+   | `Gemma 4 26B` | 31 | unlimited | 1500 |
+
 ### 5.1 任務難度分層與 LLM 路由策略 (LLM Tiering & Fallback)
 
 為防範 Google AI Studio Free Tier 的每日用量上限 (Quota Limits) 以及本地端運作延遲 (iPad 12秒延遲)，系統將推理任務依複雜度與日配額限制分為四個層級，動態選用最適模型：

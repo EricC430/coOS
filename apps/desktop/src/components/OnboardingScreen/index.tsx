@@ -114,7 +114,7 @@ export function OnboardingScreen({ onRolesCreated }: Props) {
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        background: "var(--bg-main, #1a1a2e)",
+        background: "var(--bg-main, #f0e8ca)",
         gap: "24px",
         padding: "40px",
       }}

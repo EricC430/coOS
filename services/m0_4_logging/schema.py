@@ -65,3 +65,57 @@ class LogEvent(BaseModel):
                 "Log summaries or statistics only, never raw content."
             )
         return self
+
+
+class LLMInferenceLog(BaseModel):
+    """L1 plaintext LLM call log (never uploaded to cloud)."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)
+    )
+    model_name: str = Field(...)
+    caller_module: str = Field(..., description="Module ID, format Mx.y")
+    prompt_text: str = Field(...)
+    response_text: str = Field(...)
+    prompt_tokens: int | None = Field(default=None)
+    completion_tokens: int | None = Field(default=None)
+    latency_ms: int | None = Field(default=None)
+    temperature: float | None = Field(default=None)
+    status: str = Field(default="success")  # success, rate_limited, error, exhausted
+    error_message: str | None = Field(default=None)
+    role_id: str | None = Field(default=None)
+    correlation_id: str | None = Field(default=None)
+
+    @field_validator("caller_module")
+    @classmethod
+    def validate_module_format(cls, v: str) -> str:
+        if not _MODULE_RE.match(v):
+            raise ValueError(f"Module ID must match Mx.y format, got: {v}")
+        return v
+
+
+class SystemExecutionLog(BaseModel):
+    """System / API execution and debug log."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)
+    )
+    module: str = Field(...)  # Can be module (Mx.y) or component (main, db, auth)
+    action: str = Field(...)  # api_error, config_changed, db_error, etc.
+    level: str = Field(default="ERROR")
+    message: str = Field(...)
+    exception_trace: str | None = Field(default=None)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    user_id: str | None = Field(default=None)
+    role_id: str | None = Field(default=None)
+
+    @field_validator("level")
+    @classmethod
+    def validate_level(cls, v: str) -> str:
+        upper = v.upper()
+        if upper not in _VALID_LEVELS:
+            raise ValueError(f"Log level must be one of {_VALID_LEVELS}, got: {v}")
+        return upper
+

@@ -89,16 +89,24 @@ class TestM4_4_1_ElicitationController:
             assert "請輸入耗時" not in msg
 
     def test_elicitation_cooldown(self):
-        """每次對話最多套問 1 次，cooldown 至少 5 turn"""
+        """[DEVIATION-01 拍板] 每個 context 類型各 1 次，總量 <= 3，cooldown >= 3 turn"""
         controller = ElicitationController()
-        controller.record_elicitation(thread_id="t_001", turn=3)
-        assert controller.can_elicit(thread_id="t_001", current_turn=5) is False
-        assert controller.can_elicit(thread_id="t_001", current_turn=9) is False  # already 1 used
+        # 使用了 general_duration 後，相同 context 不可再觸發
+        controller.record_elicitation(thread_id="t_001", turn=3, context="general_duration")
+        assert controller.can_elicit(thread_id="t_001", current_turn=4, context="general_duration") is False
+        # cooldown 未過（3 turn 內）
+        assert controller.can_elicit(thread_id="t_001", current_turn=5, context="goal_probe") is False
+        # cooldown 過後，不同 context 可以
+        assert controller.can_elicit(thread_id="t_001", current_turn=6, context="goal_probe") is True
+        # 三種 context 都用完後，任何 context 都不可再觸發
+        controller.record_elicitation(thread_id="t_001", turn=6, context="goal_probe")
+        controller.record_elicitation(thread_id="t_001", turn=10, context="deadline_probe")
+        assert controller.can_elicit(thread_id="t_001", current_turn=15, context="general_duration") is False
 
     def test_elicitation_cooldown_fresh_thread(self):
         """新 thread 未套問過 → 可套問"""
         controller = ElicitationController()
-        assert controller.can_elicit(thread_id="t_new", current_turn=1) is True
+        assert controller.can_elicit(thread_id="t_new", current_turn=1, context="general_duration") is True
 
     def test_no_elicitation_when_telemetry_confident(self):
         """背景監測自信度 >= 0.7 時不套問，避免 AI 裝傻"""

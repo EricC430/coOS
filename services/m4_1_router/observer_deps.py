@@ -29,10 +29,11 @@ class ObserverDeps:
 def _resolve_eguard() -> Any | None:
     """[RISK-12] M2.3 Eguard PII 過濾器，包裝為 filter_pii 介面供 M4.6 使用。"""
     try:
-        from services.main import _eguard_filter
-        if _eguard_filter is None:
+        import main as _main  # services/ is on sys.path; 'main' resolves to services/main.py
+        _eguard = getattr(_main, "_eguard_filter", None)
+        if _eguard is None:
             from m2_3_eguard.filter import EguardFilter
-            _eguard_filter = EguardFilter()
+            _eguard = EguardFilter()
 
         class _EguardAdapter:
             def __init__(self, f) -> None:
@@ -40,34 +41,40 @@ def _resolve_eguard() -> Any | None:
 
             def mask_pii(self, text: str, role_id: str = "") -> Any:
                 return self._f.mask_pii(text, role_id=role_id)
-                
+
             def filter_pii(self, text: str) -> str:
                 return self._f.mask_pii(text).sanitized_text
 
-        return _EguardAdapter(_eguard_filter)
+        return _EguardAdapter(_eguard)
     except Exception as e:
         logger.warning("[M4.1.3] Eguard unavailable for observer: %s", e)
         return None
 
 
-def _resolve_db(role_id: str) -> Any | None:
+def _resolve_db(role_id: str) -> Any | None:  # noqa: ARG001
     """真實 DB 介面，包裝 M4.6 所需的特定方法。"""
-    from services.main import _db_adapter
+    try:
+        import main as _main  # services/ is on sys.path
+        _db_adapter = getattr(_main, "_db_adapter", None)
+    except Exception as e:
+        logger.warning("[M4.1.3] DB unavailable for observer: %s", e)
+        return None
+
     if _db_adapter is None:
         return None
-        
+
     class _DBAdapter:
         def __init__(self, db): self._db = db
         async def fetch_all(self, q, p=None): return await self._db.fetch_all(q, p)
         async def execute(self, q, p=None): await self._db.execute(q, p)
-        
+
         async def insert_goal(self, role_id, persona_id, title, description):
             import uuid
             await self._db.execute(
                 "INSERT INTO goals (id, role_id, persona_id, title, description) VALUES (:id, :rid, :pid, :t, :d)",
                 {"id": str(uuid.uuid4()), "rid": role_id, "pid": persona_id, "t": title, "d": description}
             )
-            
+
         async def insert_promise(self, role_id, persona_id, source_thread_id, text, deadline):
             import uuid
             await self._db.execute(
@@ -75,32 +82,63 @@ def _resolve_db(role_id: str) -> Any | None:
                 "VALUES (:id, :rid, :pid, :tid, :t, :d)",
                 {"id": str(uuid.uuid4()), "rid": role_id, "pid": persona_id, "tid": source_thread_id, "t": text, "d": deadline}
             )
-            
+
     return _DBAdapter(_db_adapter)
 
 
 def _resolve_sse() -> Any | None:
-    """真實 SSE broker 尚未在此層接線；MVP 回傳一個 dummy 以通過 deps 檢查。"""
-    class _DummySSE:
-        async def emit(self, event_type, data):
-            logger.debug("[M4.1.3] SSE emit (mock): %s %s", event_type, data)
-    return _DummySSE()
+    """[GAP-C1] 連接真實 _sse_broadcast，將 Observer 事件廣播至前端 SSE 訂閱者。"""
+    try:
+        import main as _main
+        _broadcast = getattr(_main, "_sse_broadcast", None)
+        if _broadcast is None:
+            logger.warning("[M4.1.3] _sse_broadcast not found; SSE events will be dropped")
+            return None
+
+        class _SSEAdapter:
+            def __init__(self, broadcast_fn):
+                self._broadcast = broadcast_fn
+
+            async def emit(self, event_type: str, data: dict):
+                try:
+                    await self._broadcast({"type": event_type, **data})
+                except Exception as e:
+                    logger.warning("[M4.1.3] SSE emit failed: %s", e)
+
+        return _SSEAdapter(_broadcast)
+    except Exception as e:
+        logger.warning("[M4.1.3] SSE resolver failed: %s", e)
+        return None
 
 
-def _resolve_gemma() -> Any | None:
+def _resolve_gemma(role_id: str) -> Any | None:
     """[M2.2] Gemma 邊緣推論介面。"""
     try:
-        from services.main import _gemma_pipeline
+        import main as _main  # services/ is on sys.path
+        _gemma_pipeline = getattr(_main, "_gemma_pipeline", None)
         if _gemma_pipeline is None:
             return None
-            
+
         class _GemmaAdapter:
             def __init__(self, p): self._p = p
-            async def generate_json(self, prompt):
-                return await self._p.client.generate_json(prompt)
-            async def generate_text(self, prompt):
-                return await self._p.client.generate_text(prompt)
-                
+
+            async def generate_json(self, prompt: str):
+                # GemmaEdgeClient.generate() returns a dict from Ollama
+                # We wrap it via the pipeline's internal client (_client)
+                try:
+                    return await self._p._client.generate(prompt, role_id=role_id)
+                except Exception as e:
+                    logger.warning("[M4.1.3] Gemma generate_json failed: %s", e)
+                    return {}
+
+            async def generate_text(self, prompt: str) -> str:
+                try:
+                    result = await self._p._client.generate(prompt, role_id=role_id)
+                    return str(result.get("context_summary", ""))
+                except Exception as e:
+                    logger.warning("[M4.1.3] Gemma generate_text failed: %s", e)
+                    return ""
+
         return _GemmaAdapter(_gemma_pipeline)
     except Exception:
         return None
@@ -111,7 +149,7 @@ def resolve_observer_deps(role_id: str) -> ObserverDeps | None:
     db = _resolve_db(role_id)
     eguard = _resolve_eguard()
     sse = _resolve_sse()
-    gemma = _resolve_gemma()
+    gemma = _resolve_gemma(role_id)
     # PII filter and DB are required
     if db is None or eguard is None:
         return None

@@ -103,9 +103,9 @@ async def _do_extraction(
     """執行所有萃取步驟。慢/失敗的子步驟不應拖垮整體（由上層 timeout 守護）。"""
     result = ObserverResult(role_id=role_id)
 
-    # 1. 專案偵測 + upsert (含 Eguard / 去重 / SSE)
+    # 1. 主題標籤偵測 + upsert (Regex -> LLM fallback -> Eguard -> 去重 -> SSE)
     result.project_name = await detect_and_upsert_project(
-        user_msg, role_id=role_id, db=db, eguard=eguard, sse=sse
+        user_msg, role_id=role_id, db=db, eguard=eguard, sse=sse, gemma=gemma
     )
 
     # 2. 意圖萃取

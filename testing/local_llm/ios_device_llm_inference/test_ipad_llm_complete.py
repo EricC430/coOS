@@ -2,7 +2,7 @@ import requests
 import time
 
 # 替換為您的 iPad IP 與 Port
-IPAD_URL = "http://192.168.1.65:11434/api/chat"
+IPAD_URL = "http://192.168.0.79:11434/api/chat"
 
 # 我們測試系統要用的「意圖壓縮」情境
 payload = {
@@ -10,7 +10,7 @@ payload = {
     "messages": [
         {
             "role": "user",
-            "content": "1673*9462-5314是多少?",
+            "content": "What is the capital of France?",
             # "content": "你是一個行為分析系統。請根據以下日誌，只輸出一個代表其心理狀態的『詞彙』（例如：焦慮、逃避、冷靜），不要做任何多餘的解釋。\n\n日誌：連續切換 5 個檔案，刪除 20 行代碼，游標停留在錯誤行長達 3 分鐘。"
         }
     ],
@@ -27,10 +27,9 @@ try:
     end_time = time.time()
     result = response.json()
     
-    print("\n✅ 推論成功！iPad 回傳結果：")
-    # 擷取 Ollama 格式的回覆內容
-    print(f"[{result['message']['role'].upper()}]: {result['message']['content']}")
-    print(f"\n⏱️ 總耗時: {end_time - start_time:.2f} 秒")
+    print("\n[SUCCESS] Inference Succeeded! iPad Response:")
+    print(result)
+    print(f"\n[TIME] Duration: {end_time - start_time:.2f} seconds")
 
 except requests.exceptions.RequestException as e:
-    print(f"\n❌ 連線或推論失敗: {e}")
+    print(f"\n[FAIL] Connection or inference failed: {e}")

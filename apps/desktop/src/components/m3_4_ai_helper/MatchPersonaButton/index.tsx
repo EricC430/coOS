@@ -7,31 +7,45 @@
 import React, { useState } from "react";
 import { useCoOSStore } from "../../../stores/m3_1_global_store";
 import { MatchStateModal } from "./MatchStateModal";
+import type { ChatMessage } from "../ChatMessageList";
+
+let _greetId = 0;
 
 interface Props {
   currentPersonaId?: string;
   onMatch?: (personaId: string) => void;
+  onGreeting?: (msg: ChatMessage) => void;
 }
 
-export function MatchPersonaButton({ currentPersonaId, onMatch }: Props) {
+export function MatchPersonaButton({ currentPersonaId, onMatch, onGreeting }: Props) {
   const [showModal, setShowModal] = useState(false);
   const [showRematch, setShowRematch] = useState(false);
   const { setActiveExpert, currentRole } = useCoOSStore();
 
-  const handleMatch = async (stateDescription: string, excludePersonaId?: string) => {
-    const res = await fetch("/api/m4_1/match_persona", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        current_state_description: stateDescription,
-        current_role_id: currentRole?.id,
-        exclude_persona_id: excludePersonaId,
-      }),
-    });
-    if (!res.ok) throw new Error("match_failed");
-    const { persona_id } = await res.json();
-    setActiveExpert(persona_id);
-    onMatch?.(persona_id);
+  const handleMatchSuccess = async (personaId: string, greetingMessage: string, expertName: string) => {
+    // Reload expert sidebar so newly auto-generated expert appears
+    if (currentRole?.id) {
+      try {
+        const { seedExpertCache } = useCoOSStore.getState();
+        const expRes = await fetch(`/api/m6_2/roles/${currentRole.id}/experts`);
+        if (expRes.ok) seedExpertCache(await expRes.json());
+      } catch { /* non-fatal */ }
+    }
+
+    setActiveExpert(personaId);
+    onMatch?.(personaId);
+
+    // [M4.2] Expert initiates the conversation with a greeting
+    if (greetingMessage && onGreeting) {
+      // Short delay so the sidebar transition finishes before the bubble appears
+      await new Promise((r) => setTimeout(r, 600));
+      onGreeting({
+        id: `greet_${++_greetId}`,
+        role: "assistant",
+        content: greetingMessage,
+        expertName: expertName ?? undefined,
+      });
+    }
   };
 
   return (
@@ -57,14 +71,14 @@ export function MatchPersonaButton({ currentPersonaId, onMatch }: Props) {
 
       {showModal && (
         <MatchStateModal
-          onMatch={handleMatch}
+          onSuccess={handleMatchSuccess}
           onClose={() => setShowModal(false)}
         />
       )}
 
       {showRematch && (
         <MatchStateModal
-          onMatch={handleMatch}
+          onSuccess={handleMatchSuccess}
           onClose={() => setShowRematch(false)}
           excludePersonaId={currentPersonaId}
         />

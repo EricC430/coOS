@@ -62,6 +62,24 @@ class FakeDB:
     def projects_for(self, role_id: str) -> list[FakeProject]:
         return [p for p in self.projects if p.role_id == role_id]
 
+    async def fetch_all(self, query: str, params: dict) -> list[dict]:
+        """Simulate SELECT name FROM role_projects WHERE role_id = :rid"""
+        role_id = params.get("rid", "")
+        return [{"name": p.name} for p in self.projects if p.role_id == role_id]
+
+    async def execute(self, query: str, params: dict) -> None:
+        """Simulate INSERT INTO role_projects"""
+        if "INSERT" in query.upper():
+            name = params.get("name", "")
+            role_id = params.get("rid", "")
+            if name and role_id:
+                self.add_project(role_id=role_id, name=name, inferred_by_ai=True)
+
+
+class _EguardMaskResult:
+    def __init__(self, text: str):
+        self.sanitized_text = text
+
 
 class FakeEguard:
     """Strips a small PII set so tests do not depend on the full M2.3 patterns."""
@@ -73,6 +91,9 @@ class FakeEguard:
         for token in self._PII:
             out = out.replace(token, "[REDACTED]")
         return out
+
+    def mask_pii(self, text: str, role_id: str = "") -> _EguardMaskResult:
+        return _EguardMaskResult(self.filter_pii(text))
 
 
 class FakeSSE:

@@ -72,7 +72,8 @@ export const useCoOSStore = create<CoOSState>()(
         console.warn(`[M3.1] switchRole: role ${roleId} not in cache`);
         return;
       }
-      set({ currentRole: role, isRoleTransitioning: true });
+      // [RISK-06] Clear expert context on role switch to prevent cross-role leakage
+      set({ currentRole: role, isRoleTransitioning: true, expertCache: {}, activeExpert: null });
     },
 
     applyXPGrant: ({ new_total }) => {
@@ -81,6 +82,11 @@ export const useCoOSStore = create<CoOSState>()(
     },
 
     setActiveExpert: (expertId) => {
+      // __tool__ is the built-in tool AI — not stored in expertCache
+      if (expertId === "__tool__") {
+        set({ activeExpert: { id: "__tool__", expertName: "工具型 AI", trustLevel: 5 } });
+        return;
+      }
       const expert = get().expertCache[expertId] ?? null;
       if (!expert) {
         console.warn(`[M3.1] setActiveExpert: expert ${expertId} not in cache`);

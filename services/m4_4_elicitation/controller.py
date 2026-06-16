@@ -89,34 +89,58 @@ ELICITATION_TEMPLATES: dict[str, list[str]] = {
     "general_duration": [
         "對了，{project_name}這個大概花了你多久？",
     ],
+    "goal_probe": [
+        "那{project_name}你設定的目標是什麼呢？",
+        "有沒有一個你最想先達成的里程碑？",
+    ],
+    "deadline_probe": [
+        "{project_name}有截止日期嗎？",
+        "還是比較開放性、慢慢做的那種？",
+    ],
 }
 
 CONFIDENCE_THRESHOLD = 0.7  # 自信度門檻（鐵律，見 SPEC §8 反模式）
 
 
 class ElicitationController:
-    """每個 thread 最多套問 1 次，cooldown 5 turn。"""
+    """
+    [R08 §五 微干預原則] 套問頻率限制：
+    - 每個 context 類型各最多 1 次（防重複），總量 MAX_PER_THREAD = 3
+    - cooldown 至少 COOLDOWN_TURNS = 3 turn（防「被審問感」）
+    - confidence >= CONFIDENCE_THRESHOLD 的時段不觸發（防「AI 裝傻」，SPEC §8）
+    """
 
-    MAX_PER_THREAD = 1
-    COOLDOWN_TURNS = 5
+    MAX_PER_THREAD = 3
+    COOLDOWN_TURNS = 3
 
     def __init__(self) -> None:
-        self._history: dict[str, list[int]] = {}  # thread_id -> [turn_numbers]
+        # thread_id -> list of (turn_number, context_type)
+        self._history: dict[str, list[tuple[int, str]]] = {}
 
     # ------------------------------------------------------------------
     # 頻率限制
     # ------------------------------------------------------------------
 
-    def record_elicitation(self, thread_id: str, turn: int) -> None:
-        """記錄一次套問發生於某 turn。"""
-        self._history.setdefault(thread_id, []).append(turn)
+    def record_elicitation(self, thread_id: str, turn: int, context: str = "") -> None:
+        """記錄一次套問發生於某 turn，含 context 類型。"""
+        self._history.setdefault(thread_id, []).append((turn, context))
 
-    def can_elicit(self, thread_id: str, current_turn: int) -> bool:
-        """頻率限制檢查：上限 1 次 / thread，且距離上次至少 COOLDOWN_TURNS。"""
+    def can_elicit(self, thread_id: str, current_turn: int, context: str = "") -> bool:
+        """
+        頻率限制：
+        1. 同一 context 類型已使用過 -> False
+        2. 總次數達 MAX_PER_THREAD -> False
+        3. 距離上次套問 < COOLDOWN_TURNS -> False
+        """
         history = self._history.get(thread_id, [])
+        # 同 context 類型不重複
+        if context and any(ctx == context for _, ctx in history):
+            return False
+        # 總量上限
         if len(history) >= self.MAX_PER_THREAD:
             return False
-        if history and (current_turn - history[-1]) < self.COOLDOWN_TURNS:
+        # cooldown 以真實 turn 數計算
+        if history and (current_turn - history[-1][0]) < self.COOLDOWN_TURNS:
             return False
         return True
 

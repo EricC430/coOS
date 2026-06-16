@@ -76,6 +76,7 @@ class AsyncDBAdapter:
         def _sync():
             is_local_table = any(t in query for t in [
                 "role_implicit_states",
+                "role_settings",
                 "chat_transcripts",
                 "raw_tracking_logs",
                 "routing_samples",
@@ -122,6 +123,7 @@ class AsyncDBAdapter:
         def _sync():
             is_local_table = any(t in query for t in [
                 "role_implicit_states",
+                "role_settings",
                 "chat_transcripts",
                 "raw_tracking_logs",
                 "routing_samples",
@@ -171,6 +173,7 @@ class AsyncDBAdapter:
         def _sync():
             is_local_table = any(t in query for t in [
                 "role_implicit_states",
+                "role_settings",
                 "chat_transcripts",
                 "raw_tracking_logs",
                 "routing_samples",
@@ -210,6 +213,140 @@ class AsyncDBAdapter:
                     logger.warning("[AsyncDBAdapter] PG execute failed: %s", e)
         await asyncio.to_thread(_sync)
 
+    # ------------------------------------------------------------------
+    # M4.4.3 Draft Scheduler 專用 DB 方法
+    # ------------------------------------------------------------------
+
+    async def fetch_tracking_logs(self, user_id: str, role_id: str, for_date) -> list:
+        """
+        [M4.4.3] 撈取特定日期的活動遙測記錄，供草稿生成器彙整。
+        from_date = for_date 00:00 ~ for_date+1 00:00 (UTC)。
+        """
+        from datetime import timedelta
+        date_start = str(for_date)
+        date_end = str(for_date + timedelta(days=1))
+        rows = await self.fetch_all(
+            "SELECT id, payload FROM raw_tracking_logs "
+            "WHERE user_id = :uid AND role_id = :rid "
+            "AND created_at >= :ds AND created_at < :de",
+            {"uid": user_id, "rid": role_id, "ds": date_start, "de": date_end},
+        )
+        import json
+        result = []
+        for r in rows:
+            payload = r.get("payload")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    payload = {}
+            from types import SimpleNamespace
+            result.append(SimpleNamespace(id=r["id"], payload=payload or {}))
+        return result
+
+    async def fetch_elicited_durations(self, user_id: str, role_id: str, for_date) -> list:
+        """
+        [M4.4.3] 撈取由 M4.4 套問所得的耗時確認（task_slots 中 is_confirmed=true 的項目）。
+        """
+        from datetime import timedelta
+        date_start = str(for_date)
+        date_end = str(for_date + timedelta(days=1))
+        rows = await self.fetch_all(
+            "SELECT project, duration_minutes FROM task_slots "
+            "WHERE role_id = :rid AND is_confirmed = 1 "
+            "AND created_at >= :ds AND created_at < :de",
+            {"rid": role_id, "ds": date_start, "de": date_end},
+        )
+        return [dict(r) for r in rows]
+
+    async def get_user_active_roles(self, user_id: str) -> list:
+        """[M4.4.3] 取得使用者的所有啟用角色。"""
+        from types import SimpleNamespace
+        rows = await self.fetch_all(
+            "SELECT id, display_name FROM roles WHERE user_id = :uid AND is_active = 1",
+            {"uid": user_id},
+        )
+        return [SimpleNamespace(id=r["id"]) for r in rows]
+
+    async def create_draft_reflection(self, **kwargs) -> object:
+        """
+        [M4.4.3 / RISK-01] 建立日報草稿。is_draft=True, is_reviewed=False 永遠由呼叫端確保。
+        """
+        import uuid as _uuid
+        from types import SimpleNamespace
+
+        reflection_date = str(kwargs.get("reflection_date", ""))
+        user_id = kwargs.get("user_id", "")
+        role_id = kwargs.get("role_id", "")
+        
+        # Check if parent daily reflection exists for this date, user, and role
+        row = await self.fetch_one(
+            "SELECT id FROM daily_reflections "
+            "WHERE user_id = :uid AND role_id = :rid AND reflection_date = :rd",
+            {"uid": str(user_id), "rid": str(role_id), "rd": reflection_date}
+        )
+        if row:
+            reflection_id = row["id"]
+        else:
+            reflection_id = str(_uuid.uuid4())
+            await self.execute(
+                "INSERT INTO daily_reflections "
+                "(id, user_id, role_id, reflection_date, is_completed) "
+                "VALUES (:id, :uid, :rid, :rd, 0)",
+                {"id": reflection_id, "uid": str(user_id), "rid": str(role_id), "rd": reflection_date}
+            )
+
+        segment_id = str(_uuid.uuid4())
+        ai_description = kwargs.get("ai_description", "")
+        ai_analysis = kwargs.get("ai_analysis", "")
+        activity_minutes = kwargs.get("activity_minutes", 0)
+
+        if not self.pg_engine:
+            # SQLite insertion
+            await self.execute(
+                "INSERT INTO daily_reflection_segments "
+                "(id, reflection_id, user_id, role_id, start_time, end_time, "
+                "activity_minutes, ai_description, is_draft, is_reviewed) "
+                "VALUES (:id, :ref_id, :uid, :rid, '00:00', '00:00', :mins, :desc, 1, 0)",
+                {
+                    "id": segment_id,
+                    "ref_id": reflection_id,
+                    "uid": str(user_id),
+                    "rid": str(role_id),
+                    "mins": activity_minutes,
+                    "desc": ai_description,
+                }
+            )
+        else:
+            # PostgreSQL insertion
+            await self.execute(
+                "INSERT INTO daily_reflection_segments "
+                "(id, reflection_id, project, source_type, segment_time, "
+                "duration_minutes, ai_description, ai_analysis, is_draft, is_reviewed) "
+                "VALUES (:id, :ref_id, 'General', 'monitor', NOW(), :mins, :desc, :anal, TRUE, FALSE)",
+                {
+                    "id": segment_id,
+                    "ref_id": reflection_id,
+                    "mins": activity_minutes,
+                    "desc": ai_description,
+                    "anal": ai_analysis,
+                }
+            )
+
+        return SimpleNamespace(
+            id=reflection_id,
+            user_id=kwargs.get("user_id"),
+            role_id=kwargs.get("role_id"),
+            reflection_date=kwargs.get("reflection_date"),
+            ai_description=kwargs.get("ai_description"),
+            ai_analysis=kwargs.get("ai_analysis"),
+            is_draft=True,
+            is_reviewed=False,
+            user_feeling=None,
+            user_action_plan=None,
+            source_log_ids=kwargs.get("source_log_ids"),
+        )
+
     def _get_mock_fallback(self, query: str, params: dict) -> list[dict]:
         """[M0.4] Fallback method. Returning empty list instead of mocks in Phase 5+."""
         return []
@@ -223,6 +360,21 @@ _drift_shield: DriftShield | None = None
 _breakpoint_engine: BreakpointEngine | None = None
 _sqlite_conn: sqlite3.Connection | None = None
 _db_adapter: AsyncDBAdapter | None = None
+
+# [M4.6] Global SSE broadcast — list of per-client asyncio.Queue instances
+_sse_subscribers: list[asyncio.Queue] = []
+
+
+async def _sse_broadcast(event: dict) -> None:
+    """Push an observer event to all currently connected SSE clients."""
+    dead = []
+    for q in _sse_subscribers:
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            dead.append(q)
+    for q in dead:
+        _sse_subscribers.remove(q)
 
 
 @asynccontextmanager
@@ -391,12 +543,17 @@ async def lifespan(app: FastAPI):
                 personality_prompt  TEXT,
                 backstory           TEXT,
                 tone_default        TEXT DEFAULT 'empathetic',
-                trust_level         REAL DEFAULT 0.8,
+                trust_level         REAL DEFAULT 0.5,
                 avatar_url          TEXT,
                 is_active           INTEGER DEFAULT 1,
                 created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             )
         """)
+        # [W1] Migration: add persona_card JSON column for PersonaCard v2
+        try:
+            cursor.execute("ALTER TABLE ai_experts ADD COLUMN persona_card TEXT")
+        except Exception:
+            pass  # column already exists
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS goals (
                 id              TEXT PRIMARY KEY,
@@ -481,6 +638,44 @@ async def lifespan(app: FastAPI):
                 xp_settled      INTEGER DEFAULT 0,
                 created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                 FOREIGN KEY(reflection_id) REFERENCES daily_reflections(id)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS chat_transcripts (
+                id          TEXT PRIMARY KEY,
+                thread_id   TEXT NOT NULL,
+                persona_id  TEXT,
+                role        TEXT NOT NULL,
+                content     TEXT NOT NULL,
+                role_id     TEXT,
+                created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS role_router_rules (
+                id            TEXT PRIMARY KEY,
+                role_id       TEXT NOT NULL,
+                persona_id    TEXT,
+                pattern       TEXT NOT NULL,
+                target_domain TEXT NOT NULL,
+                confidence    REAL DEFAULT 0.50,
+                source        TEXT DEFAULT 'manual',
+                status        TEXT DEFAULT 'candidate',
+                hit_count     INTEGER DEFAULT 0,
+                correct_count INTEGER DEFAULT 0,
+                created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                last_active   TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS intent_logs (
+                id              TEXT PRIMARY KEY,
+                source_log_id   TEXT,
+                role_id         TEXT,
+                intent_label    TEXT,
+                context_summary TEXT,
+                inference_mode  TEXT,
+                created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             )
         """)
         _sqlite_conn.commit()
@@ -571,6 +766,15 @@ async def lifespan(app: FastAPI):
     from m0_4_logging.writer import get_logger as get_log_writer
     _log_writer = get_log_writer(db_path=str(settings.local_db_path))
     await _log_writer.start()
+
+    # Emit system_startup event to raw_tracking_logs (L1)
+    await _log_writer.emit(
+        module="M0.3",
+        action="system_startup",
+        level="INFO",
+        payload={"message": "coOS system started"},
+        user_id=instance_user_id,
+    )
 
     _breakpoint_engine = BreakpointEngine()
 
@@ -668,23 +872,45 @@ async def lifespan(app: FastAPI):
                     if new_rules:
                         logger.info("[M2.2] Periodic maintenance: learned %d new fallback rules", len(new_rules))
 
-                # 2. M4.5 Zombie Cleanup
-                # Hard delete stale incomplete reflections and segments (> 7 days old)
-                cutoff = (datetime.now(UTC) - timedelta(days=7)).isoformat()
-                await _db_adapter.execute(
-                    "DELETE FROM daily_reflections WHERE is_completed = 0 AND created_at < :cutoff",
-                    {"cutoff": cutoff}
-                )
-                await _db_adapter.execute(
-                    "DELETE FROM daily_reflection_segments "
-                    "WHERE is_approved = 0 AND xp_settled = 0 AND created_at < :cutoff",
-                    {"cutoff": cutoff}
-                )
+                # 2. M4.5 Zombie Cleanup (GAP-B4: use module, not inline SQL)
+                # [RISK-13] 僅刪除 is_draft=1 AND is_reviewed=0 AND xp_settled=0 的過期記錄
+                from m4_5_xp_settlement.zombie_cleanup import run_zombie_cleanup_sql
+                await run_zombie_cleanup_sql(_db_adapter)
             except Exception as e:
                 logger.warning("[lifespan] Periodic maintenance failed: %s", e)
             await asyncio.sleep(3600.0)
 
     maintenance_task = asyncio.create_task(periodic_maintenance())
+
+    # [M4.4.3 SPEC §9] Nightly Draft Cron — 每日 02:00 產出前一日反思草稿
+    # [RISK-01] 草稿永遠 is_draft=True, is_reviewed=False，不自動核准
+    async def draft_cron_loop():
+        from m4_4_elicitation.draft_scheduler import run_draft_cron
+        import datetime as _dt
+
+        while True:
+            try:
+                now = _dt.datetime.now()
+                # 計算距離下一個 02:00 的秒數
+                target = now.replace(hour=2, minute=0, second=0, microsecond=0)
+                if now >= target:
+                    target += _dt.timedelta(days=1)
+                wait_seconds = (target - now).total_seconds()
+                await asyncio.sleep(wait_seconds)
+
+                user_id = settings.current_user_id
+                if user_id and _db_adapter:
+                    drafts = await run_draft_cron(user_id, db=_db_adapter)
+                    if drafts:
+                        logger.info("[M4.4.3] Nightly draft cron generated %d draft(s)", len(drafts))
+                        await _sse_broadcast({"type": "DRAFT_READY", "count": len(drafts)})
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("[M4.4.3] Draft cron failed: %s", e)
+                await asyncio.sleep(3600.0)
+
+    draft_cron_task = asyncio.create_task(draft_cron_loop())
 
     # [M1.4.2] GitHub Webhook Tunnel Manager
     import subprocess
@@ -718,8 +944,9 @@ async def lifespan(app: FastAPI):
         proc.terminate()
     git_task.cancel()
     maintenance_task.cancel()
+    draft_cron_task.cancel()
     try:
-        await asyncio.gather(git_task, maintenance_task, return_exceptions=True)
+        await asyncio.gather(git_task, maintenance_task, draft_cron_task, return_exceptions=True)
     except asyncio.CancelledError:
         pass
     if _debouncer:
@@ -732,6 +959,63 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="coOS Sidecar", version="0.1.0", lifespan=lifespan)
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    from fastapi.responses import JSONResponse
+    from m0_4_logging.writer import get_logger as get_log_writer
+    log_writer = get_log_writer()
+    payload = {
+        "path": request.url.path,
+        "method": request.method,
+        "detail": exc.detail
+    }
+    role_id = getattr(request.state, "role_id", None)
+    user_id = getattr(request.state, "user_id", None)
+    await log_writer.emit_execution_log(
+        module="main",
+        action="api_http_error",
+        level="WARNING" if exc.status_code < 500 else "ERROR",
+        message=f"HTTPException {exc.status_code}: {exc.detail}",
+        exception_trace=None,
+        payload=payload,
+        user_id=str(user_id) if user_id else None,
+        role_id=str(role_id) if role_id else None
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    from fastapi.responses import JSONResponse
+    from m0_4_logging.writer import get_logger as get_log_writer
+    log_writer = get_log_writer()
+    tb_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    logger.error("Unhandled exception: %s\n%s", exc, tb_str)
+    payload = {
+        "path": request.url.path,
+        "method": request.method
+    }
+    role_id = getattr(request.state, "role_id", None)
+    user_id = getattr(request.state, "user_id", None)
+    await log_writer.emit_execution_log(
+        module="main",
+        action="unhandled_error",
+        level="ERROR",
+        message=f"Unhandled exception: {str(exc)}",
+        exception_trace=tb_str,
+        payload=payload,
+        user_id=str(user_id) if user_id else None,
+        role_id=str(role_id) if role_id else None
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error"},
+    )
+
 
 # [架構文件 §7] 僅允許 Tauri 與本地開發 origin
 # [M0_2 SPEC §7.4] FastAPI sidecar 必須綁定 127.0.0.1，CSP 設定於 tauri.conf.json
@@ -1030,7 +1314,7 @@ async def m2_3_sanitize(payload: RawTextPayload) -> SanitizedPayload:
 
     # Layer 1: DRIFT injection check
     try:
-        _drift_shield.verify_input(payload.text, source_path=payload.source_path)
+        await _drift_shield.verify_input(payload.text, source_path=payload.source_path)
     except InjectionDetectedException as exc:
         raise HTTPException(
             status_code=400,
@@ -1257,16 +1541,41 @@ async def update_settings_endpoint(role_id: str, payload: SettingsUpdate, reques
         )
         
     # 3. Update System settings in memory & .env file
+    from config import normalize_ipv6_host
+    normalized_ai_local_host = normalize_ipv6_host(payload.ai_local_host)
+    normalized_ipad_ai_local_host = normalize_ipv6_host(payload.ipad_ai_local_host)
+
     settings.gemma_model = payload.gemma_model
-    settings.ai_local_host = payload.ai_local_host
-    settings.ipad_ai_local_host = payload.ipad_ai_local_host
+    settings.ai_local_host = normalized_ai_local_host
+    settings.ipad_ai_local_host = normalized_ipad_ai_local_host
     
     # Persist to .env
     update_env_file({
         "gemma_model": payload.gemma_model,
-        "ai_local_host": payload.ai_local_host,
-        "ipad_ai_local_host": payload.ipad_ai_local_host,
+        "ai_local_host": normalized_ai_local_host,
+        "ipad_ai_local_host": normalized_ipad_ai_local_host,
     })
+
+    # Log configuration change event
+    from m0_4_logging.writer import get_logger as get_log_writer
+    await get_log_writer().emit_execution_log(
+        module="main",
+        action="config_changed",
+        level="INFO",
+        message="User updated settings and consents",
+        payload={
+            "theme": payload.theme,
+            "notification_enabled": payload.notification_enabled,
+            "daily_report_time": payload.daily_report_time,
+            "focus_hours_start": payload.focus_hours_start,
+            "focus_hours_end": payload.focus_hours_end,
+            "gemma_model": payload.gemma_model,
+            "ai_local_host": payload.ai_local_host,
+            "ipad_ai_local_host": payload.ipad_ai_local_host,
+        },
+        user_id=str(user_id) if user_id else None,
+        role_id=role_id,
+    )
     
     return {"status": "success"}
 
@@ -1337,6 +1646,39 @@ async def m6_2_list_experts(role_id: str) -> list[dict[str, Any]]:
             "avatarUrl": r["avatar_url"],
         } for r in rows
     ]
+
+
+@app.post("/api/m6_2/roles/{role_id}/experts")
+async def m6_2_create_expert(role_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """[M6.2] Create a new AI expert for a role."""
+    import uuid
+    expert_id = str(uuid.uuid4())
+    name = body.get("name", "AI 助手")
+    personality_prompt = body.get("personality_prompt", "")
+    tone = body.get("tone_default", "empathetic")
+    backstory = body.get("backstory", "")
+    domain = body.get("domain", "")
+
+    await _db_adapter.execute(
+        "INSERT INTO ai_experts (id, role_id, name, personality_prompt, backstory, tone_default, trust_level, is_active) "
+        "VALUES (:id, :rid, :name, :pp, :bs, :tone, 0.5, 1)",
+        {
+            "id": expert_id,
+            "rid": role_id,
+            "name": name,
+            "pp": personality_prompt,
+            "bs": backstory,
+            "tone": tone,
+        }
+    )
+    return {
+        "id": expert_id,
+        "expertName": name,
+        "personalityPrompt": personality_prompt,
+        "trustLevel": 0.8,
+        "avatarUrl": None,
+        "domain": domain,
+    }
 
 
 @app.delete("/api/m6_2/roles/{role_id}")
@@ -1496,15 +1838,14 @@ async def m6_3_role_context(role_id: str, request: Request) -> dict[str, Any]:
     role_ctx = await build_role_context(user_id=user_id, role_id=role_uuid, db=_db_adapter)
     
     project = {"name": role_ctx.projects[0].get("name")} if role_ctx.projects else {"name": "無作用中專案"}
-    role = {"name": role_id.split("_")[0].upper() if "_" in role_id else "CSIE"}
+    # Just try to fetch role name from db, otherwise default to "Role"
+    role_row = await _db_adapter.fetch_one("SELECT display_name FROM roles WHERE id = :rid", {"rid": str(role_uuid)})
+    role_name = role_row["display_name"] if role_row else "Role"
+    role = {"name": role_name}
+
     promises = [p.get("text") for p in role_ctx.upcoming_promises]
     goals = [g.get("title") for g in role_ctx.active_goals]
-    
-    if not promises:
-        promises = ["每天寫 1 小時程式", "本週完成微積分作業"]
-    if not goals:
-        goals = ["通過資料結構期末考"]
-        
+
     return {
         "role_id": str(role_id),
         "project": project,
@@ -1551,7 +1892,7 @@ async def m6_4_daily_timeline(request: Request, date: str, role_id: str | None =
         else:
             role_uuid = uuid.uuid4()
 
-    if _db_adapter and _db_adapter.pg_engine:
+    if _db_adapter:
         try:
             refl_query = (
                 "SELECT * FROM daily_reflections "
@@ -1568,14 +1909,14 @@ async def m6_4_daily_timeline(request: Request, date: str, role_id: str | None =
             for r in reflections:
                 segments = await _db_adapter.fetch_all(
                     "SELECT * FROM daily_reflection_segments "
-                    "WHERE reflection_id = :rid AND is_active = TRUE",
+                    "WHERE reflection_id = :rid",
                     {"rid": str(r.get("id"))}
                 )
                 for s in segments:
                     timeline.append({
                         "id": str(s.get("id")),
                         "roleId": role_id or str(r.get("role_id")),
-                        "roleName": "CSIE",
+                        "roleName": "Role",
                         "title": s.get("project") or "未命名任務",
                         "status": "completed" if s.get("is_reviewed") else "in_progress",
                         "reflection": {
@@ -1588,38 +1929,11 @@ async def m6_4_daily_timeline(request: Request, date: str, role_id: str | None =
                             "is_reviewed": s.get("is_reviewed", False),
                         }
                     })
-            if timeline:
-                return timeline
+            return timeline
         except Exception as e:
             logger.warning("[daily_timeline] Failed to fetch timeline from PG: %s", e)
 
-    # Fallback to seed data
-    return [
-        {
-            "id": "task_demo_1",
-            "roleId": role_id or "csie_001",
-            "roleName": "CSIE",
-            "title": "微積分作業",
-            "status": "completed",
-            "reflection": {
-                "id": "refl_demo_1",
-                "ai_description": "你今天花了約 90 分鐘完成微積分作業，涵蓋泰勒展開與極限計算。",
-                "ai_analysis": "進度符合計畫，主動解決三道難題。",
-                "user_feeling": "",
-                "user_action_plan": "",
-                "is_draft": True,
-                "is_reviewed": False,
-            },
-        },
-        {
-            "id": "task_demo_2",
-            "roleId": role_id or "csie_001",
-            "roleName": "CSIE",
-            "title": "資料結構筆記 CH2",
-            "status": "in_progress",
-            "reflection": None,
-        },
-    ]
+    return []
 
 
 @app.patch("/api/m6_4/reflections/{reflection_id}")
@@ -1627,7 +1941,7 @@ async def m6_4_patch_reflection(reflection_id: str, body: dict[str, Any]) -> dic
     """[RISK-01] 更新 user_feeling / user_action_plan / is_reviewed"""
     logger.info("[M6.4] reflection %s patched: %s", reflection_id, list(body.keys()))
     
-    if _db_adapter and _db_adapter.pg_engine:
+    if _db_adapter:
         try:
             feeling = body.get("user_feeling")
             action_plan = body.get("user_action_plan")
@@ -1952,12 +2266,44 @@ async def m6_5_items_dictionary() -> list[dict[str, Any]]:
 
 # --- M4.1 Chat (LangGraph) ---
 
+@app.get("/api/m4_1/history")
+async def m4_1_history(role_id: str, thread_id: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
+    """回傳指定角色（或特定 thread）的最近聊天紀錄，按時間排序。"""
+    if thread_id:
+        rows = await _db_adapter.fetch_all(
+            "SELECT role, content, persona_id, thread_id, created_at FROM chat_transcripts "
+            "WHERE role_id = :rid AND thread_id = :tid ORDER BY created_at ASC LIMIT :lim",
+            {"rid": role_id, "tid": thread_id, "lim": limit},
+        )
+    else:
+        rows = await _db_adapter.fetch_all(
+            "SELECT role, content, persona_id, thread_id, created_at FROM chat_transcripts "
+            "WHERE role_id = :rid ORDER BY created_at ASC LIMIT :lim",
+            {"rid": role_id, "lim": limit},
+        )
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/m4_1/threads")
+async def m4_1_threads(role_id: str, limit: int = 20) -> list[dict[str, Any]]:
+    """回傳角色下所有 thread，供前端顯示聊天室清單。"""
+    rows = await _db_adapter.fetch_all(
+        "SELECT DISTINCT thread_id, persona_id, MAX(created_at) as last_at "
+        "FROM chat_transcripts WHERE role_id = :rid "
+        "GROUP BY thread_id, persona_id ORDER BY last_at DESC LIMIT :lim",
+        {"rid": role_id, "lim": limit},
+    )
+    return [dict(r) for r in rows]
+
+
 @app.post("/api/m4_1/chat")
 async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     """對話端點 — 串接 LangGraph 多智能體頂層協調與 Persona 狀態機"""
     user_msg = body.get("content", "")
     role_id = body.get("role_id", "")
     thread_id = body.get("thread_id")
+    # 前端明確指定的 persona_id（expert 聊天室時傳入），優先於 routing engine
+    requested_persona_id = body.get("persona_id")
     
     # [M2.3 DRIFT Shield] Security check
     try:
@@ -1995,20 +2341,50 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
         except Exception as e:
             logger.warning("Gemma compress failed in chat route: %s", e)
             
-    resolved_thread_id = thread_id or f"{role_uuid}::{uuid.uuid4()}"
-    if resolved_thread_id and resolved_thread_id.find("::") == -1:
-        resolved_thread_id = f"{role_uuid}::{resolved_thread_id}"
+    # Use thread_id as-is from frontend (format: thread_{roleId} or thread_{roleId}_{expertId})
+    resolved_thread_id = thread_id or f"thread_{role_uuid}"
         
+    # 拉近期對話歷史（最多 12 條）供工具型 AI 保持連貫
+    # DESC LIMIT 12 取最新 12 條，再反轉為時間正序送入 LLM context
+    chat_history: list[dict] = []
+    try:
+        history_rows = await _db_adapter.fetch_all(
+            "SELECT role, content FROM chat_transcripts "
+            "WHERE thread_id = :tid ORDER BY created_at DESC LIMIT 12",
+            {"tid": resolved_thread_id},
+        )
+        chat_history = [{"role": r["role"], "content": r["content"]} for r in reversed(history_rows)]
+    except Exception as e:
+        logger.debug("[M4.1] Failed to load chat history: %s", e)
+
     router_input = {
         "thread_id": resolved_thread_id,
         "role_id": str(role_uuid),
         "user_message": user_msg,
+        "chat_history": chat_history,
         "intent_vector": intent_vector,
         "active_experts": role_ctx.active_experts,
         "role_rules": [],
         "implicit_state": role_ctx.implicit_state.get("implicit_state") if role_ctx.implicit_state else None,
+        "active_goals": role_ctx.active_goals,
+        "upcoming_promises": role_ctx.upcoming_promises,
     }
-    
+
+    # 若前端明確指定了 expert persona_id，直接注入 route_decision，跳過 rule_router
+    # [RISK-06] 仍驗證該 persona 確實屬於此 role
+    if requested_persona_id and requested_persona_id not in ("__tool__", "tool_ai_default"):
+        expert_in_role = next(
+            (e for e in role_ctx.active_experts if str(e.get("id")) == requested_persona_id),
+            None,
+        )
+        if expert_in_role:
+            router_input["route_decision"] = {
+                "persona_id": requested_persona_id,
+                "route_reason": "frontend_explicit",
+                "confidence": 1.0,
+                "thread_id": resolved_thread_id,
+            }
+
     try:
         rules = await _db_adapter.fetch_all(
             "SELECT * FROM role_router_rules WHERE role_id = :rid",
@@ -2017,49 +2393,79 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
         router_input["role_rules"] = rules
     except Exception:
         pass
-        
+
     router_graph = get_router_graph()
     res = await router_graph.ainvoke(router_input)
-    
+
     eguard = res.get("eguard_result") or {}
     if eguard.get("blocked"):
         return {
             "content": f"（安全過濾器攔截：{eguard.get('reason')}）",
             "persona_id": None,
-            "thread_id": resolved_thread_id
+            "thread_id": resolved_thread_id,
+            "suggest_match": False,
         }
-        
-    persona_id = (res.get("route_decision") or {}).get("persona_id") or "robert_001"
-    reply = res.get("persona_response") or f"學長在這！關於你說的「{user_msg[:20]}」，我們一步步拆解..."
-    
+
+    persona_id = (res.get("route_decision") or {}).get("persona_id") or "tool_ai_default"
+    reply = res.get("persona_response") or "我在聽，你繼續說說看？"
+    suggest_match = bool(res.get("suggest_match", False))
+    split_messages = res.get("split_messages") or []  # [W6] 多氣泡序列
+
+    # [GAP-B5] M4.6 project detection は M4.1 invoke_persona_node の
+    # _dispatch_observer_bg に一本化（二重検出を廃止）。
+    # observer_deps._resolve_sse() が _sse_broadcast に接続済み（GAP-C1 修復）。
+
     # [M4.4] Natural Elicitation Injection
+    # [R08 §五 微干預原則] 套問以獨立訊息氣泡注入，而非黏在主回覆（SPEC §7 inject_messages）
+    # confidence >= 0.7 的時段不觸發（SPEC §8 「AI 裝傻」反模式）
+    elicitation_messages: list[str] = []
     try:
-        from m4_4_elicitation.controller import ElicitationController
-        # Simple singleton-like usage for MVP
+        from m4_4_elicitation.controller import ElicitationController, CONFIDENCE_THRESHOLD
         if not hasattr(app.state, "elicitation_controller"):
             app.state.elicitation_controller = ElicitationController()
-        
+        # conversation_turn_counter 記錄真實對話 turn 數（非注入次數）
+        if not hasattr(app.state, "conversation_turn_counter"):
+            app.state.conversation_turn_counter = {}
+
         ec = app.state.elicitation_controller
-        # Since observer is async, we can't get results immediately here.
-        # But we can check if the user message itself matches project extraction pattern
+
+        # 每次對話都計 turn（不管是否套問）
+        conv_turn = app.state.conversation_turn_counter.get(resolved_thread_id, 0)
+        app.state.conversation_turn_counter[resolved_thread_id] = conv_turn + 1
+
         from m4_6_observer.project_detector import regex_extract_project
-        detected_project = regex_extract_project(user_msg)
-        
-        if detected_project and ec.can_elicit(resolved_thread_id, 1): # turn count mock
-            fragment = ec.generate_elicitation(
-                context="general_duration",
-                role_id=str(role_uuid),
-                project_name=detected_project
+
+        detected_name = regex_extract_project(user_msg)
+        if not detected_name:
+            projects = await _db_adapter.fetch_all(
+                "SELECT name FROM role_projects WHERE role_id = :rid ORDER BY created_at DESC LIMIT 1",
+                {"rid": str(role_uuid)}
             )
-            # Append the first elicitation message to the reply
-            if fragment.inject_messages:
-                reply += "\n\n" + fragment.inject_messages[0]
-                ec.record_elicitation(resolved_thread_id, 1)
+            if projects:
+                detected_name = projects[0]["name"]
+
+        if detected_name:
+            # 依尚未觸發的 context 類型輪替（每種最多 1 次，DEVIATION-01 拍板）
+            all_contexts = ["general_duration", "goal_probe", "deadline_probe"]
+            used_ctxs = {ctx for _, ctx in ec._history.get(resolved_thread_id, [])}
+            next_context = next((c for c in all_contexts if c not in used_ctxs), None)
+
+            if next_context and ec.can_elicit(resolved_thread_id, conv_turn, context=next_context):
+                fragment = ec.generate_elicitation(
+                    context=next_context,
+                    role_id=str(role_uuid),
+                    project_name=detected_name,
+                )
+                if fragment.inject_messages:
+                    elicitation_messages = fragment.inject_messages
+                    ec.record_elicitation(resolved_thread_id, conv_turn, context=next_context)
     except Exception as e:
         logger.warning("[M4.4] Elicitation injection failed: %s", e)
+
+    # Persist chat transcript
+    try:
         user_msg_id = str(uuid.uuid4())
         reply_id = str(uuid.uuid4())
-        
         await _db_adapter.execute(
             "INSERT INTO chat_transcripts (id, thread_id, persona_id, role, content, role_id) "
             "VALUES (:id, :thread_id, :persona_id, 'user', :content, :role_id)",
@@ -2068,8 +2474,8 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
                 "thread_id": resolved_thread_id,
                 "persona_id": persona_id,
                 "content": user_msg,
-                "role_id": str(role_uuid)
-            }
+                "role_id": str(role_uuid),
+            },
         )
         await _db_adapter.execute(
             "INSERT INTO chat_transcripts (id, thread_id, persona_id, role, content, role_id) "
@@ -2079,26 +2485,235 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
                 "thread_id": resolved_thread_id,
                 "persona_id": persona_id,
                 "content": reply,
-                "role_id": str(role_uuid)
-            }
+                "role_id": str(role_uuid),
+            },
         )
     except Exception as e:
         logger.error("Failed to save chat transcript to SQLite: %s", e)
-        
+
     return {
         "content": reply,
         "persona_id": persona_id,
-        "thread_id": resolved_thread_id
+        "thread_id": resolved_thread_id,
+        "suggest_match": suggest_match,
+        "elicitation_messages": elicitation_messages,  # [M4.4 SPEC §7] 獨立氣泡序列，前端依序渲染
+        "split_messages": split_messages,  # [W6] 多氣泡序列 [{content, delay_ms}]
     }
+
+
+async def _ai_generate_expert(user_description: str, role_id: str) -> dict | None:
+    """用 Gemini 根據使用者描述自動生成一位具備固定人設的 AI 專家，存入 ai_experts 並回傳。
+    [M4.2 SPEC §7.1] Persona 必須具備具體過往經歷，禁止通用 AI 語氣。
+    [R03 §1] BDI 結構人設：belief (背景知識)、desire (助人目標)、intention (溝通風格)。
+    [R05 §跨越恐怖谷] 副語言線索注入在 personality_prompt 中定義。
+    """
+    from m4_1_router.routing_engine import PERSONA_MODEL, PERSONA_MODEL_FALLBACK, get_cloud_llm_client, RateLimitError, ServiceUnavailableError
+    import uuid, json
+
+    # [W2] PersonaCard v2 結構化生成 prompt
+    prompt = f"""你是一個 AI 顧問角色生成器，專門設計具備真實感的 AI 專家夥伴。
+根據以下使用者需求，生成一位有具體過往經歷的 AI 顧問。
+
+使用者描述：「{user_description}」
+
+設計要求：
+- 角色必須有具體的出生年代、求學/工作背景
+- 禁止使用「我是AI」「我會盡力協助」等通用語句
+- 個性要有缺點和偏好
+- 語氣要符合 tone_default 的定義
+- 必須有明確的專業邊界（知道什麼、不知道什麼）
+- 要有 2-3 個個人立場（stances），代表此角色在專業議題上的堅定見解
+
+請用 JSON 回傳（只回 JSON，不要其他文字）：
+{{
+  "name": "稱謂+姓名（如：動力導師 Robert、學姐 孟婷）",
+  "identity": {{
+    "name": "同上",
+    "birth_year": 1988,
+    "education": "台大資工畢業",
+    "career": "曾在新創任 PM 五年，現自己開公司"
+  }},
+  "big_five": {{"O": 0.7, "C": 0.8, "E": 0.5, "A": 0.6, "N": 0.3}},
+  "speech_profile": {{
+    "fillers": ["嗯", "欸"],
+    "口頭禪": "一句常用的口頭禪",
+    "sentence_length": "short"
+  }},
+  "formative_episodes": [
+    {{"age": 22, "event": "一個具體人生經歷", "impact": "對其影響"}}
+  ],
+  "knowledge_boundary": {{
+    "expert_in": ["領域1", "領域2"],
+    "ignorant_of": ["不擅長的領域"]
+  }},
+  "stances": [
+    {{"topic": "一個議題", "position": "此角色的立場"}}
+  ],
+  "personality_prompt": "完整人設描述，300字以內。包含：1)出生年代與具體學經歷 2)個性特徵（含缺點） 3)溝通風格與口頭禪 4)對此類問題的個人見解",
+  "backstory": "一句話背景",
+  "tone_default": "empathetic 或 authoritative 或 coaching（三選一）",
+  "domain": "主要領域英文標籤（如 coding, study, career, emotion, productivity, creative）",
+  "domain_keywords": ["中文關鍵字1", "中文關鍵字2", "中文關鍵字3"]
+}}"""
+
+    raw = None
+    for model in (PERSONA_MODEL, PERSONA_MODEL_FALLBACK):
+        try:
+            client = get_cloud_llm_client(model)
+            raw = await client.complete(prompt, max_output_tokens=2048, temperature=0.8)
+            break
+        except (RateLimitError, ServiceUnavailableError) as e:
+            logger.warning("[match_persona] auto-generate expert model %s failed: %s", model, e)
+
+    if not raw:
+        try:
+            from m0_4_logging.writer import get_logger as get_log_writer
+            await get_log_writer().emit_execution_log(
+                module="M4.2",
+                action="expert_generation_failed",
+                level="ERROR",
+                message="LLM failed to return a response for expert generation",
+                payload={"user_description": user_description},
+                user_id=settings.current_user_id,
+                role_id=role_id
+            )
+        except Exception:
+            pass
+        return None
+
+    try:
+        # Strip markdown code fences if present
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("```")[1]
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:]
+        data = json.loads(cleaned.strip())
+    except Exception as e:
+        logger.warning("[match_persona] failed to parse expert JSON: %s | raw=%s", e, raw[:200])
+        try:
+            from m0_4_logging.writer import get_logger as get_log_writer
+            log_writer = get_log_writer()
+            await log_writer.emit_execution_log(
+                module="M4.2",
+                action="expert_generation_parse_failed",
+                level="ERROR",
+                message=f"Failed to parse expert JSON: {str(e)}",
+                payload={"raw_response": raw},
+                user_id=settings.current_user_id,
+                role_id=role_id
+            )
+        except Exception:
+            pass
+        return None
+
+    expert_id = str(uuid.uuid4())
+    name = data.get("name", "AI 助手")
+    personality_prompt = data.get("personality_prompt", "")
+    backstory = data.get("backstory", "")
+    tone = data.get("tone_default", "empathetic")
+    domain = data.get("domain", "general")
+    domain_keywords: list = data.get("domain_keywords", [])
+
+    # [GAP-C5] 禁用語檢查與程式化修復：personality_prompt / backstory 不得含通用 AI 語氣
+    _FORBIDDEN_PHRASES = [
+        "我是AI", "我是一個AI", "我是人工智慧", "我會盡力協助", "作為AI助手",
+        "I am an AI", "I'm an AI", "I am a helpful", "as an AI assistant",
+        "我沒有個人意見", "我無法提供", "我只是個",
+    ]
+    for phrase in _FORBIDDEN_PHRASES:
+        if phrase in personality_prompt:
+            logger.warning("[GAP-C5] Sanitizing forbidden phrase '%s' from personality_prompt", phrase)
+            personality_prompt = personality_prompt.replace(phrase, "")
+        if phrase in backstory:
+            logger.warning("[GAP-C5] Sanitizing forbidden phrase '%s' from backstory", phrase)
+            backstory = backstory.replace(phrase, "")
+
+    # [GAP-C5] 具體性檢查與程式化補救：personality_prompt 需包含年代/學經歷等具體資訊
+    _CONCRETENESS_MARKERS = ["年生", "年出生", "畢業", "工作", "曾在", "任職", "經歷", "學過", "born", "graduated", "worked at"]
+    has_concrete_identity = any(marker in personality_prompt for marker in _CONCRETENESS_MARKERS)
+    if not has_concrete_identity:
+        logger.warning("[GAP-C5] Expert generation warning: personality_prompt lacks concrete identity markers, auto-injecting default background.")
+        edu = data.get("identity", {}).get("education", "相關專業")
+        career = data.get("identity", {}).get("career", "多年實務經歷")
+        birth = data.get("identity", {}).get("birth_year", 1990)
+        personality_prompt += f" 他出生於 {birth} 年，畢業於 {edu}，在行業中擁有 {career} 的工作經歷。"
+
+    # Clamp tone to valid values
+    if tone not in ("empathetic", "authoritative", "coaching"):
+        tone = "empathetic"
+
+    # [W2] PersonaCard v2: 嘗試校驗與編譯
+    persona_card_json = None
+    try:
+        from m4_2_persona.persona_card import persona_card_from_dict, compile_to_prompt, critic_check
+        card = persona_card_from_dict(data)
+        passed, issue_list = critic_check(card)
+        if passed:
+            compiled = compile_to_prompt(card)
+            personality_prompt = compiled  # 以編譯後的結構化 prompt 取代原始文字
+            persona_card_json = json.dumps(data, ensure_ascii=False)
+            logger.info("[W2] PersonaCard v2 validated for '%s' (%d issues)", name, len(issue_list))
+        else:
+            logger.warning("[W2] PersonaCard critic failed (%d issues), using raw prompt", len(issue_list))
+    except Exception as e:
+        logger.warning("[W2] PersonaCard compilation fallback: %s", e)
+
+    # [R05 §跨越恐怖谷 §治療同盟] trust_level 從 0.5 起跳，隨互動累積信任後升級
+    await _db_adapter.execute(
+        "INSERT INTO ai_experts (id, role_id, name, personality_prompt, backstory, tone_default, trust_level, is_active, persona_card) "
+        "VALUES (:id, :rid, :name, :pp, :bs, :tone, 0.5, 1, :pc)",
+        {"id": expert_id, "rid": role_id, "name": name, "pp": personality_prompt, "bs": backstory, "tone": tone, "pc": persona_card_json}
+    )
+
+    # [SPEC §7.5] 自動生成對應的路由規則種子 (domain_keywords → role_router_rules)
+    if domain_keywords:
+        import re as _re
+        pattern = "|".join(_re.escape(kw) for kw in domain_keywords[:5])
+        await _db_adapter.execute(
+            "INSERT OR IGNORE INTO role_router_rules "
+            "(id, role_id, persona_id, pattern, target_domain, confidence, source, status) "
+            "VALUES (:id, :rid, :pid, :pattern, :domain, 0.80, 'auto_generated', 'active')",
+            {
+                "id": str(uuid.uuid4()),
+                "rid": role_id,
+                "pid": expert_id,
+                "pattern": pattern,
+                "domain": domain,
+            }
+        )
+
+    try:
+        from m0_4_logging.writer import get_logger as get_log_writer
+        await get_log_writer().emit_execution_log(
+            module="M4.2",
+            action="expert_generated",
+            level="INFO",
+            message=f"Successfully generated new expert: {name} ({domain})",
+            payload={
+                "expert_id": expert_id,
+                "name": name,
+                "domain": domain,
+                "sanitized_forbidden": [p for p in _FORBIDDEN_PHRASES if p in data.get("personality_prompt", "") or p in data.get("backstory", "")],
+                "injected_concrete_identity": not has_concrete_identity
+            },
+            user_id=settings.current_user_id,
+            role_id=role_id
+        )
+    except Exception:
+        pass
+
+    logger.info("[match_persona] auto-generated expert '%s' (%s) for role %s", name, domain, role_id)
+    return {"id": expert_id, "name": name, "personality_prompt": personality_prompt, "tone_default": tone, "domain": domain}
 
 
 @app.post("/api/m4_1/match_persona")
 async def m4_1_match_persona(body: dict[str, Any]) -> dict[str, Any]:
-    """配對最合適的 Persona"""
+    """配對最合適的 Persona；若角色尚無專家則先用 AI 自動生成一位。"""
     user_msg = body.get("content", "") or body.get("current_state_description", "")
     role_id = body.get("role_id", "") or body.get("current_role_id", "")
     exclude_persona_id = body.get("exclude_persona_id")
-    
+
     import uuid
     if isinstance(role_id, str):
         try:
@@ -2107,32 +2722,315 @@ async def m4_1_match_persona(body: dict[str, Any]) -> dict[str, Any]:
             role_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, role_id)
     else:
         role_uuid = uuid.uuid4()
-        
+
     role_ctx = await build_role_context(
         user_id=uuid.UUID(settings.current_user_id),
         role_id=role_uuid,
         db=_db_adapter
     )
-    
+
     # [RISK-06] 限制可配對的專家池，若有需要排除的 Persona 則濾除
     active_experts = role_ctx.active_experts
     if exclude_persona_id:
         active_experts = [e for e in active_experts if e.get("id") != exclude_persona_id]
-        
-    from m4_1_router.routing_engine import route_with_confidence
-    decision = await route_with_confidence(
-        user_msg=user_msg,
-        intent_vector={},
-        active_experts=active_experts,
-        role_id=str(role_uuid),
-        role_rules=[],
-    )
-    
+
+    try:
+        from m0_4_logging.writer import get_logger as get_log_writer
+        await get_log_writer().emit_execution_log(
+            module="M4.1",
+            action="match_request",
+            level="INFO",
+            message=f"Received matchmaking request for role {role_id}",
+            payload={
+                "user_msg": user_msg,
+                "exclude_persona_id": exclude_persona_id,
+                "active_experts_count": len(active_experts)
+            },
+            user_id=settings.current_user_id,
+            role_id=str(role_uuid)
+        )
+    except Exception:
+        pass
+
+    # 若此角色尚無任何專家，用 AI 自動生成一位
+    auto_generated_expert: dict | None = None
+    if not active_experts and user_msg:
+        auto_generated_expert = await _ai_generate_expert(user_msg, str(role_uuid))
+        if auto_generated_expert:
+            active_experts = [auto_generated_expert]
+
+    from m4_1_router.routing_engine import RouteDecision, route_with_confidence
+    import uuid as _uuid
+
+    # 若只有剛自動生成的單一專家，直接配對（跳過 routing engine 避免 fallback 到 tool_ai）
+    if auto_generated_expert and len(active_experts) == 1:
+        decision = RouteDecision(
+            persona_id=auto_generated_expert["id"],
+            route_reason="auto_generated",
+            thread_id=str(_uuid.uuid4()),
+            confidence=0.9,
+        )
+    else:
+        decision = await route_with_confidence(
+            user_msg=user_msg,
+            intent_vector={},
+            active_experts=active_experts,
+            role_id=str(role_uuid),
+            role_rules=[],
+        )
+        # 若已有專家但無任何專家符合要求（低於配對閥值 0.80 或 fallback），則自動生成全新專家
+        if (decision.persona_id == "tool_ai_default" or decision.confidence < 0.80) and user_msg:
+            new_expert = await _ai_generate_expert(user_msg, str(role_uuid))
+            if new_expert:
+                decision = RouteDecision(
+                    persona_id=new_expert["id"],
+                    route_reason="auto_generated",
+                    thread_id=str(_uuid.uuid4()),
+                    confidence=0.9,
+                )
+
+    matched = decision.persona_id is not None and decision.persona_id != "tool_ai_default"
+
+    try:
+        from m0_4_logging.writer import get_logger as get_log_writer
+        await get_log_writer().emit_execution_log(
+            module="M4.1",
+            action="match_decision",
+            level="INFO",
+            message=f"Match decision: {decision.persona_id} (confidence: {decision.confidence:.2f}, reason: {decision.route_reason})",
+            payload={
+                "matched_persona_id": decision.persona_id,
+                "confidence": decision.confidence,
+                "route_reason": decision.route_reason,
+                "fallback_to_generation": (decision.persona_id == "tool_ai_default" or decision.confidence < 0.80) and bool(user_msg)
+            },
+            user_id=settings.current_user_id,
+            role_id=str(role_uuid)
+        )
+    except Exception:
+        pass
+
+    # [DEVIATION-05 / R09 §SDT] 回傳候選專家 preview，讓使用者先確認（自主感）
+    # 實際問候在 /api/m4_1/confirm_match 由 M4.2 graph 以 persona 語氣生成並落地 transcripts
+    expert_preview: dict | None = None
+    if matched and decision.persona_id:
+        expert_row = await _db_adapter.fetch_one(
+            "SELECT id, name, personality_prompt, backstory, tone_default FROM ai_experts WHERE id = :eid",
+            {"eid": decision.persona_id}
+        )
+        if not expert_row:
+            for e in active_experts:
+                if e.get("id") == decision.persona_id:
+                    expert_row = {
+                        "id": e["id"],
+                        "name": e["name"],
+                        "personality_prompt": e.get("personality_prompt", ""),
+                        "backstory": e.get("backstory", ""),
+                        "tone_default": e.get("tone_default", "empathetic"),
+                    }
+                    break
+        if expert_row:
+            expert_preview = {
+                "id": expert_row["id"],
+                "name": expert_row["name"],
+                "backstory": expert_row.get("backstory") or "",
+                "tone_default": expert_row.get("tone_default", "empathetic"),
+                "personality_summary": (expert_row.get("personality_prompt") or "")[:80],
+            }
+
     return {
         "persona_id": decision.persona_id,
-        "matched": decision.persona_id is not None and decision.persona_id != "tool_ai_default",
-        "reason": decision.route_reason
+        "matched": matched,
+        "reason": decision.route_reason,
+        "expert_preview": expert_preview,
+        # greeting_message 已移至 /api/m4_1/confirm_match（persona 化 + 落地 transcripts）
     }
+
+
+@app.post("/api/m4_1/confirm_match")
+async def m4_1_confirm_match(body: dict[str, Any]) -> dict[str, Any]:
+    """
+    [DEVIATION-05] 使用者在 preview 卡確認配對後，觸發 persona 化問候並落地 chat_transcripts。
+    [R09 §SDT] 確認後才生成問候，保留使用者自主感（「是我選的」）。
+    [R03 §1] 問候由 M4.2 persona graph 生成，保持人設語氣一致性。
+    """
+    persona_id = body.get("persona_id", "")
+    role_id = body.get("role_id", "")
+    user_msg = body.get("original_message", "")  # 配對時的原始訊息，提供問候語境
+
+    if not persona_id or not role_id:
+        raise HTTPException(status_code=422, detail="persona_id and role_id are required")
+
+    import uuid as _uuid
+
+    try:
+        role_uuid = _uuid.UUID(role_id)
+    except ValueError:
+        role_uuid = _uuid.uuid5(_uuid.NAMESPACE_DNS, role_id)
+
+    try:
+        from m0_4_logging.writer import get_logger as get_log_writer
+        await get_log_writer().emit_execution_log(
+            module="M4.1",
+            action="confirm_match_start",
+            level="INFO",
+            message=f"Confirm match request received for persona {persona_id}",
+            payload={
+                "persona_id": persona_id,
+                "role_id": role_id,
+                "original_message": user_msg
+            },
+            user_id=settings.current_user_id,
+            role_id=role_id
+        )
+    except Exception:
+        pass
+
+    # 取專家資料
+    expert_row = await _db_adapter.fetch_one(
+        "SELECT id, name, personality_prompt, backstory, tone_default, trust_level FROM ai_experts WHERE id = :eid",
+        {"eid": persona_id}
+    )
+    if not expert_row:
+        raise HTTPException(status_code=404, detail="Expert not found")
+
+    thread_id = f"thread_{role_uuid}_{persona_id}"
+
+    # 呼叫 M4.2 persona graph 以 persona 語氣生成問候
+    greeting_text: str | None = None
+    try:
+        from m4_2_persona.graph import get_persona_graph
+
+        greeting_prompt = f"（系統提示：請以你的人設語氣向使用者自我介紹並發起對話，語境是使用者描述：「{user_msg[:60]}」）"
+        persona_input = {
+            "thread_id": thread_id,
+            "role_id": str(role_uuid),
+            "user_message": greeting_prompt,
+            "persona_id": persona_id,
+            "persona_config": {
+                "name": expert_row["name"],
+                "personality_prompt": expert_row.get("personality_prompt"),
+                "backstory": expert_row.get("backstory"),
+                "tone_default": expert_row.get("tone_default", "empathetic"),
+                "trust_level": expert_row.get("trust_level", 0.5),
+            },
+            "chat_history": [],
+            "bdi_belief": "",
+            "bdi_desire": "",
+            "current_tone": expert_row.get("tone_default", "empathetic"),
+            "current_agency": expert_row.get("trust_level", 0.5),
+        }
+        persona_graph = get_persona_graph()
+        res = await persona_graph.ainvoke(persona_input)
+        greeting_text = res.get("final_response") or res.get("raw_response")
+    except Exception as e:
+        logger.warning("[confirm_match] persona graph greeting failed: %s", e)
+
+    try:
+        from m0_4_logging.writer import get_logger as get_log_writer
+        await get_log_writer().emit_execution_log(
+            module="M4.1",
+            action="confirm_match_greeting",
+            level="INFO" if greeting_text else "WARNING",
+            message="Greeting generated by persona graph" if greeting_text else "Greeting generation failed, using fallback",
+            payload={
+                "persona_id": persona_id,
+                "greeting_text": greeting_text,
+                "used_fallback": not greeting_text
+            },
+            user_id=settings.current_user_id,
+            role_id=role_id
+        )
+    except Exception:
+        pass
+
+    # Fallback：若 persona graph 失敗，用人設摘要組簡單問候
+    if not greeting_text:
+        name = expert_row["name"]
+        greeting_text = f"你好！我是{name}，很高興認識你。你說的這件事我很有興趣，我們來好好聊聊。"
+
+    # 落地 chat_transcripts（L1，本地 SQLite）
+    greeting_id = str(_uuid.uuid4())
+    try:
+        await _db_adapter.execute(
+            "INSERT INTO chat_transcripts (id, thread_id, persona_id, role, content, role_id) "
+            "VALUES (:id, :tid, :pid, 'assistant', :content, :rid)",
+            {
+                "id": greeting_id,
+                "tid": thread_id,
+                "pid": persona_id,
+                "content": greeting_text,
+                "rid": str(role_uuid),
+            },
+        )
+    except Exception as e:
+        logger.error("[confirm_match] Failed to save greeting to chat_transcripts: %s", e)
+
+    try:
+        from m0_4_logging.writer import get_logger as get_log_writer
+        await get_log_writer().emit_execution_log(
+            module="M4.1",
+            action="confirm_match_success",
+            level="INFO",
+            message=f"Match confirmation completed for expert {expert_row['name']}",
+            payload={
+                "persona_id": persona_id,
+                "thread_id": thread_id,
+                "greeting_id": greeting_id
+            },
+            user_id=settings.current_user_id,
+            role_id=role_id
+        )
+    except Exception:
+        pass
+
+    return {
+        "persona_id": persona_id,
+        "thread_id": thread_id,
+        "greeting_message": greeting_text,
+        "expert_name": expert_row["name"],
+    }
+
+
+@app.delete("/api/m4_1/experts/{expert_id}")
+async def m4_1_delete_expert(expert_id: str, request: Request) -> dict[str, Any]:
+    """
+    [GAP-A4][RISK-17] 刪除 AI 專家。
+    若刪除後角色的專家池清空，廣播 EXPERT_POOL_EMPTY SSE 事件。
+    """
+    role_id = request.query_params.get("role_id", "")
+    if not role_id:
+        raise HTTPException(status_code=422, detail="role_id query param is required")
+
+    # 確認專家存在且屬於此角色
+    expert_row = await _db_adapter.fetch_one(
+        "SELECT id FROM ai_experts WHERE id = :eid AND role_id = :rid AND is_active = 1",
+        {"eid": expert_id, "rid": role_id}
+    )
+    if not expert_row:
+        raise HTTPException(status_code=404, detail="Expert not found for this role")
+
+    # 軟刪除（is_active = 0）以保留歷史 chat_transcripts 完整性
+    await _db_adapter.execute(
+        "UPDATE ai_experts SET is_active = 0 WHERE id = :eid",
+        {"eid": expert_id}
+    )
+    logger.info("[GAP-A4] Expert deactivated: %s (role=%s)", expert_id, role_id)
+
+    # [RISK-17] 檢查是否清空了專家池
+    remaining = await _db_adapter.fetch_one(
+        "SELECT COUNT(*) as cnt FROM ai_experts WHERE role_id = :rid AND is_active = 1",
+        {"rid": role_id}
+    )
+    remaining_count = (remaining or {}).get("cnt", 1)
+    if remaining_count == 0:
+        await _sse_broadcast({
+            "type": "EXPERT_POOL_EMPTY",
+            "role_id": role_id,
+        })
+        logger.warning("[RISK-17] Expert pool is now empty for role=%s", role_id)
+
+    return {"status": "deleted", "expert_id": expert_id, "pool_empty": remaining_count == 0}
 
 
 @app.post("/api/m1_4/disconnect_source")
@@ -2191,12 +3089,24 @@ async def link_google_account(body: dict[str, Any], request: Request) -> dict[st
 
 @app.get("/api/m4_6/events")
 async def m4_6_events_sse():
-    """Observer 背景萃取事件 SSE 通道"""
+    """Observer 背景萃取事件 SSE 通道 — 廣播真實 PROJECT_CREATED / GOAL_INFERRED 事件"""
+    client_queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+    _sse_subscribers.append(client_queue)
+
     async def generator():
-        import json
-        await asyncio.sleep(3)
-        yield f"data: {json.dumps({'type': 'PROJECT_CREATED', 'project_name': '期末考準備'})}\n\n"
-        await asyncio.sleep(60)
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(client_queue.get(), timeout=30.0)
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                except TimeoutError:
+                    # keepalive ping
+                    yield f"data: {json.dumps({'type': 'PING'})}\n\n"
+        finally:
+            try:
+                _sse_subscribers.remove(client_queue)
+            except ValueError:
+                pass
 
     return StreamingResponse(
         generator(),

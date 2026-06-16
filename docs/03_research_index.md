@@ -487,7 +487,285 @@ async def safe_log_voice_memo(transcript: str):
 
 ---
 
+## R11 — Park et al. 情節記憶與 Reflection 機制 (Generative Agents)
+
+**全名**: Park et al., *Generative Agents: Interactive Simulacra of Human Behavior*, UIST 2023
+
+**核心技術詞彙**:
+
+- Memory Stream (情節記憶流)
+- 檢索分數 = 新近性 (Recency) × 重要性 (Importance) × 相關性 (Relevance)
+- Reflection (定期將觀察昇華為高階洞察)
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M4.2.2 | 記憶檢索與評分 |
+| M6.4 | 夜間 Reflection 任務 |
+
+**章節索引**:
+
+- §3.1 Memory Stream (記憶流設計)
+- §3.2 Retrieval (新近性、重要性、相關性檢索)
+- §3.3 Reflection (定期觀察昇華)
+
+**Claude Code 引用範例**:
+
+```python
+# [R11: Park et al. §3.2] score = a * recency + b * importance + c * relevance
+score = alpha * recency_score + beta * importance_score + gamma * relevance_score
+```
+
+---
+
+## R12 — Character-LLM 經歷寫入與保護 (EMNLP 2023)
+
+**全名**: Shao et al., *Character-LLM: A Trainable Agent for Role-Playing*, EMNLP 2023
+
+**核心技術詞彙**:
+
+- Experience Upload (以「形成性經歷」定義角色)
+- Protective Experiences (知識邊界——限制角色所知範圍，不知道就承認不知道)
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M4.2.1 | PersonaCard v2 形成性經歷與知識邊界 |
+
+**章節索引**:
+
+- §Experience Upload (經歷寫入)
+- §Protective Experiences (知識邊界機制)
+
+**Claude Code 引用範例**:
+
+```python
+# [R12: Character-LLM §Protective Experiences] 對知識邊界外的事物，承認不知道並轉介
+if query_topic in config.knowledge_boundary.ignorant_of:
+    return refer_to_other_expert(query_topic)
+```
+
+---
+
+## R13 — PersonaLLM 五因子條件化生成
+
+**全名**: Jiang et al., *PersonaLLM: Personality Temporal Dynamics in Large Language Models* / Big Five 條件化生成研究
+
+**核心技術詞彙**:
+
+- OCEAN 五因子人格向量 (OCEAN Vector)
+- 條件化個性表達 (Conditional Personality Expression)
+- 人格一致性評測 (Personality Consistency Evaluation)
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M4.2.1 | PersonaCard v2 五因子人格結構 |
+
+**章節索引**:
+
+- §Personality Conditioning (人格條件化)
+- §OCEAN Representation (OCEAN 表達)
+
+**Claude Code 引用範例**:
+
+```python
+# [R13: PersonaLLM §Personality Conditioning] 用結構化特質向量 (OCEAN) 定義人格
+config = PersonaConfig(big_five={"O": 0.8, "C": 0.7, "E": 0.4, "A": 0.6, "N": 0.3})
+```
+
+---
+
+## R14 — RoleLLM / RoleBench 一致性評測 (2023)
+
+**全名**: Wang et al., *RoleLLM: Benchmarking, Eliciting, and Enhancing Role-Playing Abilities of Large Language Models*, 2023
+
+**核心技術詞彙**:
+
+- Role Profile (角色檔案結構)
+- 身世拷問測試集 (RoleBench-style Evaluation)
+- 量化角色扮演一致性 (Quantifying Role Consistency)
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M4.9 | ARPM-lite 拷問測試集生成與一致性監督 |
+
+**章節索引**:
+
+- §Benchmarking (評測基準)
+- §Role Profile Construction (角色檔案建置)
+
+**Claude Code 引用範例**:
+
+```python
+# [R14: RoleLLM §Benchmarking] 由 PersonaCard 自動生成身世拷問測試題
+test_suite = generate_rolebench_questions(persona_card)
+```
+
+---
+
+## R15 — MemGPT 分層記憶管理 (Letta / Mem0)
+
+**全名**: Packer et al., *MemGPT: Towards LLMs as Operating Systems*, 2023 / Letta / Mem0 / LangGraph Store
+
+**核心技術詞彙**:
+
+- 分層記憶結構 (Tiered Memory Structure)
+- Core Memory Blocks (核心唯讀記憶區)
+- Archival Memory (封存記憶區)
+- OS 式分頁換頁 (Memory Paging)
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M4.2.2 | 分層記憶與 [記憶區塊] v2 拼裝 |
+
+**章節索引**:
+
+- §Architecture (MemGPT OS 級架構)
+- §Memory Management (記憶管理與分頁)
+
+**Claude Code 引用範例**:
+
+```python
+# [R15: MemGPT §Memory Management] 分層記憶：Core Memory (限額 350 tokens) + Archival SQLite 檢索
+core_memory = assemble_core_memory_block(goals, promises, top_memories)
+```
+
+---
+
+## R16 — Motivational Interviewing 動機式晤談
+
+**全名**: Miller & Rollnick, *Motivational Interviewing: Helping People Change*, 3rd Edition (臨床心理經典)
+
+**核心技術詞彙**:
+
+- OARS 技術組 (Open questions, Affirmations, Reflective listening, Summaries)
+- 變化語句 (Change Talk) 辨識
+- 滾動順應 (Rolling with Resistance)
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M4.2.2 | mi_selector 心理介入技術選擇器 |
+
+**章節索引**:
+
+- §OARS (開放式提問/肯定/反映式傾聽/摘要)
+- §Change Talk (辨識與回放變化語句)
+- §Rolling with Resistance (阻抗滾動順應)
+
+**Claude Code 引用範例**:
+
+```python
+# [R16: Motivational Interviewing §OARS] 阻抗高時採用反映式傾聽並滾動順應，禁給建議
+if reactance > 0.7:
+    return ReflectiveListeningDirective()
+```
+
+---
+
+## R17 — Working Alliance Inventory (WAI, 1989)
+
+**全名**: Horvath & Greenberg, *Working Alliance Inventory* (WAI), 1989
+
+**核心技術詞彙**:
+
+- 治療同盟三成分 (Working Alliance Triad)
+- 目標共識 (Goal Consensus)
+- 任務共識 (Task Consensus)
+- 情感連結 (Bond / Affective Bond)
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M4.2.1 | PersonaCard v2 治療同盟品質指標 |
+
+**章節索引**:
+
+- §Methodology (評估方法論)
+- §Triad Dimensions (目標、任務與情感連結維度)
+
+**Claude Code 引用範例**:
+
+```python
+# [R17: WAI §Triad Dimensions] 以目標共識、任務共識與情感連結作為專家品質指標
+wai_score = evaluate_working_alliance(session_logs)
+```
+
+---
+
+## R18 — Sycophancy Mitigation 反諂媚守則
+
+**全名**: Sharma et al., *Towards Understanding Sycophancy in Language Models*, 2023
+
+**核心技術詞彙**:
+
+- 諂媚行為成因 (Sycophancy Etiology)
+- 反諂媚守則 (Anti-Sycophancy Stances)
+- 溫和堅持立場 (Gentle Position Stance)
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M4.2.1 | PersonaCard v2 Stances 與反諂媚系統提示詞 |
+
+**章節索引**:
+
+- §Etiology (諂媚行為成因分析)
+- §Mitigation Strategies (諂媚行為緩解與反對立場設計)
+
+**Claude Code 引用範例**:
+
+```python
+# [R18: Sycophancy Mitigation §Mitigation] 當使用者與 Stance 衝突時，溫和堅持立場，不可立刻倒戈
+prompt += "If user view conflicts with your stance, acknowledge their logic but gently insist on your stance."
+```
+
+---
+
+## R19 — sqlite-vec 本地向量擴充
+
+**全名**: sqlite-vec: A vector search extension for SQLite
+
+**核心技術詞彙**:
+
+- 本地向量檢索 (Local Vector Search / Embedded Search)
+- L1 隱私隔離 (L1 Privacy Isolation - 記憶明文不離端)
+- 向量儲存格式 (Vector Embedding Formats)
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M6.1 | sqlite-vec 向量表定義與檢索 |
+| M4.2.2 | 情節記憶本地向量相似度檢索 |
+
+**章節索引**:
+
+- §Vector Storage (SQLite 向量儲存)
+- §Similarity Query (相似度檢索與 PRAGMA 配置)
+
+**Claude Code 引用範例**:
+
+```sql
+-- [R19: sqlite-vec §Vector Storage] 本地向量檢索，確保明文不出 L1 端
+SELECT id, content FROM m4_2_persona_memories WHERE vec_distance_cosine(embedding, :query_vec) < 0.35;
+```
+
+---
+
 ## 跨論文交叉引用速查
+
 
 當你的模組會同時觸碰多個心理機制,以下是常見的多重引用組合:
 

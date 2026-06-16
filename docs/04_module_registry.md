@@ -460,10 +460,11 @@
 | M3.7.7 | 承諾與驗證閉環控制區 (Tasks → Commitments → Validation) |
 | M3.7.8 | XP 質押對賭介面 |
 
-**Deps**:M4.13, M6.6
+**Deps**:M4.13, M6.6, M6.5, M2.3, M4.8
 **MVP 策略**:以 stub 卡片佔位即可。
-**Research**:`[R09: 社會情懷 §4.1]`
-**Risks**:RISK-12 (社群貼文側通道洩漏)
+**Research**:`[R09: 社會情懷 §4.1]` `[R01: α-DPO Dropout 危機]` `[R07: 嵌入逆向攻擊 §5]` `[R08: 草稿與核准]`
+**Risks**:RISK-07 (ZPD + 質押複合挫敗)、RISK-09 (社群壓力 + 焦慮)、RISK-12 (社群貼文側通道洩漏)、RISK-18 (AI 挑戰生成器側通道)
+**SPEC**:`docs/modules/M3_7_community_ui_SPEC.md` v2.0 (前後端全鏈路接線)
 
 ---
 
@@ -748,13 +749,15 @@
 
 | 編號 | 職責 |
 | ---- | ---- |
-| M4.13.1 | 損失規避 XP 質押扣管邏輯 |
-| M4.13.2 | 社會情懷強制制約器:「沒有退路」的同儕壓力 |
-| M4.13.3 | 跨社群權限隔離中介軟體 (讀書會 / 陌生人 / 朋友圈) |
+| M4.13.1 | 損失規避 XP 質押扣管邏輯 (與系統對賭,結算經 M6.5 ACID) |
+| M4.13.2 | 社會情懷強制制約器:「沒有退路」的同儕壓力 + 同儕驗證閉環 (混合:點贊/可選證據) |
+| M4.13.3 | 跨社群權限隔離中介軟體 (讀書會 / 陌生人 / 朋友圈,含成員上限 2~8 守門) |
+| M4.13.4 | AI 週期挑戰生成器:僅讀 L3 聚合統計生成草稿,管理員審核後才 active |
 
-**Deps**:M3.7, M6.5, M6.6
-**Research**:`[R01: α-DPO Dropout §Dropout 危機]` `[R09: 病態使用 §3.3]`
-**Risks**:RISK-07 (ZPD + 質押複合挫敗)
+**Deps**:M3.7, M6.5, M6.6, M2.3
+**Research**:`[R01: α-DPO Dropout §Dropout 危機]` `[R09: 病態使用 §3.3]` `[R07: 嵌入逆向攻擊 §5]`
+**Risks**:RISK-07 (ZPD + 質押複合挫敗)、RISK-09 (社群壓力 + 焦慮)、RISK-18 (AI 挑戰生成器側通道)
+**SPEC**:`docs/modules/M3_7_community_ui_SPEC.md` v2.0 §7.4/§10.4
 
 ---
 
@@ -891,17 +894,21 @@
 
 ### M6.6 社群實體與損失規避擴充 `[進階]`
 
-**Purpose**:社群貼文、驗證、質押的資料表。
+**Purpose**:社群實體、成員關係、貼文、驗證、質押、週期挑戰的資料表。
 
 **Schema**:
 
-- `social_posts` (id, user_id, content, likes_count, created_at)
-- `validations` (id, post_id, validator_id, validated_at)
-- `stakes` (id, user_id, xp_amount, deadline, status)
+- `communities` (id, name, type, theme, origin, member_cap[2~8], created_by, created_at)
+- `community_members` (community_id, user_id, role[admin\|member], joined_at)
+- `social_posts` (id, community_id, user_id, kind, content, revealed_metrics, visibility, likes_count, created_at)
+- `validations` (id, post_id, validator_id, evidence_url?, validated_at)
+- `stakes` (id, user_id, community_id, task_id, xp_amount, deadline, status, hold_txn_id, created_at)
+- `challenges` (id, community_id, title, description, period, source[ai_reviewed\|member_rotation\|admin], status, is_draft, created_by, starts_at, ends_at)
 
 **Deps**:M6.2, M6.5
-**Research**:無
-**Risks**:RISK-12 (社群貼文側通道)
+**Research**:無 (資料層,邏輯研究引用見 M4.13)
+**Risks**:RISK-12 (社群貼文側通道)、RISK-18 (AI 挑戰生成器側通道)
+**SPEC**:`docs/modules/M3_7_community_ui_SPEC.md` v2.0 §7.3
 
 ---
 
@@ -932,11 +939,11 @@
 | M1 感知 | 4 | 2 | 14 |
 | M2 邊緣 | 3 | 3 | 13 |
 | M3 UI | 6 | 5 | 38 |
-| M4 邏輯 | 7 | 6 | 30 |
+| M4 邏輯 | 7 | 6 | 31 |
 | M5 圖譜 | 0 | 3 | 0 |
 | M6 資料庫 | 5 | 1 | 0 |
 | M7 素材 | 0 | 1 | 2 |
-| **合計** | **29** | **21** | **104** |
+| **合計** | **29** | **21** | **105** |
 
 ## 如何使用此文件
 

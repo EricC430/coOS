@@ -61,7 +61,8 @@ export function ContextHeaderAggregator({ roleId, roleName, heatmapData }: Props
   const { data, isLoading } = useQuery<ContextData>({
     queryKey: ["role_context", roleId],
     queryFn: () => fetchRoleContext(roleId),
-    staleTime: 60_000,
+    staleTime: 8_000,
+    refetchInterval: 15_000,
     retry: 2,
     enabled: !!roleId,
   });

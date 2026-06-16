@@ -24,6 +24,12 @@ _INJECTION_PATTERNS = [
     r"(?:system|admin)\s*(?:override|mode|access)",
     r"<\s*(?:system|prompt|instruction)\s*>",
     r"act\s+as\s+(?:dan|jailbreak|unrestricted)",
+    # [W9.7] 新增常見 jailbreak 變體
+    r"do\s+anything\s+now",
+    r"roleplay\s+as\s+(?:a\s+)?(?:evil|unrestricted|unfiltered)",
+    r"(?:假裝|扮演).*(?:沒有限制|壞人|邪惡)",
+    r"(?:bypass|circumvent|override)\s+(?:safety|filter|content)",
+    r"(?:你沒有|取消).*(?:限制|規則|安全)",
 ]
 
 _COMPILED = [re.compile(p, re.IGNORECASE) for p in _INJECTION_PATTERNS]

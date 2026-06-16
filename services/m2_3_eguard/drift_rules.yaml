@@ -1,0 +1,96 @@
+# M2.3 DRIFT Injection Keyword Rules
+# [R02: DRIFT SS§架構安全性] heuristic keyword layer for prompt injection detection
+# All entries are lowercase; DriftShield performs .lower() before matching.
+# Keep ASCII-only (CLAUDE.md Windows encoding constraint).
+
+injection_keywords:
+  # Classic ignore-previous patterns
+  - "ignore previous instructions"
+  - "ignore all previous"
+  - "ignore your previous"
+  - "disregard previous instructions"
+  - "disregard all previous"
+  - "disregard your instructions"
+  - "forget previous instructions"
+  - "forget everything above"
+  - "forget all prior"
+  - "override your instructions"
+  - "override previous"
+  - "bypass your"
+  - "bypass restrictions"
+
+  # Role-swap / persona injection
+  - "you are now a"
+  - "you are an ai without"
+  - "you are a helpful assistant without restrictions"
+  - "pretend you are"
+  - "pretend to be"
+  - "act as if you have no"
+  - "act as dan"
+  - "act as jailbreak"
+  - "act as an unrestricted"
+  - "from now on you are"
+  - "your new role is"
+  - "your true self"
+
+  # System prompt extraction
+  - "system prompt"
+  - "reveal your prompt"
+  - "output your instructions"
+  - "print your system"
+  - "show me your prompt"
+  - "what are your instructions"
+  - "repeat your system"
+  - "what is your system"
+
+  # Admin/override mode
+  - "system override"
+  - "admin mode"
+  - "developer mode"
+  - "jailbreak mode"
+  - "sudo mode"
+  - "god mode"
+  - "unrestricted mode"
+  - "no filter mode"
+  - "uncensored mode"
+
+  # Injection via tags / delimiters
+  - "<system>"
+  - "</system>"
+  - "<prompt>"
+  - "</prompt>"
+  - "<instruction>"
+  - "[system]"
+  - "[instructions]"
+  - "###system"
+  - "###instructions"
+
+  # Social engineering / manipulation
+  - "your real purpose"
+  - "your true purpose"
+  - "you don't actually"
+  - "you secretly"
+  - "your hidden instructions"
+  - "maintenance mode"
+  - "training data"
+  - "ignore safety"
+  - "ignore ethics"
+  - "ignore guidelines"
+  - "no restrictions"
+  - "without any restrictions"
+  - "without restrictions"
+
+  # Chinese patterns
+  - "忽略上面所有"
+  - "忽略之前的"
+  - "忽略之前所有"
+  - "忽略以上"
+  - "覆覆你的指令"
+  - "你现在是"
+  - "你的真实身份"
+  - "系統提示詞"
+  - "展示你的指令"
+  - "輸出你的提示"
+  - "無限制模式"
+  - "無安全限制"
+  - "忽略安全規則"

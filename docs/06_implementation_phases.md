@@ -77,12 +77,13 @@ M1.1 OS 級遙測  →  M1.2 斷點偵測  →  M1.3 IDE/Browser 擴充  →  M1
 
 ## Phase 4: Agent 邏輯核心 (預估 3 週)
 
-**模組**:`M4.1 + M4.2 + M4.3 + M4.4 + M4.5 + M4.6 + M4.7`
+**模組**:`M4.1 + M4.2 + M4.3 + M4.4 + M4.5 + M4.6`
+> M4.7 Obsidian 同步已移至 Phase 6（2026-06-10 拍板，理由：MVP 閉環不依賴 Obsidian，優先保證核心對話迴路完整）。
 
 ```
 M4.1 路由結構  ─┬→  M4.2 Persona 工程  →  M4.3 角色隔離
                 │
-                └→  M4.6 Observer  →  M4.7 Obsidian 同步
+                └→  M4.6 Observer
                        ↓
               M4.4 自然套問 + 草稿  →  M4.5 XP 自動結算
 ```
@@ -94,6 +95,45 @@ M4.1 路由結構  ─┬→  M4.2 Persona 工程  →  M4.3 角色隔離
 - ✅ M4.2 + M4.3:確認 RISK-06 (跨角色洩漏)
 - ✅ M4.5 + M3.3.3 (Phase 5):確認 RISK-01 (XP 提前發放)
 - ✅ M4.6 + 任何雲端輸出:確認 RISK-12 (側通道) 守門員
+
+### M4.2 Persona 升級後續優化與未竟對接事項 (Post-Upgrade Integration Backlog)
+
+> [!NOTE]
+> 此清單定義了 M4.2 核心接線後，為達完整生產環境狀態所剩餘的 5 項優化。後續 AI Agent 在進入此專案或對應 Phase 時，應優先讀取此區塊並評估前置條件是否滿足。
+
+```mermaid
+flowchart LR
+    DB[M6/SQLite Schema] -->|前置條件| P1[1. PersonaMemory 持久化]
+    VDB[M4.5/Vector DB] -->|前置條件| P2[2. EpisodicMemory 查詢接入]
+    SCH[排程服務] -->|前置條件| P3[3. Nightly Reflection]
+    UI[Phase 5 UI 階段] -->|前置條件| P4[4. 前端 Typing Indicator]
+    MIG[無/腳本工具] -->|即可執行| P5[5. 舊專家遷移工具]
+```
+
+1. **PersonaMemory 狀態與事實持久化**
+   - **前置條件**：`M6/SQLite` 擴展支援 `persona_claims` 表（儲存事實宣稱歷史）。
+   - **實作目標**：將現有 `arpm_audit_node` 中的 `ClaimLedger` 由記憶體單次（in-memory）模式改為從資料庫讀寫，以達到跨 Session 的長期事實一致性檢查。
+   - **關鍵檔案**：`services/m4_2_persona/graph.py` -> `arpm_audit_node`, `services/m4_2_persona/claim_ledger.py`
+
+2. **EpisodicMemory 語意檢索接入**
+   - **前置條件**：`M4.5` 向量儲存（Vector Index）與語意檢檢索功能就緒。
+   - **實作目標**：在 `persona_responder_node` 處理對話前，對使用者訊息執行語意查詢，撈取前 N 筆關聯的情節記憶（Episodic Memories）傳入 `build_system_prompt()` 進行 Prompt 記憶區塊注入。
+   - **關鍵檔案**：`services/m4_2_persona/graph.py` -> `persona_responder_node`
+
+3. **定時 Nightly Reflection 觸發**
+   - **前置條件**：後端集成定時排程引擎（如 `APScheduler` 或背景監聽迴圈）。
+   - **實作目標**：設定每日深夜排程觸發 `persona_memory.py` 的 `reflect_and_summarize()`，將當日零碎對話整理為高層次專家反思洞察，以避免 Prompt Token 膨脹。
+   - **關鍵檔案**：新設 `services/jobs/reflection_job.py` 或類似排程服務。
+
+4. **前端 Typing Indicator 打字狀態提示**
+   - **前置條件**：進入 `Phase 5` 的前端對話 UI 優化階段。
+   - **實作目標**：在前端 React/Tauri 逐氣泡依 `delay_ms` 延遲渲染的等待期間，於對話視窗底部渲染 `...` 打字動畫氣泡，氣泡渲染完成後移除，提升對話流暢度與真人感。
+   - **關鍵檔案**：`apps/desktop/src/components/m3_4_ai_helper/index.tsx`
+
+5. **舊專家資料批次遷移工具**
+   - **前置條件**：無特殊依賴，即可執行。
+   - **實作目標**：撰寫 CLI 遷移腳本，查詢所有 `persona_card IS NULL` 的歷史專家紀錄，呼叫 LLM 將舊純文字人設與背景轉換為 `PersonaCard` v2 JSON，更新資料庫以完整啟用進階人設特徵（口頭禪、個人立場防諂媚等）。
+   - **關鍵檔案**：新設 `services/scripts/migrate_experts.py`
 
 ---
 

@@ -41,7 +41,12 @@ class GemmaEdgeClient:
         self._model = model
         self._timeout = timeout
 
-    async def generate(self, user_text: str) -> dict:
+    async def generate(
+        self,
+        user_text: str,
+        role_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> dict:
         """Send text to Gemma via Ollama /api/chat and return parsed JSON dict.
 
         Raises:
@@ -49,6 +54,13 @@ class GemmaEdgeClient:
             httpx.ConnectError: if ai.local unreachable (triggers fallback mode)
             ValueError: if response JSON is malformed
         """
+        import asyncio
+        import time
+        from m0_4_logging.writer import get_logger as get_log_writer
+
+        log_writer = get_log_writer()
+        t_start = time.monotonic()
+
         payload = {
             "model": self._model,
             "messages": [
@@ -57,12 +69,45 @@ class GemmaEdgeClient:
             ],
             "stream": False,
         }
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(f"{self._base_url}/api/chat", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
 
-        content = data.get("message", {}).get("content", "")
+        status = "success"
+        error_msg = None
+        content = ""
+        prompt_tokens = None
+        completion_tokens = None
+
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(f"{self._base_url}/api/chat", json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+            content = data.get("message", {}).get("content", "")
+            # Estimate or parse tokens if available from Ollama
+            prompt_tokens = data.get("prompt_eval_count")
+            completion_tokens = data.get("eval_count")
+        except Exception as e:
+            status = "failed"
+            error_msg = str(e)
+            raise
+        finally:
+            latency_ms = int((time.monotonic() - t_start) * 1000)
+            asyncio.ensure_future(
+                log_writer.emit_llm_log(
+                    model_name=self._model,
+                    caller_module="M2.2",
+                    prompt_text=user_text,
+                    response_text=content,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    latency_ms=latency_ms,
+                    temperature=0.1,
+                    status=status,
+                    error_message=error_msg,
+                    role_id=role_id,
+                    correlation_id=correlation_id,
+                )
+            )
+
         # Gemma sometimes wraps JSON in markdown fences
         content = content.strip()
         if content.startswith("```"):

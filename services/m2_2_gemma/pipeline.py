@@ -53,7 +53,7 @@ class GemmaInferencePipeline:
             return self._make_fallback_vector(text, source_log_id, role_id)
 
         try:
-            raw = await self._client.generate(text)
+            raw = await self._client.generate(text, role_id=role_id, correlation_id=source_log_id)
             return IntentVector(
                 source_log_id=source_log_id,
                 role_id=role_id,

@@ -938,6 +938,80 @@ def test_tool_ai_visible_when_pool_empty():
 
 ---
 
+## RISK-18：AI 週期挑戰生成器讀取社群歷史 → 聚合統計反推個人行為側通道
+
+**觸發組合**：`M4.13.4 (AI 挑戰生成器)` + `M6.6 (社群歷史/貼文/XP 趨勢)` + `M4.6 (Observer 行為推論的間接輸入)`
+
+**失效機制**：
+
+M3.7.6 週期挑戰的主要生成路徑 (`source="ai_reviewed"`) 由 AI 系統性檢核社群「歷史、目標、近況」來生成挑戰草稿。若生成器的 context builder 圖方便直接撈社群成員的個別 `daily_reflections`、聊天逐字稿或 M2.2 意圖向量做摘要餵給雲端 LLM,等同把 L1/L2 私有資料包裝成「挑戰文案」上雲——比 RISK-12 的貼文側通道更隱蔽,因為使用者從未主動按下「發布」,挑戰文案卻可能精準到讓其他成員反推出某人的具體弱點或行為模式 (例如挑戰文案寫「這週我們來克服連續 3 天沒寫日報的低潮」,直接點名式洩漏)。
+
+**研究衝突點**：R07 §第五章 嵌入逆向攻擊 (任何彙整輸出都需檢查反推風險) vs (產品設計 §AI 個人化挑戰要「夠貼近社群近況」才有激勵效果)
+
+**緩解策略**：
+
+**Context builder 強制只讀 L3 聚合統計,且輸出前需管理員核准 (草稿閘):**
+
+```python
+# [R07 §5 + RISK-12 同源緩解] M4.13.4 context builder 隱私邊界
+@dataclass
+class ChallengeContext:
+    privacy_layer: Literal["L3"]          # 型別層級就鎖死只能是 L3
+    completion_rate_pct: float            # 聚合完成率,非個人列表
+    common_goal_tags: list[str]           # 去識別化的目標標籤頻率
+    xp_trend: Literal["up", "flat", "down"]
+    raw_transcripts: list = field(default_factory=list)   # 必為空
+    intent_vectors: list = field(default_factory=list)    # 必為空
+
+def build_challenge_context(community_id: UUID) -> ChallengeContext:
+    stats = m6_6_repo.get_aggregate_stats(community_id)  # SQL 聚合,不取個人列
+    return ChallengeContext(
+        privacy_layer="L3",
+        completion_rate_pct=stats.completion_rate_pct,
+        common_goal_tags=stats.top_goal_tags,
+        xp_trend=stats.xp_trend,
+    )
+
+async def generate_challenge(community_id: UUID) -> Challenge:
+    ctx = build_challenge_context(community_id)
+    assert ctx.raw_transcripts == [] and ctx.intent_vectors == []  # 雙重保險斷言
+    draft_text = await cloud_llm.generate(prompt=render_prompt(ctx))
+    return Challenge(
+        title=draft_text.title,
+        description=draft_text.description,
+        source="ai_reviewed",
+        is_draft=True,                # R08 草稿與核准:必須管理員看過才 active
+        status="pending_review",
+    )
+```
+
+**管理員審核時必須能看到「這份草稿引用了哪些聚合統計」**,以便人工判斷是否仍有間接點名風險 (例如社群只有 2 人時,「完成率 50%」其實等於指名)。**小社群 (member_cap ≤ 3) 的 AI 挑戰生成應預設更保守的措辭模板**,避免統計值在小群組中退化為個人識別。
+
+**驗收測試**：
+
+```python
+def test_ai_challenge_context_excludes_l1_l2():
+    """RISK-18: context builder 絕不附帶逐字稿或意圖向量"""
+    ctx = build_challenge_context(community_id=CID)
+    assert ctx.privacy_layer == "L3"
+    assert ctx.raw_transcripts == []
+    assert ctx.intent_vectors == []
+
+def test_ai_challenge_always_pending_review():
+    """RISK-18: AI 生成挑戰一律先進 pending_review,不可直接 active"""
+    challenge = generate_challenge(community_id=CID)
+    assert challenge.is_draft is True
+    assert challenge.status == "pending_review"
+
+def test_small_community_uses_conservative_template():
+    """RISK-18: member_cap<=3 的小群組使用保守措辭模板,避免統計值退化為指名"""
+    small_community = make_community(member_cap=3, member_count=2)
+    challenge = generate_challenge(community_id=small_community.id)
+    assert challenge.template_tier == "conservative"
+```
+
+---
+
 ## 新增風險的流程
 
 當實作過程中發現新的「合併後變差」模式:

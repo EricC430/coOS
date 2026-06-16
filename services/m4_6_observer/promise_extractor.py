@@ -41,7 +41,15 @@ async def extract_promises(
     )
     try:
         raw = await gemma.generate_json(prompt)
-        promises = raw if isinstance(raw, list) else json.loads(raw)
+        # Gemma edge model returns intent-vector dicts, not structured promise lists.
+        # Only attempt to parse if raw is a JSON string or already a list.
+        if isinstance(raw, list):
+            promises = raw
+        elif isinstance(raw, str):
+            promises = json.loads(raw)
+        else:
+            # dict from Gemma edge (intent_label / context_summary format) — no promises inside
+            return []
     except Exception as e:
         logger.warning("[M4.6] promise_extraction_parse_error: %s", e)
         return []
