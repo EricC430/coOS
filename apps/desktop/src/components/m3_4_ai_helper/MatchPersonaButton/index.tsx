@@ -22,7 +22,7 @@ export function MatchPersonaButton({ currentPersonaId, onMatch, onGreeting }: Pr
   const [showRematch, setShowRematch] = useState(false);
   const { setActiveExpert, currentRole } = useCoOSStore();
 
-  const handleMatchSuccess = async (personaId: string, greetingMessage: string, expertName: string) => {
+  const handleMatchSuccess = async (personaId: string, _greetingMessage: string, _expertName: string) => {
     // Reload expert sidebar so newly auto-generated expert appears
     if (currentRole?.id) {
       try {
@@ -32,28 +32,31 @@ export function MatchPersonaButton({ currentPersonaId, onMatch, onGreeting }: Pr
       } catch { /* non-fatal */ }
     }
 
+    // [FIX-05] Switch expert — this triggers loadHistory which fetches greeting from DB.
+    // DO NOT manually inject greeting here: confirm_match already saved it to chat_transcripts.
     setActiveExpert(personaId);
     onMatch?.(personaId);
-
-    // [M4.2] Expert initiates the conversation with a greeting
-    if (greetingMessage && onGreeting) {
-      // Short delay so the sidebar transition finishes before the bubble appears
-      await new Promise((r) => setTimeout(r, 600));
-      onGreeting({
-        id: `greet_${++_greetId}`,
-        role: "assistant",
-        content: greetingMessage,
-        expertName: expertName ?? undefined,
-      });
-    }
   };
 
   return (
-    <div className="flex gap-2 items-center">
+    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
       <button
         data-testid="match-btn"
         onClick={() => setShowModal(true)}
-        className="flex-1 py-2 text-sm bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 font-medium"
+        style={{
+          flex: 1,
+          padding: "8px 12px",
+          fontSize: 13,
+          fontWeight: 600,
+          background: "var(--glass-bg)",
+          color: "var(--role-primary, #6366f1)",
+          border: "1px solid var(--glass-border)",
+          borderRadius: 10,
+          cursor: "pointer",
+          transition: "background 0.15s",
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--glass-border)")}
+        onMouseLeave={(e) => (e.currentTarget.style.background = "var(--glass-bg)")}
       >
         + 配對
       </button>
@@ -62,7 +65,16 @@ export function MatchPersonaButton({ currentPersonaId, onMatch, onGreeting }: Pr
         <button
           data-testid="rematch-btn"
           onClick={() => setShowRematch(true)}
-          className="py-2 px-3 text-sm text-gray-500 hover:text-gray-700"
+          style={{
+            padding: "8px",
+            fontSize: 14,
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            color: "var(--text-muted)",
+            borderRadius: 8,
+            transition: "color 0.15s",
+          }}
           title="重新配對"
         >
           🔄

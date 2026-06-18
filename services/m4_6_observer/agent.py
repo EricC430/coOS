@@ -99,13 +99,19 @@ async def _do_extraction(
     gemma: Any = None,
     thread_id: str = "",
     persona_id: str = "",
+    current_active_project: str | None = None,
+    expert_name: str | None = None,
 ) -> ObserverResult:
     """執行所有萃取步驟。慢/失敗的子步驟不應拖垮整體（由上層 timeout 守護）。"""
     result = ObserverResult(role_id=role_id)
 
     # 1. 主題標籤偵測 + upsert (Regex -> LLM fallback -> Eguard -> 去重 -> SSE)
+    #    [測試回饋] 傳入當前活躍專案，相同則不重複標記
     result.project_name = await detect_and_upsert_project(
-        user_msg, role_id=role_id, db=db, eguard=eguard, sse=sse, gemma=gemma
+        user_msg, role_id=role_id, db=db, eguard=eguard, sse=sse, gemma=gemma,
+        current_active_project=current_active_project,
+        source="chat",
+        expert_name=expert_name,
     )
 
     # 2. 意圖萃取
@@ -151,6 +157,8 @@ async def run_observer(
     thread_id: str = "",
     persona_id: str = "",
     timeout: float = OBSERVER_TIMEOUT_SECS,
+    current_active_project: str | None = None,
+    expert_name: str | None = None,
 ) -> ObserverResult:
     """
     一次性背景萃取入口。
@@ -159,8 +167,10 @@ async def run_observer(
     try:
         result = await asyncio.wait_for(
             _do_extraction(
-                user_msg, role_id, db, eguard, sse, 
-                gemma=gemma, thread_id=thread_id, persona_id=persona_id
+                user_msg, role_id, db, eguard, sse,
+                gemma=gemma, thread_id=thread_id, persona_id=persona_id,
+                current_active_project=current_active_project,
+                expert_name=expert_name,
             ),
             timeout=timeout,
         )
@@ -182,9 +192,8 @@ async def observer_extract(
     [R10 §代理工作流] 非同步萃取的 timeout 包裝，不阻塞 Persona。
     [決策] 超時靜默失敗 -> timed_out=True。
     """
-    from services.main import _db_adapter, _eguard_filter
-    
     async def real_impl(t: dict) -> ObserverResult:
+        from services.main import _db_adapter, _eguard_filter
         return await _do_extraction(
             user_msg=t.get("user_message", ""),
             role_id=t.get("role_id", ""),

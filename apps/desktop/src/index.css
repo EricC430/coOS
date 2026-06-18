@@ -10,6 +10,7 @@
 /* ---------- Light Mode (default) ---------- */
 :root {
   --role-primary: #6366f1;
+  --role-primary-faint: rgba(99, 102, 241, 0.12);
 
   /* Warm palette — light */
   --bg-base: #fef9f3;
@@ -939,4 +940,209 @@ body {
   opacity: 0.6;
   cursor: not-allowed;
   transform: none;
+}
+
+/* ============================================================
+   FIX-02 — Resizable sidebar handle
+   ============================================================ */
+.resize-handle {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.2s;
+  position: relative;
+  z-index: 10;
+}
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--glass-border);
+}
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  height: 32px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--text-muted);
+  opacity: 0.4;
+}
+
+/* ============================================================
+   FIX-08 — Context slot overflow: scrollable card, not clipped ul
+   ============================================================ */
+.context-slot {
+  overflow-y: auto;
+  min-height: 0;
+}
+/* [FIX-01] Removed max-height:120px — it was clipping Goals/Promises content.
+   The card container itself (context-slot) controls scroll. */
+.context-slot ul {
+  overflow-y: visible;
+}
+
+/* ============================================================
+   FIX-01 — Widget Grid Manager
+   ============================================================ */
+.widget-grid-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.widget-grid-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  width: 100%;
+}
+
+.widget-grid-item {
+  flex: 1 1 280px;
+  min-width: 200px;
+  max-width: 100%;
+  transition: opacity 0.2s;
+}
+
+.widget-grid-item.widget-drag-over {
+  outline: 2px dashed var(--gold-accent);
+  border-radius: 12px;
+}
+
+.widget-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 120px;
+}
+
+.widget-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 4px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.widget-drag-handle {
+  cursor: grab;
+  font-size: 16px;
+  color: var(--text-muted);
+  opacity: 0.6;
+  padding: 2px 4px;
+  line-height: 1;
+  user-select: none;
+}
+.widget-drag-handle:hover { opacity: 1; }
+.widget-drag-handle:active { cursor: grabbing; }
+
+.widget-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.widget-ctrl-btn {
+  background: none;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  transition: all 0.15s;
+}
+.widget-ctrl-btn:hover:not(:disabled) {
+  background: var(--glass-bg);
+  color: var(--text-primary);
+}
+.widget-ctrl-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.widget-ctrl-delete:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.widget-add-btn {
+  background: none;
+  border: 1px dashed var(--glass-border);
+  border-radius: 10px;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  width: 100%;
+  text-align: center;
+  transition: all 0.2s;
+}
+.widget-add-btn:hover {
+  background: var(--glass-bg);
+  color: var(--text-primary);
+  border-color: var(--gold-accent);
+}
+
+.widget-add-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  z-index: 100;
+  overflow: hidden;
+  backdrop-filter: blur(20px);
+}
+.widget-add-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 10px 16px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 13px;
+  transition: background 0.15s;
+}
+.widget-add-menu-item:hover { background: var(--glass-bg); }
+.widget-add-menu-item + .widget-add-menu-item {
+  border-top: 1px solid var(--glass-border);
+}
+
+/* ============================================================
+   FIX-10 — Dark mode: Input bar and card colors
+   ============================================================ */
+[data-theme="dark"] .multimodal-input-bar {
+  background: var(--bg-surface);
+  border-top-color: var(--glass-border);
+}
+[data-theme="dark"] .multimodal-input-bar textarea {
+  background: var(--glass-bg);
+  border-color: var(--glass-border);
+  color: var(--text-primary);
+}
+[data-theme="dark"] .multimodal-input-bar button {
+  color: var(--text-secondary);
+}
+[data-theme="dark"] .expert-sidebar {
+  background: var(--bg-surface);
+}
+[data-theme="dark"] .expert-item {
+  color: var(--text-primary);
+}
+[data-theme="dark"] .expert-item:hover {
+  background: var(--glass-bg);
+}
+[data-theme="dark"] .system-event-hint-inline {
+  color: var(--text-muted);
 }

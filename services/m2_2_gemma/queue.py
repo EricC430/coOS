@@ -22,11 +22,14 @@ MAX_WAIT_SECONDS = 300  # promote starved tasks after 5 minutes
 @dataclass(order=True)
 class InferenceTask:
     priority: int
-    enqueued_at: float = field(default_factory=time.monotonic, compare=False)
+    enqueued_at: float = field(default_factory=time.monotonic, compare=True)
+    task_id: int = field(default=0, compare=True)
     payload: Any = field(default=None, compare=False)
     tag: str = field(default="", compare=False)
     # fn is the coroutine factory; called when task is dequeued
     fn: Callable[[], Coroutine[Any, Any, Any]] | None = field(default=None, compare=False)
+    # future is the asyncio Future used to await the result
+    future: Any = field(default=None, compare=False)
 
 
 class InferencePriorityQueue:
@@ -63,3 +66,33 @@ class InferencePriorityQueue:
 
     def qsize(self) -> int:
         return self._queue.qsize()
+
+
+global_inference_queue = InferencePriorityQueue()
+_task_counter = 0
+
+
+async def enqueue_inference(
+    priority: int,
+    fn: Callable[[], Coroutine[Any, Any, Any]],
+    tag: str = "",
+) -> Any:
+    """Helper to enqueue a task and await its completion via a Future."""
+    global _task_counter
+    # If the queue worker is not running (e.g., in standalone unit tests),
+    # run the coroutine directly to prevent hanging.
+    if not global_inference_queue._running:
+        return await fn()
+
+    _task_counter += 1
+    future = asyncio.get_running_loop().create_future()
+    task = InferenceTask(
+        priority=priority,
+        fn=fn,
+        future=future,
+        tag=tag,
+        task_id=_task_counter,
+    )
+    await global_inference_queue.put(task)
+    return await future
+

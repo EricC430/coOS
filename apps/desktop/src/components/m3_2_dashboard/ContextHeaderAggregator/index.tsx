@@ -15,11 +15,18 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { fetchRoleContext } from "./useRoleContextCache";
-import { ConsistencyHeatmap } from "../ConsistencyHeatmap";
+import { WidgetGridManager } from "../WidgetGridManager";
 import type { HeatmapEntry } from "../ConsistencyHeatmap";
+
+interface ProjectEntry {
+  name: string;
+  description?: string;
+  created_at?: string;
+}
 
 interface ContextData {
   project?: { name: string };
+  projects?: ProjectEntry[];
   promises?: string[];
   goals?: string[];
   role?: { name: string };
@@ -102,35 +109,90 @@ export function ContextHeaderAggregator({ roleId, roleName, heatmapData }: Props
       <div className="context-grid" style={{ flex: 1, minHeight: 0 }}>
         {/* Row 1: Project | Promises | Goal — equal width */}
         <div className="context-row-top">
-          <div className="glass-card context-slot" data-testid="project-slot">
-            <span className="context-slot-label">Project</span>
-            <span className="context-slot-value">
-              {data?.project?.name ?? "—"}
-            </span>
+          <div className="glass-card context-slot" data-testid="project-slot" style={{ overflowY: "auto" }}>
+            <span className="context-slot-label">Projects</span>
+            {data?.projects && data.projects.length > 0 ? (
+              <ul style={{ margin: 0, padding: 0, listStyle: "none", width: "100%" }}>
+                {data.projects.map((p, i) => (
+                  <li
+                    key={i}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      paddingBottom: 4,
+                      borderBottom: i < data.projects!.length - 1 ? "1px solid var(--glass-border)" : "none",
+                      marginBottom: 4,
+                    }}
+                  >
+                    <span className="context-slot-value" style={{ fontSize: 12 }}>{p.name}</span>
+                    {p.description && (
+                      <span style={{ fontSize: 10, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {p.description}
+                      </span>
+                    )}
+                    {p.created_at && (
+                      <span style={{ fontSize: 9, color: "var(--text-muted)" }}>
+                        {p.created_at.slice(0, 10)}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <span className="context-slot-value">{data?.project?.name ?? "—"}</span>
+            )}
           </div>
 
-          <div className="glass-card context-slot" data-testid="promises-slot">
+          <div className="glass-card context-slot" data-testid="promises-slot"
+            style={{ overflowY: "auto" }}>
             <span className="context-slot-label">Promises</span>
-            <span className="context-slot-value">
-              {data?.promises?.[0] ?? "—"}
-            </span>
+            {data?.promises && data.promises.length > 0 ? (
+              <ul style={{ margin: 0, padding: 0, listStyle: "none", width: "100%" }}>
+                {data.promises.map((p, i) => (
+                  <li key={i} style={{
+                    paddingBottom: 4,
+                    borderBottom: i < data.promises!.length - 1 ? "1px solid var(--glass-border)" : "none",
+                    marginBottom: 4,
+                    fontSize: 12,
+                    color: "var(--text-primary)",
+                  }}>
+                    {p}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <span className="context-slot-value">—</span>
+            )}
           </div>
 
-          <div className="glass-card context-slot" data-testid="goal-slot">
+          <div className="glass-card context-slot" data-testid="goal-slot"
+            style={{ overflowY: "auto" }}>
             <span className="context-slot-label">Goal</span>
-            <span className="context-slot-value">
-              {data?.goals?.[0] ?? "—"}
-            </span>
+            {data?.goals && data.goals.length > 0 ? (
+              <ul style={{ margin: 0, padding: 0, listStyle: "none", width: "100%" }}>
+                {data.goals.map((g, i) => (
+                  <li key={i} style={{
+                    paddingBottom: 4,
+                    borderBottom: i < data.goals!.length - 1 ? "1px solid var(--glass-border)" : "none",
+                    marginBottom: 4,
+                    fontSize: 12,
+                    color: "var(--text-primary)",
+                  }}>
+                    {g}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <span className="context-slot-value">—</span>
+            )}
           </div>
         </div>
 
-        {/* Row 2: Dashboard with heatmap */}
-        <div className="glass-card dashboard-block" data-testid="dashboard-block">
+        {/* Row 2: Dashboard with reorderable widget cards */}
+        <div className="glass-card dashboard-block" data-testid="dashboard-block"
+          style={{ overflow: "auto" }}>
           <span className="dashboard-title">Dashboard</span>
-          <div>
-            <span className="heatmap-title">365 天一致性紀錄</span>
-            <ConsistencyHeatmap data={heatmapData} />
-          </div>
+          <WidgetGridManager roleId={roleId} heatmapData={heatmapData} />
         </div>
       </div>
     </div>

@@ -219,7 +219,8 @@ class TestObserverResilience:
     def test_system_event_emitted_on_success(self):
         """萃取成功 → 發送 SSE System Event 至前端"""
         result = _run("我想做機器學習專案")
-        assert any(e["type"] == "project_created" for e in result._sse.events)
+        # [測試回饋] 事件型別標準化為大寫 PROJECT_CREATED（與前端一致）
+        assert any(e["type"] == "PROJECT_CREATED" for e in result._sse.events)
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +245,46 @@ class TestProjectDetector:
         )
         assert name == "微積分作業"
         assert len(db.projects_for(ROLE_CSIE)) == 1
+
+    @pytest.mark.asyncio
+    async def test_same_as_current_project_no_event(self):
+        """[測試回饋] 偵測結果與當前活躍專案相同 -> 不發事件、不建新"""
+        db = FakeDB()
+        db.add_project(role_id=ROLE_CSIE, name="微積分作業")
+        sse = FakeSSE()
+        name = await detect_and_upsert_project(
+            "微積分作業好難", role_id=ROLE_CSIE, db=db, eguard=FakeEguard(), sse=sse,
+            current_active_project="微積分作業",
+        )
+        assert name == "微積分作業"
+        # 與當前活躍相同 → 不發任何 SSE
+        assert len(sse.events) == 0
+
+    @pytest.mark.asyncio
+    async def test_switch_to_existing_project_emits_switched(self):
+        """[測試回饋] 切換到既有專案 -> 發 PROJECT_SWITCHED 而非 CREATED"""
+        db = FakeDB()
+        db.add_project(role_id=ROLE_CSIE, name="微積分作業")
+        db.add_project(role_id=ROLE_CSIE, name="演算法專案")
+        sse = FakeSSE()
+        await detect_and_upsert_project(
+            "演算法專案的進度", role_id=ROLE_CSIE, db=db, eguard=FakeEguard(), sse=sse,
+            current_active_project="微積分作業",
+        )
+        assert any(e["type"] == "PROJECT_SWITCHED" for e in sse.events)
+        # 沒有重複建立既有專案
+        assert len([p for p in db.projects_for(ROLE_CSIE) if p.name == "演算法專案"]) == 1
+
+    def test_sanitize_topic_rejects_sentences(self):
+        """[測試回饋] _sanitize_topic 拒絕整句/問句/含標點/過長輸出"""
+        from m4_6_observer.project_detector import _sanitize_topic
+        assert _sanitize_topic("詢問狀態轉移的概念並請求實例說明。") is None  # 含句號+過長
+        assert _sanitize_topic("我想知道怎麼做") is None  # 動作描述句
+        assert _sanitize_topic("這要怎麼用呢") is None  # 問句特徵
+        assert _sanitize_topic("null") is None
+        assert _sanitize_topic("") is None
+        assert _sanitize_topic("微積分數值積分") == "微積分數值積分"  # 合法名詞短語
+        assert _sanitize_topic('"找實習"') == "找實習"  # 去引號
 
 
 # ---------------------------------------------------------------------------

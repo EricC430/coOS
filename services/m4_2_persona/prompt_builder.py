@@ -20,6 +20,7 @@ class PersonaConfig:
     backstory: str
     tone_default: str
     trust_level: float = 0.5
+    persona_card: dict | None = None  # [R03 §1] 結構化人設卡（speech_profile / stances / taboos）
 
 
 # 禁用的通用 AI 語（[R03 §1.1] 禁止出現）
@@ -31,6 +32,60 @@ _FORBIDDEN_PHRASES = [
     "我只是一個語言模型",
     "身為 AI",
 ]
+
+# [R05 §治療同盟] personality_prompt 過長會壓垮回覆節奏感，截斷上限（字元）
+_PERSONALITY_PROMPT_MAX = 280
+
+
+def _truncate_personality(text: str) -> str:
+    """
+    [R05 §治療同盟] 過長人設描述（DB 中常 800+ 字）會讓 LLM 模仿其冗長語氣，
+    破壞「短句、口語、像真人」的回覆節奏。截斷至核心段落，優先保留前段
+    （identity + 最關鍵性格句通常在開頭）。
+    """
+    text = (text or "").strip()
+    if len(text) <= _PERSONALITY_PROMPT_MAX:
+        return text
+    # 在上限附近找句號斷點，避免硬切句子中間
+    cut = _PERSONALITY_PROMPT_MAX
+    for offset in range(40):
+        if cut - offset >= 0 and text[cut - offset] in {"。", "！", "？", "\n"}:
+            cut = cut - offset + 1
+            break
+    return text[:cut].strip()
+
+
+def _build_speech_style_block(persona_card: dict | None) -> str:
+    """
+    [R03 §1 微觀認知架構][R05 §跨越恐怖谷] 從 persona_card.speech_profile 注入說話風格。
+    口頭禪/quirks 明確標註「偶爾使用」，避免每則回覆都冒出口頭禪（測試回饋：太頻繁反而不像人）。
+    """
+    if not persona_card:
+        return ""
+    sp = persona_card.get("speech_profile", {}) or {}
+    parts: list[str] = []
+
+    sentence_length = sp.get("sentence_length")
+    if sentence_length == "short":
+        parts.append("- 你習慣說短句，一次不會講太多。")
+    elif sentence_length == "long":
+        parts.append("- 你偶爾會講得稍長，但仍口語自然。")
+
+    fillers = sp.get("fillers") or []
+    if fillers:
+        parts.append(f"- 偶爾（非每句）自然帶入語助詞：{ '、'.join(fillers[:3]) }。")
+
+    catchphrase = sp.get("口頭禪") or sp.get("catchphrase")
+    if catchphrase:
+        parts.append(f"- 你有句口頭禪「{catchphrase}」，但只在真正貼切時偶爾用，不要每次都說。")
+
+    quirks = sp.get("quirks") or []
+    if quirks:
+        parts.append(f"- 說話小習慣（偶爾展現）：{ '；'.join(quirks[:3]) }。")
+
+    if not parts:
+        return ""
+    return "[說話風格]\n" + "\n".join(parts) + "\n\n"
 
 # [R03 §1] 角色情境說明模板（依 role_id 差異化）
 _ROLE_CONTEXT_TEMPLATES: dict[str, str] = {
@@ -123,11 +178,24 @@ def build_system_prompt(
         last_session_summary=last_session_summary,
     )
 
+    card = config.persona_card or {}
+
+    # [W3] 若呼叫端未顯式傳 stances，從 persona_card 取
+    if anti_sycophancy_stances is None and card.get("stances"):
+        anti_sycophancy_stances = card.get("stances")
+
+    # [R05 §治療同盟] 結構化卡（compile_to_prompt 已含節奏指令）不截斷；
+    # 僅對「原始散文」personality_prompt（無 persona_card）做長度上限，避免冗長壓垮節奏。
+    personality_text = config.personality_prompt
+    if not card:
+        personality_text = _truncate_personality(personality_text)
+
     prompt = (
         "[角色]\n"
-        f"{config.personality_prompt}\n\n"
+        f"{personality_text}\n\n"
         f"背景：{config.backstory}\n\n"
         f"當前情境：{role_context}\n\n"
+        f"{_build_speech_style_block(card)}"
         "​[記憶區塊 — AI登錄系統紀錄]\n"
         f"{memory_block}\n\n"
     )
@@ -162,9 +230,13 @@ def build_system_prompt(
         "- 同角色的其他專家透過 AI 登錄系統共享進度，你可以提及。\n"
     )
 
-    # 驗證不含禁用語（防禦性清理）
-    for phrase in _FORBIDDEN_PHRASES:
-        if phrase in prompt:
+    # 驗證不含禁用語（防禦性清理）；併入 persona_card.speech_profile.taboos
+    taboos = []
+    sp = card.get("speech_profile", {}) or {}
+    if isinstance(sp.get("taboos"), list):
+        taboos = sp["taboos"]
+    for phrase in _FORBIDDEN_PHRASES + taboos:
+        if phrase and phrase in prompt:
             prompt = prompt.replace(phrase, "")
 
     return prompt.strip()

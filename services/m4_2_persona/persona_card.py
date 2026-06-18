@@ -255,11 +255,26 @@ def compile_to_prompt(card: PersonaCard) -> str:
     # --- [R05] Speech quirks ---
     if card.speech_profile.get("quirks"):
         sections.append(
-            "Speech quirks: " + ", ".join(card.speech_profile["quirks"][:3]) + "."
+            "Speech quirks (use occasionally, NOT every message): "
+            + ", ".join(card.speech_profile["quirks"][:3]) + "."
+        )
+    catchphrase = card.speech_profile.get("口頭禪") or card.speech_profile.get("catchphrase")
+    if catchphrase:
+        sections.append(
+            f'You have a catchphrase "{catchphrase}", but only use it occasionally '
+            "when it truly fits — do not repeat it every time."
         )
     if card.speech_profile.get("taboos"):
         sections.append(
             "Never say: " + ", ".join(card.speech_profile["taboos"][:3]) + "."
+        )
+
+    # --- [R05 §跨越恐怖谷] Sentence rhythm (texting-like, human pacing) ---
+    sentence_length = card.speech_profile.get("sentence_length", "short")
+    if sentence_length == "short":
+        sections.append(
+            "Speech rhythm: you text like a real person — short sentences, "
+            "casual, one idea at a time. Do not info-dump your whole background at once."
         )
 
     return "\n\n".join(sections)

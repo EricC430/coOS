@@ -554,6 +554,39 @@ async def lifespan(app: FastAPI):
             cursor.execute("ALTER TABLE ai_experts ADD COLUMN persona_card TEXT")
         except Exception:
             pass  # column already exists
+        # [Part E] Migration: split title (職稱) from name (姓名)
+        try:
+            cursor.execute("ALTER TABLE ai_experts ADD COLUMN title TEXT")
+        except Exception:
+            pass  # column already exists
+        # [Part E] Backfill: parse existing name field (e.g. "技術架構師 嚴鋒") → title + name
+        cursor.execute("SELECT id, name, persona_card FROM ai_experts WHERE title IS NULL")
+        for row in cursor.fetchall():
+            row_id, full_name, pc_json = row
+            title_val = None
+            pure_name = full_name
+            # Try persona_card.identity.name for the pure name
+            if pc_json:
+                try:
+                    import json as _json
+                    pc = _json.loads(pc_json)
+                    identity_name = (pc.get("identity") or {}).get("name")
+                    role_title = (pc.get("identity") or {}).get("role")
+                    if identity_name:
+                        pure_name = identity_name
+                        title_val = role_title or None
+                except Exception:
+                    pass
+            # Fallback: split on last space if name looks like "稱謂 姓名"
+            if title_val is None and " " in full_name:
+                parts = full_name.rsplit(" ", 1)
+                if len(parts) == 2 and len(parts[0]) <= 8:
+                    title_val = parts[0]
+                    pure_name = parts[1]
+            cursor.execute(
+                "UPDATE ai_experts SET title = ?, name = ? WHERE id = ?",
+                (title_val, pure_name, row_id)
+            )
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS goals (
                 id              TEXT PRIMARY KEY,
@@ -936,6 +969,37 @@ async def lifespan(app: FastAPI):
 
     tunnel_task = asyncio.create_task(start_tunnels())
 
+    # [M2.2] Start Inference Priority Queue Worker
+    from m2_2_gemma.queue import global_inference_queue
+
+    async def inference_worker():
+        logger.info("[M2.2] Starting Inference Priority Queue Worker...")
+        global_inference_queue._running = True
+        try:
+            while True:
+                try:
+                    task = await global_inference_queue.get()
+                    if task.fn is None:
+                        continue
+                    if task.future and task.future.cancelled():
+                        continue
+                    try:
+                        res = await task.fn()
+                        if task.future and not task.future.done():
+                            task.future.set_result(res)
+                    except Exception as exc:
+                        if task.future and not task.future.done():
+                            task.future.set_exception(exc)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error("[M2.2] Inference worker error: %s", e)
+                    await asyncio.sleep(0.5)
+        finally:
+            global_inference_queue._running = False
+
+    inference_worker_task = asyncio.create_task(inference_worker())
+
     logger.info("[M0.3] coOS sidecar 啟動完成 (local_only=%s)", not settings.gemini_api_key)
     yield
     # Cleanup
@@ -945,8 +1009,9 @@ async def lifespan(app: FastAPI):
     git_task.cancel()
     maintenance_task.cancel()
     draft_cron_task.cancel()
+    inference_worker_task.cancel()
     try:
-        await asyncio.gather(git_task, maintenance_task, draft_cron_task, return_exceptions=True)
+        await asyncio.gather(git_task, maintenance_task, draft_cron_task, inference_worker_task, return_exceptions=True)
     except asyncio.CancelledError:
         pass
     if _debouncer:
@@ -1641,6 +1706,7 @@ async def m6_2_list_experts(role_id: str) -> list[dict[str, Any]]:
         {
             "id": r["id"],
             "expertName": r["name"],
+            "title": r["title"] if "title" in r.keys() else None,
             "personalityPrompt": r["personality_prompt"],
             "trustLevel": r["trust_level"],
             "avatarUrl": r["avatar_url"],
@@ -1836,9 +1902,19 @@ async def m6_3_role_context(role_id: str, request: Request) -> dict[str, Any]:
         role_uuid = uuid.uuid4()
         
     role_ctx = await build_role_context(user_id=user_id, role_id=role_uuid, db=_db_adapter)
-    
+
+    # [D3] Return full projects list so Project board can show all active projects
+    projects_list = [
+        {
+            "name": p.get("name", ""),
+            "description": p.get("description") or "",
+            "created_at": p.get("created_at") or "",
+        }
+        for p in role_ctx.projects
+    ]
+    # Legacy single-project field kept for backward compat
     project = {"name": role_ctx.projects[0].get("name")} if role_ctx.projects else {"name": "無作用中專案"}
-    # Just try to fetch role name from db, otherwise default to "Role"
+
     role_row = await _db_adapter.fetch_one("SELECT display_name FROM roles WHERE id = :rid", {"rid": str(role_uuid)})
     role_name = role_row["display_name"] if role_row else "Role"
     role = {"name": role_name}
@@ -1849,6 +1925,7 @@ async def m6_3_role_context(role_id: str, request: Request) -> dict[str, Any]:
     return {
         "role_id": str(role_id),
         "project": project,
+        "projects": projects_list,
         "role": role,
         "promises": promises,
         "goals": goals,
@@ -2243,45 +2320,64 @@ async def m6_5_draw_card(request: Request, body: dict[str, Any]) -> dict[str, An
     
     return {"success": False, "reason": result.error_reason}
 
-@app.get("/api/m6_5/user_collections")
-async def m6_5_user_collections(request: Request) -> list[dict[str, Any]]:
-    """[M6.5] Fetch real user collections from SQLite."""
-    user_id = str(get_safe_user_id(request))
-    query = """
-        SELECT i.*, u.acquired_at 
-        FROM user_collections u 
-        JOIN items_dictionary i ON u.item_id = i.id 
-        WHERE u.user_id = :uid
+
+async def _resolve_session_thread_id(role_id: str, thread_id: str, create_if_new: bool = False) -> str:
+    """Resolve the latest active thread_id segment.
+    If create_if_new is True, it starts a new thread ID segment if the last message
+    was more than 30 minutes (1800 seconds) ago.
     """
-    rows = await _db_adapter.fetch_all(query, {"uid": str(user_id)})
-    return [dict(row) for row in rows]
+    prefix = f"{thread_id}_%"
+    row = await _db_adapter.fetch_one(
+        "SELECT thread_id, created_at FROM chat_transcripts "
+        "WHERE role_id = :rid AND (thread_id = :tid OR thread_id LIKE :prefix) "
+        "ORDER BY created_at DESC LIMIT 1",
+        {"rid": role_id, "tid": thread_id, "prefix": prefix}
+    )
+    if not row:
+        if create_if_new:
+            import uuid
+            return f"{thread_id}_{uuid.uuid4().hex[:8]}"
+        return thread_id
 
+    last_thread_id = row["thread_id"]
+    last_created_at = row["created_at"]
 
-@app.get("/api/m6_5/items_dictionary")
-async def m6_5_items_dictionary() -> list[dict[str, Any]]:
-    """[M6.5] Fetch all available achievements from dictionary."""
-    rows = await _db_adapter.fetch_all("SELECT * FROM items_dictionary ORDER BY rarity DESC")
-    return [dict(row) for row in rows]
+    if create_if_new:
+        from datetime import datetime, timezone
+        try:
+            clean_time = last_created_at.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(clean_time)
+        except Exception:
+            return last_thread_id
+        
+        now = datetime.now(timezone.utc)
+        diff = (now - dt).total_seconds()
+        if diff > 1800:
+            import uuid
+            new_tid = f"{thread_id}_{uuid.uuid4().hex[:8]}"
+            logger.info("[ThreadSplit] Inactivity timeout (diff=%.1fs > 1800s). Splitting thread from %s to %s", diff, last_thread_id, new_tid)
+            return new_tid
 
+    return last_thread_id
 
-# --- M4.1 Chat (LangGraph) ---
 
 @app.get("/api/m4_1/history")
 async def m4_1_history(role_id: str, thread_id: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
     """回傳指定角色（或特定 thread）的最近聊天紀錄，按時間排序。"""
     if thread_id:
+        resolved_tid = await _resolve_session_thread_id(role_id, thread_id, create_if_new=False)
         rows = await _db_adapter.fetch_all(
             "SELECT role, content, persona_id, thread_id, created_at FROM chat_transcripts "
-            "WHERE role_id = :rid AND thread_id = :tid ORDER BY created_at ASC LIMIT :lim",
-            {"rid": role_id, "tid": thread_id, "lim": limit},
+            "WHERE role_id = :rid AND thread_id = :tid ORDER BY created_at DESC LIMIT :lim",
+            {"rid": role_id, "tid": resolved_tid, "lim": limit},
         )
     else:
         rows = await _db_adapter.fetch_all(
             "SELECT role, content, persona_id, thread_id, created_at FROM chat_transcripts "
-            "WHERE role_id = :rid ORDER BY created_at ASC LIMIT :lim",
+            "WHERE role_id = :rid ORDER BY created_at DESC LIMIT :lim",
             {"rid": role_id, "lim": limit},
         )
-    return [dict(r) for r in rows]
+    return [dict(r) for r in reversed(rows)]
 
 
 @app.get("/api/m4_1/threads")
@@ -2341,8 +2437,11 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
         except Exception as e:
             logger.warning("Gemma compress failed in chat route: %s", e)
             
-    # Use thread_id as-is from frontend (format: thread_{roleId} or thread_{roleId}_{expertId})
-    resolved_thread_id = thread_id or f"thread_{role_uuid}"
+    # Use thread_id from frontend and resolve it dynamically to handle inactivity splitting
+    if thread_id:
+        resolved_thread_id = await _resolve_session_thread_id(str(role_uuid), thread_id, create_if_new=True)
+    else:
+        resolved_thread_id = f"thread_{role_uuid}"
         
     # 拉近期對話歷史（最多 12 條）供工具型 AI 保持連貫
     # DESC LIMIT 12 取最新 12 條，再反轉為時間正序送入 LLM context
@@ -2608,7 +2707,15 @@ async def _ai_generate_expert(user_description: str, role_id: str) -> dict | Non
         return None
 
     expert_id = str(uuid.uuid4())
-    name = data.get("name", "AI 助手")
+    # [Part E] Split title (職稱) from name (姓名) via persona_card.identity
+    _identity = data.get("identity") or {}
+    name = _identity.get("name") or data.get("name", "AI 助手")
+    title = _identity.get("role") or None
+    # Fallback: if name still contains a space prefix (e.g. "技術架構師 嚴鋒"), split it
+    if not title and " " in name:
+        _parts = name.rsplit(" ", 1)
+        if len(_parts) == 2 and len(_parts[0]) <= 8:
+            title, name = _parts[0], _parts[1]
     personality_prompt = data.get("personality_prompt", "")
     backstory = data.get("backstory", "")
     tone = data.get("tone_default", "empathetic")
@@ -2661,9 +2768,9 @@ async def _ai_generate_expert(user_description: str, role_id: str) -> dict | Non
 
     # [R05 §跨越恐怖谷 §治療同盟] trust_level 從 0.5 起跳，隨互動累積信任後升級
     await _db_adapter.execute(
-        "INSERT INTO ai_experts (id, role_id, name, personality_prompt, backstory, tone_default, trust_level, is_active, persona_card) "
-        "VALUES (:id, :rid, :name, :pp, :bs, :tone, 0.5, 1, :pc)",
-        {"id": expert_id, "rid": role_id, "name": name, "pp": personality_prompt, "bs": backstory, "tone": tone, "pc": persona_card_json}
+        "INSERT INTO ai_experts (id, role_id, name, title, personality_prompt, backstory, tone_default, trust_level, is_active, persona_card) "
+        "VALUES (:id, :rid, :name, :title, :pp, :bs, :tone, 0.5, 1, :pc)",
+        {"id": expert_id, "rid": role_id, "name": name, "title": title, "pp": personality_prompt, "bs": backstory, "tone": tone, "pc": persona_card_json}
     )
 
     # [SPEC §7.5] 自動生成對應的路由規則種子 (domain_keywords → role_router_rules)
@@ -2894,14 +3001,20 @@ async def m4_1_confirm_match(body: dict[str, Any]) -> dict[str, Any]:
     if not expert_row:
         raise HTTPException(status_code=404, detail="Expert not found")
 
-    thread_id = f"thread_{role_uuid}_{persona_id}"
+    thread_id = await _resolve_session_thread_id(str(role_uuid), f"thread_{role_uuid}_{persona_id}", create_if_new=True)
 
     # 呼叫 M4.2 persona graph 以 persona 語氣生成問候
     greeting_text: str | None = None
     try:
         from m4_2_persona.graph import get_persona_graph
 
-        greeting_prompt = f"（系統提示：請以你的人設語氣向使用者自我介紹並發起對話，語境是使用者描述：「{user_msg[:60]}」）"
+        # [R05 §治療同盟] 初次問候要短、像真人：一句簡短自我介紹 + 一個開放問題，不交代完整背景
+        greeting_prompt = (
+            "（系統提示：這是你和使用者的第一句話。請用你的人設語氣"
+            "「簡短」地打招呼並自我介紹一句，然後問一個輕鬆的開放問題。"
+            "務必簡短自然，像真人傳訊息，不要一次交代你的完整學經歷或背景。"
+            f"使用者剛剛說的是：「{user_msg[:60]}」）"
+        )
         persona_input = {
             "thread_id": thread_id,
             "role_id": str(role_uuid),
@@ -2944,10 +3057,10 @@ async def m4_1_confirm_match(body: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
-    # Fallback：若 persona graph 失敗，用人設摘要組簡單問候
+    # Fallback：若 persona graph 失敗，用簡短自然問候（[R05] 短、像真人）
     if not greeting_text:
         name = expert_row["name"]
-        greeting_text = f"你好！我是{name}，很高興認識你。你說的這件事我很有興趣，我們來好好聊聊。"
+        greeting_text = f"嗨，我是{name}。想先聽聽看你這邊的狀況？"
 
     # 落地 chat_transcripts（L1，本地 SQLite）
     greeting_id = str(_uuid.uuid4())
@@ -3031,6 +3144,63 @@ async def m4_1_delete_expert(expert_id: str, request: Request) -> dict[str, Any]
         logger.warning("[RISK-17] Expert pool is now empty for role=%s", role_id)
 
     return {"status": "deleted", "expert_id": expert_id, "pool_empty": remaining_count == 0}
+
+
+@app.patch("/api/m4_6/projects/{project_id}")
+async def m4_6_update_project(project_id: str, body: dict[str, Any], request: Request) -> dict[str, Any]:
+    """
+    [GAP/測試回饋] 編輯專案標籤（改名/描述）。供前端 system event hint 與 Project board 使用。
+    [RISK-06] 以 role_id 驗證所有權。
+    """
+    role_id = body.get("role_id", "") or request.query_params.get("role_id", "")
+    new_name = body.get("name")
+    new_desc = body.get("description")
+    if not role_id:
+        raise HTTPException(status_code=422, detail="role_id is required")
+
+    proj = await _db_adapter.fetch_one(
+        "SELECT id FROM role_projects WHERE id = :pid AND role_id = :rid",
+        {"pid": project_id, "rid": role_id}
+    )
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found for this role")
+
+    if new_name is not None:
+        await _db_adapter.execute(
+            "UPDATE role_projects SET name = :name WHERE id = :pid",
+            {"name": new_name, "pid": project_id}
+        )
+    if new_desc is not None:
+        await _db_adapter.execute(
+            "UPDATE role_projects SET description = :desc WHERE id = :pid",
+            {"desc": new_desc, "pid": project_id}
+        )
+    return {"status": "updated", "project_id": project_id}
+
+
+@app.delete("/api/m4_6/projects/{project_id}")
+async def m4_6_delete_project(project_id: str, request: Request) -> dict[str, Any]:
+    """
+    [測試回饋] 刪除（封存）專案標籤。軟刪除 status='archived' 保留歷史。
+    [RISK-06] 以 role_id 驗證所有權。
+    """
+    role_id = request.query_params.get("role_id", "")
+    if not role_id:
+        raise HTTPException(status_code=422, detail="role_id query param is required")
+
+    proj = await _db_adapter.fetch_one(
+        "SELECT id FROM role_projects WHERE id = :pid AND role_id = :rid",
+        {"pid": project_id, "rid": role_id}
+    )
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found for this role")
+
+    await _db_adapter.execute(
+        "UPDATE role_projects SET status = 'archived' WHERE id = :pid",
+        {"pid": project_id}
+    )
+    logger.info("[M4.6] Project tag archived: %s (role=%s)", project_id, role_id)
+    return {"status": "archived", "project_id": project_id}
 
 
 @app.post("/api/m1_4/disconnect_source")

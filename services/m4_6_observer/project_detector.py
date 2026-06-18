@@ -105,14 +105,19 @@ async def _llm_extract_topic(
     """
     existing_str = "、".join(existing_names) if existing_names else "（無）"
     prompt = (
-        "你是一個對話主題分析器。\n"
+        "你是一個對話主題標籤分析器。\n"
         f"既有主題標籤：{existing_str}\n"
         f"使用者訊息：{user_msg}\n\n"
-        "任務：判斷這則訊息的主要討論主題。\n"
+        "任務：抽出這則訊息的「主題標籤」——一個簡短的『名詞性主題短語』。\n"
         "規則：\n"
-        "1. 若主題符合某個既有標籤 -> 只回傳那個標籤的原文\n"
-        "2. 若有新主題 -> 回傳 2~10 字的繁體中文主題標籤（不要加引號）\n"
-        "3. 若是日常寒暄、無明確主題、或問法太模糊 -> 只回傳 null\n"
+        "1. 若主題符合某個既有標籤 -> 只回傳那個標籤的原文。\n"
+        "2. 若有新主題 -> 回傳 2~10 字的繁體中文『名詞短語』標籤"
+        "（像書籤名稱，例如「微積分數值積分」「找實習」「OpenStack 部署」）。\n"
+        "3. 標籤必須是名詞短語，不可是整句話、問句、或描述動作的句子。\n"
+        "4. 不可包含標點符號（句號、問號、逗號、驚嘆號等）。\n"
+        "5. 若是日常寒暄、無明確主題、或只是在問問題 -> 只回傳 null。\n"
+        "錯誤示範（這些都要回 null 或重新濃縮成名詞）："
+        "「詢問狀態轉移的概念」「測試情緒狀態的流程」「我想知道怎麼做」。\n"
         "只輸出標籤文字或 null，不要任何解釋。"
     )
 
@@ -120,11 +125,10 @@ async def _llm_extract_topic(
     if gemma is not None:
         try:
             raw = await gemma.generate_text(prompt)
-            if raw and raw.strip().lower() != "null":
-                result = raw.strip().strip('"').strip("'")
-                if 2 <= len(result) <= 20:
-                    logger.debug("[M4.6] Gemma topic extracted: %s", result)
-                    return result
+            result = _sanitize_topic(raw)
+            if result:
+                logger.debug("[M4.6] Gemma topic extracted: %s", result)
+                return result
         except Exception as e:
             logger.debug("[M4.6] Gemma topic extraction failed: %s", e)
 
@@ -138,11 +142,10 @@ async def _llm_extract_topic(
         )
         client = get_cloud_llm_client(PERSONA_MODEL_FALLBACK)
         raw = await client.complete(prompt, max_output_tokens=30, temperature=0.1)
-        if raw and raw.strip().lower() != "null":
-            result = raw.strip().strip('"').strip("'")
-            if 2 <= len(result) <= 20:
-                logger.debug("[M4.6] Cloud LLM topic extracted: %s", result)
-                return result
+        result = _sanitize_topic(raw)
+        if result:
+            logger.debug("[M4.6] Cloud LLM topic extracted: %s", result)
+            return result
         return None
     except (RateLimitError, ServiceUnavailableError):
         logger.debug("[M4.6] Cloud LLM topic extraction rate limited")
@@ -150,6 +153,34 @@ async def _llm_extract_topic(
     except Exception as e:
         logger.debug("[M4.6] Cloud LLM topic extraction failed: %s", e)
         return None
+
+
+# 標籤過濾：拒絕整句/問句/含標點的輸出
+_TOPIC_PUNCT = set("。，、！？；：「」『』,.!?;:\"'()（）")
+_SENTENCE_MARKERS = ("嗎", "呢", "嗎？", "如何", "怎麼", "為什麼", "請問", "我想知道", "說明", "解釋", "詢問")
+_TOPIC_MAX_LEN = 12
+
+
+def _sanitize_topic(raw: str | None) -> str | None:
+    """
+    [測試回饋] 收緊 LLM 標籤輸出：拒絕 null / 整句 / 問句 / 含標點 / 過長。
+    回傳乾淨名詞短語或 None。
+    """
+    if not raw:
+        return None
+    result = raw.strip().strip('"').strip("'").strip("「」『』")
+    if not result or result.lower() == "null":
+        return None
+    # 長度限制（名詞短語應簡短）
+    if not (2 <= len(result) <= _TOPIC_MAX_LEN):
+        return None
+    # 含標點 → 多半是整句，拒絕
+    if any(ch in _TOPIC_PUNCT for ch in result):
+        return None
+    # 問句/動作描述句特徵 → 拒絕
+    if any(marker in result for marker in _SENTENCE_MARKERS):
+        return None
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -163,12 +194,22 @@ async def detect_and_upsert_project(
     eguard: Any,
     sse: Any,
     gemma: Any | None = None,
+    current_active_project: str | None = None,
+    source: str = "chat",
+    expert_name: str | None = None,
+    intention: str | None = None,
 ) -> str | None:
     """
     [SPEC §9] 主題標籤偵測三段式流程：
       1. Regex 快速路徑
       2. LLM 語意分析（Gemma -> Cloud fallback）
       3. Eguard 過濾 -> 模糊去重 -> upsert -> SSE
+
+    [測試回饋] current_active_project：此 thread 目前活躍專案。
+      - 偵測結果與當前活躍專案相同 -> 不發事件、不建新（回傳該名稱）
+      - 切換到既有專案 -> 發 PROJECT_SWITCHED
+      - 全新主題 -> 建立並發 PROJECT_CREATED
+    source / expert_name / intention 併入 SSE payload，供前端語意化顯示。
     回傳最終標籤名稱（新建或匹配）或 None。
     """
     # 1. 拉既有標籤
@@ -189,9 +230,10 @@ async def detect_and_upsert_project(
     if not candidate:
         rematch = fuzzy_match(user_msg, existing_names)
         if rematch:
-            return rematch
-        # 再嘗試 LLM 語意分析
-        candidate = await _llm_extract_topic(user_msg, existing_names, gemma)
+            candidate = rematch
+        else:
+            # 再嘗試 LLM 語意分析
+            candidate = await _llm_extract_topic(user_msg, existing_names, gemma)
 
     if not candidate:
         return None
@@ -205,29 +247,44 @@ async def detect_and_upsert_project(
     if not candidate or "[REDACTED" in candidate:
         return None
 
-    # 5. 模糊去重
+    # 5. 模糊去重：對齊到既有標籤名稱（若存在）
     matched = fuzzy_match(candidate, existing_names)
-    if matched:
-        return matched
+    final_name = matched or candidate
+    is_new = matched is None
 
-    # 6. 寫入新標籤
-    import uuid
-    try:
-        await db.execute(
-            "INSERT INTO role_projects (id, role_id, name, inferred_by_ai) "
-            "VALUES (:id, :rid, :name, 1)",
-            {"id": str(uuid.uuid4()), "rid": role_id, "name": candidate}
-        )
-        logger.info("[M4.6] New topic tag created: '%s' for role %s", candidate, role_id)
-    except Exception as e:
-        logger.warning("[M4.6] Failed to insert project tag: %s", e)
-        return None
+    # 6. [測試回饋] 與當前活躍專案比對：相同則不發事件、不建新
+    if current_active_project and fuzzy_match(final_name, [current_active_project]):
+        return final_name
 
-    # 7. SSE
-    if hasattr(sse, "emit"):
+    # 7. 全新主題才寫入 role_projects
+    if is_new:
+        import uuid
         try:
-            await sse.emit("project_created", {"project_name": candidate, "role_id": role_id})
+            await db.execute(
+                "INSERT INTO role_projects (id, role_id, name, inferred_by_ai) "
+                "VALUES (:id, :rid, :name, 1)",
+                {"id": str(uuid.uuid4()), "rid": role_id, "name": final_name}
+            )
+            logger.info("[M4.6] New topic tag created: '%s' for role %s", final_name, role_id)
+        except Exception as e:
+            logger.warning("[M4.6] Failed to insert project tag: %s", e)
+            return None
+
+    # 8. SSE：新建 → PROJECT_CREATED；切換到既有 → PROJECT_SWITCHED
+    if hasattr(sse, "emit"):
+        event_type = "PROJECT_CREATED" if is_new else "PROJECT_SWITCHED"
+        payload = {
+            "project_name": final_name,
+            "role_id": role_id,
+            "source": source,
+        }
+        if expert_name:
+            payload["expert_name"] = expert_name
+        if intention:
+            payload["intention"] = intention
+        try:
+            await sse.emit(event_type, payload)
         except Exception:
             pass
 
-    return candidate
+    return final_name

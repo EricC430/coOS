@@ -22,6 +22,8 @@ class ObserverTask:
     extract_targets: list[str]
     role_id: str
     visibility: str = "private"  # [RISK-12] 預設 private
+    current_active_project: str | None = None  # [測試回饋] 此 thread 目前活躍專案
+    expert_name: str | None = None             # SSE payload 顯示用
 
 
 async def _run_observer(task: ObserverTask, persona_id: str = "") -> None:
@@ -37,7 +39,7 @@ async def _run_observer(task: ObserverTask, persona_id: str = "") -> None:
         deps = resolve_observer_deps(task.role_id)
         if deps is None:
             return 
-        await run_observer(
+        new_active = await run_observer(
             user_msg=task.user_msg,
             role_id=task.role_id,
             db=deps.db,
@@ -46,9 +48,37 @@ async def _run_observer(task: ObserverTask, persona_id: str = "") -> None:
             gemma=deps.gemma,
             thread_id=task.thread_id,
             persona_id=persona_id,
+            current_active_project=task.current_active_project,
+            expert_name=task.expert_name,
         )
+        # 更新此 thread 的活躍專案（供下一輪比對，避免每輪重複標記）
+        if new_active and getattr(new_active, "project_name", None):
+            _set_thread_active_project(task.thread_id, new_active.project_name)
     except Exception as e:
         logger.warning("[M4.1.3] observer run failed silently: %s", e)
+
+
+def _get_thread_active_project(thread_id: str) -> str | None:
+    """從 main.app.state.thread_active_project 取此 thread 目前活躍專案。"""
+    try:
+        import main as _main
+        state = getattr(_main.app, "state", None)
+        if state is None:
+            return None
+        return getattr(state, "thread_active_project", {}).get(thread_id)
+    except Exception:
+        return None
+
+
+def _set_thread_active_project(thread_id: str, project_name: str) -> None:
+    try:
+        import main as _main
+        state = _main.app.state
+        if not hasattr(state, "thread_active_project"):
+            state.thread_active_project = {}
+        state.thread_active_project[thread_id] = project_name
+    except Exception:
+        pass
 
 
 async def dispatch_observer(state: dict) -> dict:
@@ -57,12 +87,15 @@ async def dispatch_observer(state: dict) -> dict:
     """
     decision = state.get("route_decision") or {}
     persona_id = decision.get("persona_id", "")
-    
+    thread_id = state.get("thread_id", "")
+
     task = ObserverTask(
-        thread_id=state.get("thread_id", ""),
+        thread_id=thread_id,
         user_msg=state.get("user_message", ""),
         extract_targets=["project", "intent", "time_span"],
         role_id=state.get("role_id", ""),
+        current_active_project=_get_thread_active_project(thread_id),
+        expert_name=decision.get("persona_name") or decision.get("expert_name"),
     )
     asyncio.create_task(_run_observer(task, persona_id=persona_id))
     return state

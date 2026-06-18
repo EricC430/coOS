@@ -5,6 +5,9 @@
  * [R03 SS1] Tool AI + persona AI dual-track architecture
  * [R05 §therapy alliance] Persona unlocked only via match flow, not direct click
  * Anti-pattern: do NOT allow direct click on persona to start chat -- requires match ritual
+ *
+ * [FIX-02] No self-managed width — fills parent container (width is controlled by parent resize)
+ * [FIX-06] All colours use CSS variables for dark mode support
  */
 
 import React, { useState } from "react";
@@ -64,8 +67,28 @@ export function ExpertSidebar({
   };
 
   return (
-    <div className="flex flex-col w-48 border-r bg-gray-50 h-full overflow-y-auto">
-      <div className="px-3 py-3 font-semibold text-sm text-gray-600">💬 {roleName}聊天室</div>
+    // [FIX-02] width: 100% fills the parent resizable container; [FIX-06] CSS vars for dark mode
+    <div
+      className="expert-sidebar"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        width: "100%",
+        height: "100%",
+        overflowY: "auto",
+        background: "var(--bg-surface)",
+        borderRight: "1px solid var(--glass-border)",
+      }}
+    >
+      <div style={{
+        padding: "12px 12px 8px",
+        fontWeight: 600,
+        fontSize: 13,
+        color: "var(--text-secondary)",
+        borderBottom: "1px solid var(--glass-border)",
+      }}>
+        💬 {roleName}聊天室
+      </div>
 
       {/* Tool AI -- always first */}
       <ExpertItem
@@ -75,11 +98,13 @@ export function ExpertSidebar({
         icon="🤖"
       />
 
-      {activeExperts.length > 0 && <div className="mx-3 my-1 border-t" />}
+      {activeExperts.length > 0 && (
+        <div style={{ margin: "4px 12px", borderTop: "1px solid var(--glass-border)" }} />
+      )}
 
       {/* Unlocked personas -- each is an independent chat room */}
       {activeExperts.map((expert) => (
-        <div key={expert.id} className="relative">
+        <div key={expert.id} style={{ position: "relative" }}>
           <ExpertItem
             expert={expert}
             isActive={activeExpertId === expert.id}
@@ -89,7 +114,20 @@ export function ExpertSidebar({
           {matchHint === expert.id && (
             <div
               data-testid="match-required-hint"
-              className="absolute left-0 right-0 bottom-full mb-1 bg-black text-white text-xs rounded px-2 py-1 text-center pointer-events-none"
+              style={{
+                position: "absolute",
+                left: 0, right: 0,
+                bottom: "100%",
+                marginBottom: 4,
+                background: "var(--bg-base)",
+                border: "1px solid var(--glass-border)",
+                color: "var(--text-primary)",
+                fontSize: 11,
+                borderRadius: 6,
+                padding: "4px 8px",
+                textAlign: "center",
+                pointerEvents: "none",
+              }}
             >
               請透過「配對」按鈕開始對話
             </div>
@@ -101,20 +139,37 @@ export function ExpertSidebar({
       {deleteConfirmId && (
         <div
           data-testid="last-expert-confirm-modal"
-          className="mx-2 my-2 p-2 bg-red-50 border border-red-200 rounded text-xs"
+          style={{
+            margin: "8px",
+            padding: "8px",
+            background: "rgba(239,68,68,0.08)",
+            border: "1px solid rgba(239,68,68,0.3)",
+            borderRadius: 8,
+            fontSize: 12,
+          }}
         >
-          <p className="text-red-700 font-medium mb-1">刪除最後一位專家？</p>
-          <p className="text-red-600 mb-2">刪除後此角色將無 AI 專家可對話，需重新配對。</p>
-          <div className="flex gap-1">
+          <p style={{ color: "#ef4444", fontWeight: 600, marginBottom: 4 }}>刪除最後一位專家？</p>
+          <p style={{ color: "var(--text-secondary)", marginBottom: 8 }}>刪除後此角色將無 AI 專家可對話，需重新配對。</p>
+          <div style={{ display: "flex", gap: 4 }}>
             <button
               data-testid="confirm-last-delete"
-              className="flex-1 bg-red-500 text-white rounded px-2 py-1 text-xs"
+              style={{
+                flex: 1, background: "#ef4444", color: "white",
+                border: "none", borderRadius: 6, padding: "4px 8px",
+                fontSize: 12, cursor: "pointer",
+              }}
               onClick={handleConfirmLastDelete}
             >
               確認刪除
             </button>
             <button
-              className="flex-1 bg-gray-200 rounded px-2 py-1 text-xs"
+              style={{
+                flex: 1, background: "var(--glass-bg)",
+                color: "var(--text-secondary)",
+                border: "1px solid var(--glass-border)",
+                borderRadius: 6, padding: "4px 8px",
+                fontSize: 12, cursor: "pointer",
+              }}
               onClick={() => setDeleteConfirmId(null)}
             >
               取消
@@ -123,9 +178,15 @@ export function ExpertSidebar({
         </div>
       )}
 
-      <div className="flex-1" />
-      <div className="px-3 py-2 border-t">
-        <div className="text-xs text-gray-400 text-center">配對更多專家</div>
+      <div style={{ flex: 1 }} />
+      <div style={{
+        padding: "8px 12px",
+        borderTop: "1px solid var(--glass-border)",
+        fontSize: 11,
+        color: "var(--text-muted)",
+        textAlign: "center",
+      }}>
+        配對更多專家
       </div>
     </div>
   );

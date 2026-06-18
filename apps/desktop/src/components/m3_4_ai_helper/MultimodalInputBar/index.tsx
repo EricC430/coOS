@@ -83,7 +83,7 @@ export function MultimodalInputBar({
   };
 
   return (
-    <div className="border-t bg-white px-3 py-2">
+    <div className="multimodal-input-bar border-t bg-white px-3 py-2">
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-1">
           {attachments.map((f, i) => (

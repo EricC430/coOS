@@ -413,23 +413,25 @@ class TestM4_2_MessageSplitter:
     """[R05 §跨越恐怖谷] 多訊息分割器 — 模擬真人分段發言"""
 
     def test_short_response_single_bubble(self):
-        """短回應 (< 60 字) 不拆分，單一氣泡"""
+        """短回應 (< 28 字) 不拆分，單一氣泡"""
         from m4_2_persona.message_splitter import split_response
-        short = "好的，這個問題讓我想想。"
+        short = "好的，讓我想想。"
         seq = split_response(short)
         assert seq.bubble_count == 1
         assert seq.messages[0].delay_ms == 0
 
-    def test_medium_response_two_bubbles(self):
-        """中等回應 (60~200 字) 拆為 2 個氣泡"""
+    def test_medium_response_multiple_short_bubbles(self):
+        """中等回應拆為多個短氣泡（v2：每泡 1~2 句，不再壓成 2 泡）"""
         from m4_2_persona.message_splitter import split_response
         medium = (
             "微積分的 Taylor 展開是一個非常重要的工具。"
             "它讓我們可以用多項式來近似任意光滑函數。"
             "你可以把它想成「用一把尺去量一條曲線」的概念。"
-        )  # ~70 字
+        )  # 3 句
         seq = split_response(medium)
-        assert seq.bubble_count == 2
+        # 3 句、每泡最多 2 句 → 2 泡；重點是有拆分且每泡不過長
+        assert seq.bubble_count >= 2
+        assert all(len(m.content) <= 60 for m in seq.messages)
 
     def test_long_response_three_or_four_bubbles(self):
         """長回應 (> 200 字) 拆為 3~4 個氣泡"""

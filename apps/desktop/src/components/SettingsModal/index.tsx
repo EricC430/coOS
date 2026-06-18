@@ -25,7 +25,7 @@ interface Props {
 
 export function SettingsModal({ isOpen, onClose }: Props) {
   const { currentRole } = useCoOSStore();
-  const [activeTab, setActiveTab] = useState<"privacy" | "role" | "system" | "git">("privacy");
+  const [activeTab, setActiveTab] = useState<"privacy" | "role" | "system" | "git" | "accounts">("privacy");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [gitSources, setGitSources] = useState<any[]>([]);

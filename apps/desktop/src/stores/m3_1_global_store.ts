@@ -29,6 +29,21 @@ export interface Expert {
   isActive?: boolean;
 }
 
+// [FIX-04] Lightweight type for SSE project events stored in global state
+export interface ProjectTagEvent {
+  type: string;
+  project_id?: string;
+  project_name?: string;
+  goal?: string;
+  expert_name?: string;
+  text?: string;
+  title?: string;
+  deadline?: string;
+  source?: string;
+  intention?: string;
+  role_id?: string;
+}
+
 export interface CoOSState {
   currentRole: Role | null;
   xpBalance: number;
@@ -37,6 +52,8 @@ export interface CoOSState {
   roleCache: Record<string, Role>;
   expertCache: Record<string, Expert>;
   isRoleTransitioning: boolean;
+  // [FIX-04] Project tags: SSE project events persisted by threadId
+  projectTags: Record<string, ProjectTagEvent[]>;
 
   // Actions
   switchRole: (roleId: string) => void;
@@ -45,6 +62,8 @@ export interface CoOSState {
   seedRoleCache: (roles: Role[]) => void;
   seedExpertCache: (experts: Expert[]) => void;
   setRoleTransitioning: (v: boolean) => void;
+  addProjectTag: (threadId: string, event: ProjectTagEvent) => void;
+  clearProjectTags: (threadId: string) => void;
 }
 
 // [R08 SS1] Level formula: floor(sqrt(xp/100)), capped at 99
@@ -62,6 +81,7 @@ export const useCoOSStore = create<CoOSState>()(
     roleCache: {},
     expertCache: {},
     isRoleTransitioning: false,
+    projectTags: {},
 
     switchRole: (roleId) => {
       const { currentRole, roleCache } = get();
@@ -117,5 +137,25 @@ export const useCoOSStore = create<CoOSState>()(
     },
 
     setRoleTransitioning: (v) => set({ isRoleTransitioning: v }),
+
+    // [FIX-04] Add a project tag event for a given thread
+    addProjectTag: (threadId, event) => {
+      const prev = get().projectTags;
+      const existing = prev[threadId] ?? [];
+      // Deduplicate: skip if same type+project_name already recorded
+      const isDupe = existing.some(
+        (e) => e.type === event.type && e.project_name === event.project_name
+      );
+      if (isDupe) return;
+      set({ projectTags: { ...prev, [threadId]: [...existing, event] } });
+    },
+
+    // [FIX-04] Clear tags for a thread (e.g. on explicit role switch)
+    clearProjectTags: (threadId) => {
+      const prev = get().projectTags;
+      const next = { ...prev };
+      delete next[threadId];
+      set({ projectTags: next });
+    },
   }))
 );

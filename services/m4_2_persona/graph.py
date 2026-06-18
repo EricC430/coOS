@@ -135,6 +135,7 @@ async def persona_responder_node(state: PersonaState) -> PersonaState:
     # [W3] 嘗試從 persona_card JSON 編譯結構化提示詞
     compiled_prompt = None
     anti_sycophancy_stances = None
+    card_data: dict | None = None
     raw_card_str = config_dict.get("persona_card")
     if raw_card_str:
         try:
@@ -147,6 +148,7 @@ async def persona_responder_node(state: PersonaState) -> PersonaState:
             logger.info("[M4.2] PersonaCard v2 compiled for %s", config_dict.get("name", "?"))
         except Exception as e:
             logger.warning("[M4.2] PersonaCard compile fallback: %s", e)
+            card_data = None
 
     config = PersonaConfig(
         name=config_dict.get("name", "AI 幫手"),
@@ -154,6 +156,7 @@ async def persona_responder_node(state: PersonaState) -> PersonaState:
         backstory=config_dict.get("backstory", ""),
         tone_default=config_dict.get("tone_default", "authoritative"),
         trust_level=config_dict.get("trust_level", 0.5),
+        persona_card=card_data,  # [R05] 供 prompt_builder 注入中文說話風格與跳過散文截斷
     )
 
     role_id = state.get("role_id", "default")
@@ -378,12 +381,20 @@ async def _call_gemini(
             lines.append(f"{role_label}：{h.get('content', '')}")
         history_block = "\n【近期對話】\n" + "\n".join(lines) + "\n"
 
+    # [R05 §治療同盟][R03 §4.2 State Inversion] 真人聊天節奏 + 共情骨架
     output_rules = (
-        "\n【回應格式規則】\n"
-        "- 繁體中文，口語自然，2~4句話\n"
-        "- 禁止每次都用問句結尾——若已連續問過，改用陳述句或提供具體建議\n"
-        "- 禁止使用條列式\n"
-        "- 保持你的個人語氣和過往經歷，不要說「我是AI」\n"
+        "\n【回應格式規則 — 像真人傳訊息，不要像 AI 助理】\n"
+        "- 繁體中文，口語自然。預設很短：一次最多 3 句，每句都短。\n"
+        "- 一則回覆只問「一個」問題；禁止把多個問題塞進同一則回覆。\n"
+        "- 初次見面只簡短自我介紹一句 + 一個輕鬆的問題，不要一次交代完整學經歷背景"
+        "（背景在後續對話自然帶出即可）。\n"
+        "- [R03 §4.2] 若使用者焦慮、卡關或挫折：先共情安撫，再回應。"
+        "嚴禁催促語氣（如「既然你…就直接…」「別浪費時間」「我們就直接切入」）。\n"
+        "- 不譴責使用者（例如稱呼、用詞），那類小事不必在回覆中糾正。\n"
+        "- 形容詞節制，不要堆砌華麗詞藻；像朋友講話那樣。\n"
+        "- 禁止使用條列式。禁止每次都用問句結尾——連續問過就改用陳述句或給具體一小步建議。\n"
+        "- 只有在情緒濃厚或需要解釋複雜概念時，才允許稍長（最多 5~20 句）。\n"
+        "- 保持你的個人語氣和過往經歷，不要說「我是AI」。\n"
     )
 
     full_prompt = (

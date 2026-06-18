@@ -78,8 +78,8 @@ class Settings(BaseSettings):
 
     # === 本地 DB ===
     local_db_path: Path = Field(
-        default=Path("../data/coos.db"),
-        description="本地 SQLite 路徑（相對於 services/）",
+        default=Path(__file__).resolve().parent.parent / "data" / "coos.db",
+        description="本地 SQLite 路徑",
     )
 
     # === 使用者識別 (Identity) ===

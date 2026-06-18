@@ -11,6 +11,7 @@ production 接線時把 _resolve_db / _resolve_sse 換成真實 session 與 SSE 
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -120,24 +121,115 @@ def _resolve_gemma(role_id: str) -> Any | None:
             return None
 
         class _GemmaAdapter:
-            def __init__(self, p): self._p = p
+            def __init__(self, p):
+                self._p = p
 
             async def generate_json(self, prompt: str):
-                # GemmaEdgeClient.generate() returns a dict from Ollama
-                # We wrap it via the pipeline's internal client (_client)
-                try:
-                    return await self._p._client.generate(prompt, role_id=role_id)
-                except Exception as e:
-                    logger.warning("[M4.1.3] Gemma generate_json failed: %s", e)
-                    return {}
+                import httpx
+                import json
+                import time
+                from m0_4_logging.writer import get_logger as get_log_writer
+
+                log_writer = get_log_writer()
+                url = f"{self._p._client._base_url.rstrip('/')}/api/generate"
+                payload = {
+                    "model": self._p._client._model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "format": "json"
+                }
+
+                async def _run_request():
+                    t_start = time.monotonic()
+                    status = "success"
+                    error_msg = None
+                    content = ""
+                    try:
+                        async with httpx.AsyncClient(timeout=15.0) as client:
+                            resp = await client.post(url, json=payload)
+                            resp.raise_for_status()
+                            data = resp.json()
+                            content = data.get("response", "{}").strip()
+                            if content.startswith("```"):
+                                lines = content.split("\n")
+                                content = "\n".join(lines[1:-1]) if len(lines) > 2 else content
+                            return json.loads(content)
+                    except Exception as e:
+                        status = "failed"
+                        error_msg = str(e)
+                        logger.warning("[M4.1.3] Gemma generate_json failed: %s", e)
+                        return {}
+                    finally:
+                        latency_ms = int((time.monotonic() - t_start) * 1000)
+                        asyncio.ensure_future(
+                            log_writer.emit_llm_log(
+                                model_name=self._p._client._model,
+                                caller_module="M4.1",
+                                prompt_text=prompt,
+                                response_text=content,
+                                prompt_tokens=None,
+                                completion_tokens=None,
+                                latency_ms=latency_ms,
+                                temperature=None,
+                                status=status,
+                                error_message=error_msg,
+                                role_id=role_id,
+                            )
+                        )
+
+                from m2_2_gemma.queue import enqueue_inference
+                return await enqueue_inference(priority=2, fn=_run_request, tag="observer_generate_json")
 
             async def generate_text(self, prompt: str) -> str:
-                try:
-                    result = await self._p._client.generate(prompt, role_id=role_id)
-                    return str(result.get("context_summary", ""))
-                except Exception as e:
-                    logger.warning("[M4.1.3] Gemma generate_text failed: %s", e)
-                    return ""
+                import httpx
+                import time
+                from m0_4_logging.writer import get_logger as get_log_writer
+
+                log_writer = get_log_writer()
+                url = f"{self._p._client._base_url.rstrip('/')}/api/generate"
+                payload = {
+                    "model": self._p._client._model,
+                    "prompt": prompt,
+                    "stream": False,
+                }
+
+                async def _run_request() -> str:
+                    t_start = time.monotonic()
+                    status = "success"
+                    error_msg = None
+                    content = ""
+                    try:
+                        async with httpx.AsyncClient(timeout=15.0) as client:
+                            resp = await client.post(url, json=payload)
+                            resp.raise_for_status()
+                            data = resp.json()
+                            content = data.get("response", "").strip()
+                            return content
+                    except Exception as e:
+                        status = "failed"
+                        error_msg = str(e)
+                        logger.warning("[M4.1.3] Gemma generate_text failed: %s", e)
+                        return ""
+                    finally:
+                        latency_ms = int((time.monotonic() - t_start) * 1000)
+                        asyncio.ensure_future(
+                            log_writer.emit_llm_log(
+                                model_name=self._p._client._model,
+                                caller_module="M4.1",
+                                prompt_text=prompt,
+                                response_text=content,
+                                prompt_tokens=None,
+                                completion_tokens=None,
+                                latency_ms=latency_ms,
+                                temperature=None,
+                                status=status,
+                                error_message=error_msg,
+                                role_id=role_id,
+                            )
+                        )
+
+                from m2_2_gemma.queue import enqueue_inference
+                return await enqueue_inference(priority=2, fn=_run_request, tag="observer_generate_text")
 
         return _GemmaAdapter(_gemma_pipeline)
     except Exception:
