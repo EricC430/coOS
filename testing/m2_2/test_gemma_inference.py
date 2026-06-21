@@ -216,3 +216,108 @@ def test_valence_arousal_bounds():
             valence=0.0,
             frustration_level=1.5,  # out of range [0.0, 1.0]
         )
+
+
+# ---------------------------------------------------------------------------
+# Locality Cache and JSON Parsing Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_locality_cache_hits():
+    """Verify that similar/same activities hit the locality cache and reuse intent vectors."""
+    pipeline = GemmaInferencePipeline()
+    mock_response = {
+        "intent_label": "math_study",
+        "context_summary": "Doing calculus assignment.",
+        "frustration_level": 0.1,
+        "valence": 0.5,
+        "arousal": 0.2,
+        "stripped_entities_count": 0,
+        "semantic_embedding": [0.1] * 2048,
+    }
+    
+    call_count = 0
+    async def mock_generate(text, role_id, correlation_id):
+        nonlocal call_count
+        call_count += 1
+        return mock_response
+        
+    pipeline._client.generate = mock_generate
+    
+    text1 = '{"app_name": "notepad.exe", "window_title": "calculus.txt - Notepad", "content_raw": "calculus homework"}'
+    
+    # First call: cache miss, calls client.generate
+    vec1 = await pipeline.compress(text1, source_log_id="log1", role_id="role1")
+    assert vec1.inference_mode == "gemma_edge"
+    assert call_count == 1
+    
+    # Second call (same cache key, same content): cache hit, client.generate not called
+    vec2 = await pipeline.compress(text1, source_log_id="log2", role_id="role1")
+    assert vec2.inference_mode == "locality_hit"
+    assert vec2.intent_label == "math_study"
+    assert vec2.source_log_id == "log2"  # preserved (RISK-05)
+    assert call_count == 1
+    
+    # Third call (different role): cache miss, calls client.generate
+    vec3 = await pipeline.compress(text1, source_log_id="log3", role_id="role2")
+    assert vec3.inference_mode == "gemma_edge"
+    assert call_count == 2
+
+    # Fourth call (same key, but different/dissimilar content): cache miss
+    text2 = '{"app_name": "notepad.exe", "window_title": "calculus.txt - Notepad", "content_raw": "completely different database sql scripts"}'
+    vec4 = await pipeline.compress(text2, source_log_id="log4", role_id="role1")
+    assert vec4.inference_mode == "gemma_edge"
+    assert call_count == 3
+
+    # Fifth call (same key, similar content, but timestamp expired): cache miss
+    key = pipeline._extract_cache_key(text2, "role1")
+    ts, orig_text, cached_vec = pipeline._locality_cache[key]
+    pipeline._locality_cache[key] = (ts - 100.0, orig_text, cached_vec)  # push timestamp back by 100s (> 90s)
+    
+    vec5 = await pipeline.compress(text2, source_log_id="log5", role_id="role1")
+    assert vec5.inference_mode == "gemma_edge"
+    assert call_count == 4
+
+
+@pytest.mark.asyncio
+async def test_robust_json_parsing():
+    """Verify that client and drift shield can parse JSON even if surrounded by conversational prefix/suffix text."""
+    pipeline = GemmaInferencePipeline()
+    
+    chatty_response = (
+        "Here is the JSON analysis you requested:\n"
+        "```json\n"
+        "{\n"
+        '  "intent_label": "database_development",\n'
+        '  "context_summary": "Writing SQL migration scripts",\n'
+        '  "frustration_level": 0.0,\n'
+        '  "valence": 0.0,\n'
+        '  "arousal": 0.0,\n'
+        '  "stripped_entities_count": 0,\n'
+        '  "semantic_embedding": []\n'
+        "}\n"
+        "```\n"
+        "I hope this is helpful!"
+    )
+    
+    class FakeResponse:
+        def __init__(self, text):
+            self._text = text
+        def json(self):
+            return {"message": {"content": self._text}}
+        def raise_for_status(self):
+            pass
+            
+    async def mock_post(*args, **kwargs):
+        return FakeResponse(chatty_response)
+        
+    import httpx
+    original_post = httpx.AsyncClient.post
+    try:
+        httpx.AsyncClient.post = mock_post
+        vec = await pipeline.compress("some sql queries", source_log_id="log1", role_id="role1")
+        assert vec.inference_mode == "gemma_edge"
+        assert vec.intent_label == "database_development"
+    finally:
+        httpx.AsyncClient.post = original_post
+

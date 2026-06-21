@@ -24,7 +24,11 @@ EXEMPT_PATHS = {
     "/api/m6_5/user_collections",
     "/api/m6_5/items_dictionary",
     "/api/m4_4/time_spent",
+    "/api/m4_4/trigger_draft_cron",
     "/api/m1_1/telemetry_estimate",
+    # 日報頁面是全域視圖（跨角色），不應被 role_id 過濾攔截
+    "/api/m6_4/daily_timeline",
+    "/api/m6_4/heatmap",
 }
 
 

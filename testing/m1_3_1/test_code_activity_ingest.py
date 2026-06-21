@@ -63,6 +63,26 @@ class TestEditBurstIngest:
         resp = client.post(ENDPOINT, json=event)
         assert resp.status_code == 200
 
+    def test_content_raw_accepted(self, client):
+        """Verify that edit_burst containing L1 plaintext content_raw is accepted by M0.4 and backend."""
+        event = _code_event(
+            action="edit_burst",
+            payload={
+                "entropy": 0.72,
+                "files_touched": 3,
+                "save_interval_s": 45.0,
+                "human_typed_chars": 120,
+                "ai_generated_chars": 850,
+                "copilot_ratio": 0.87,
+                "churn_index": 0.15,
+                "content_raw": "def bubble_sort(arr):\n    n = len(arr)\n    for i in range(n):\n",
+                "inference_mode": "rule_based_fallback",
+                "privacy_tier": "T1_OPTIN"
+            },
+        )
+        resp = client.post(ENDPOINT, json=event)
+        assert resp.status_code == 200
+
     def test_single_file_low_entropy_event_accepted(self, client):
         """AC-1: [R02 §1.1] Single file edit (entropy ≈ 0) accepted."""
         event = _code_event(

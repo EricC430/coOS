@@ -388,15 +388,26 @@ async def llm_route(
     [RISK-14a] LLM 補判只傳 intent_vector + expert domains，不傳原始訊息。
     [5.1 LLM Tiering] 主要路由為 Tier 3，背景驗證為 Tier 2。
     """
-    expert_domains = [e.get("domain", "") for e in active_experts]
+    expert_profiles = []
+    for idx, e in enumerate(active_experts):
+        dom = e.get("domain", "")
+        keywords = e.get("domain_keywords", [])
+        keywords_str = ", ".join(keywords) if keywords else "none"
+        expert_profiles.append(f"- Expert [{idx}]: domain = {dom} (keywords: {keywords_str})")
+
+    profiles_str = "\n".join(expert_profiles) if expert_profiles else "- None"
+
     prompt = (
-        f"Route this conversation to the most appropriate expert.\n"
-        f"Intent vector: {intent_vector}\n"
-        f"Available expert domains: {expert_domains}\n"
-        f"Reply with ONLY the domain name."
+        f"Analyze the following conversation intent and route it to the most appropriate expert.\n"
+        f"Available experts and their specific domains/keywords:\n"
+        f"{profiles_str}\n\n"
+        f"If the intent does not directly and closely match the keywords/domain of any available expert (for example, if it is a general question outside their specific expertise, a greeting, or a generic query), you MUST reply with 'general'.\n\n"
+        f"Intent vector: {intent_vector}\n\n"
+        f"Reply with ONLY the index number of the chosen expert (e.g. '0', '1') or 'general'."
     )
     try:
         domain = await call_cloud_llm_with_fallback(prompt, task_difficulty=task_difficulty)
+        domain = domain.strip().lower() if domain else "general"
     except Exception as e:
         logger.error("[M4.1.1] Cloud routing failed: %s. Using default tool.", e)
         return RouteDecision(
@@ -405,6 +416,29 @@ async def llm_route(
             thread_id="",
             confidence=0.10,
         )
+
+    if domain in ("general", "none"):
+        return RouteDecision(
+            persona_id="tool_ai_default",
+            route_reason=f"llm_primary:{domain}",
+            thread_id="",
+            confidence=0.75,
+        )
+
+    # Attempt to parse index response
+    try:
+        clean_idx = domain.replace("[", "").replace("]", "").strip()
+        idx = int(clean_idx)
+        if 0 <= idx < len(active_experts):
+            matched_expert = active_experts[idx]
+            return RouteDecision(
+                persona_id=matched_expert["id"],
+                route_reason=f"llm_primary:{matched_expert.get('domain', 'expert')}",
+                thread_id="",
+                confidence=0.75,
+            )
+    except ValueError:
+        pass
 
     matched = _find_expert_by_domain(domain, active_experts)
     return RouteDecision(
@@ -491,29 +525,48 @@ def _log_sample(
     sample.update({k: str(v) for k, v in kwargs.items()})
 
     async def _write():
+        lock = None
         try:
-            import json
-            import os
-            import sqlite3
-            db_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "coos.db")
-            conn = sqlite3.connect(db_path)
-            conn.execute(
-                "INSERT INTO routing_samples "
-                "(role_id, user_msg_hash, keyword_tokens, rule_persona_id, confidence, outcome) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    sample["role_id"],
-                    sample["user_msg_hash"],
-                    json.dumps(sample["keyword_tokens"], ensure_ascii=False),
-                    sample["rule_persona_id"],
-                    sample["confidence"],
-                    sample["outcome"],
-                ),
-            )
-            conn.commit()
-            conn.close()
+            import main as _main
+            lock = getattr(_main, "_sqlite_lock", None)
+        except Exception:
+            pass
+
+        def _sync_write():
+            if lock is not None:
+                lock.acquire()
+            try:
+                import json
+                import os
+                import sqlite3
+                db_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "coos.db")
+                conn = sqlite3.connect(db_path, timeout=30.0)
+                conn.execute(
+                    "INSERT INTO routing_samples "
+                    "(role_id, user_msg_hash, keyword_tokens, rule_persona_id, confidence, outcome) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        sample["role_id"],
+                        sample["user_msg_hash"],
+                        json.dumps(sample["keyword_tokens"], ensure_ascii=False),
+                        sample["rule_persona_id"],
+                        sample["confidence"],
+                        sample["outcome"],
+                    ),
+                )
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                logger.debug("[M4.1.1] _log_sample write failed: %s", e)
+            finally:
+                if lock is not None:
+                    lock.release()
+
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _sync_write)
         except Exception as e:
-            logger.debug("[M4.1.1] _log_sample write failed: %s", e)
+            logger.debug("[M4.1.1] _log_sample dispatch failed: %s", e)
 
     try:
         loop = asyncio.get_running_loop()

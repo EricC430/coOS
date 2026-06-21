@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "mcp-toolbox": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@toolbox-sdk/server",
+        "--config",
+        ".gemini/tools.yaml",
+        "--stdio"
+      ]
+    }
+  }
+}

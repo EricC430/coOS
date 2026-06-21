@@ -7,9 +7,10 @@
  *   [R02: 時間動力學 §1.2] Track save intervals → burst detection
  *
  * Privacy:
- *   - NEVER reads document.getText() — only counts and metadata
+ *   - L1 plaintext (including document.getText()) can be sent to the local backend for local LLM consumption
+ *   - Protected from leaving the local machine / entering cloud LLMs
  *   - File paths stored as relative workspace paths only
- *   - No source code content in any payload
+ *   - Source code content is sent locally but restricted to L1 storage and local models
  */
 
 import * as vscode from 'vscode';
@@ -123,6 +124,9 @@ export function deactivate(): void {
 function emitEditBurst(): void {
   if (editCounts.size === 0) return;
 
+  const activeEditor = vscode.window.activeTextEditor;
+  const contentRaw = activeEditor ? activeEditor.document.getText().substring(0, 4000) : '';
+
   const entropy = calculateChangeEntropy(editCounts);
   const humanChars = editChunks
     .filter(c => analyzeCollaboration(c) === 'HUMAN_TYPING')
@@ -145,6 +149,9 @@ function emitEditBurst(): void {
       ai_generated_chars: aiChars,
       copilot_ratio: total > 0 ? aiChars / total : 0,
       churn_index: churnIndex,
+      content_raw: contentRaw,
+      inference_mode: 'rule_based_fallback',
+      privacy_tier: 'T1_OPTIN',
     },
     timestamp: new Date().toISOString(),
     id: crypto.randomUUID(),

@@ -65,6 +65,8 @@ export function MultiAgentHelper({ onWorkflowOpen }: Props) {
   } = useCoOSStore();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [showMatchSuggestion, setShowMatchSuggestion] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [dbCount, setDbCount] = useState(0);
   const sseRef = useRef<EventSource | null>(null);
   // [D1] Track last loaded thread to detect expert-switch vs same-thread return
   const lastLoadedThreadRef = useRef<string>("");
@@ -89,57 +91,136 @@ export function MultiAgentHelper({ onWorkflowOpen }: Props) {
   const loadHistory = useCallback(async (roleId: string, expertId: string | null) => {
     setMessages([]);
     setShowMatchSuggestion(false);
+    setHasMore(true);
+    setDbCount(0);
     const tid = buildThreadId(roleId, expertId);
     try {
-      const res = await fetch(`/api/m4_1/history?role_id=${encodeURIComponent(roleId)}&thread_id=${encodeURIComponent(tid)}&limit=30`);
+      const limit = 50;
+      const res = await fetch(`/api/m4_1/history?role_id=${encodeURIComponent(roleId)}&thread_id=${encodeURIComponent(tid)}&limit=${limit}&offset=0`);
       if (res.ok) {
-        const rows: Array<{ role: string; content: string; persona_id?: string }> = await res.json();
+        const rows: Array<{ role: string; content: string; persona_id?: string; created_at?: string }> = await res.json();
         const restored: ChatMessage[] = [];
-
-        // [FIX-04] Prepend persisted project tag system events for this thread
-        const savedTags = useCoOSStore.getState().projectTags[tid] ?? [];
-        for (const tag of savedTags) {
-          restored.push({
-            id: `tag_${tag.type}_${tag.project_name ?? ""}`,
-            role: "system_event",
-            content: "",
-            observerEvent: tag as ObserverEvent,
-          });
-        }
 
         if (rows.length > 0) {
           rows.forEach((r, i) => {
-            if (r.role !== "assistant") {
+            if (r.role === "system_event") {
+              try {
+                const parsed = JSON.parse(r.content);
+                restored.push({
+                  id: `hist_0_${i}`,
+                  role: "system_event",
+                  content: "",
+                  observerEvent: parsed as ObserverEvent,
+                  createdAt: r.created_at,
+                });
+              } catch (err) {
+                console.error("Failed to parse system_event", err);
+              }
+            } else if (r.role !== "assistant") {
               restored.push({
-                id: `hist_${i}`,
+                id: `hist_0_${i}`,
                 role: "user",
                 content: r.content,
+                createdAt: r.created_at,
               });
             } else {
-              // [D2] Re-split assistant messages into natural short bubbles
-              const bubbles = _clientSplit(r.content);
+              // [D2] Re-split assistant messages into natural short bubbles, except for tool AI
+              const lookupKey = r.persona_id ? r.persona_id.toLowerCase() : "";
+              const isTool = !lookupKey || lookupKey === "tool_ai_default" || lookupKey.startsWith("tool_ai_");
+              const bubbles = isTool ? [r.content] : _clientSplit(r.content);
+              
               // [FIX-03] Look up avatar AND name from expertCache by persona_id
               // NOTE: expertCache must be seeded BEFORE loadHistory is called
-              const histExpert = r.persona_id ? useCoOSStore.getState().expertCache[r.persona_id] : null;
+              const histExpert = lookupKey ? useCoOSStore.getState().expertCache[lookupKey] : null;
               bubbles.forEach((bubble, bi) => {
                 restored.push({
-                  id: `hist_${i}_${bi}`,
+                  id: `hist_0_${i}_${bi}`,
                   role: "assistant",
                   content: bubble,
                   // [FIX] Use actual expertName, NOT the UUID persona_id
-                  expertName: histExpert?.expertName ?? (r.persona_id ? undefined : undefined),
+                  expertName: histExpert?.expertName ?? undefined,
                   expertAvatarUrl: histExpert?.avatarUrl ?? undefined,
+                  createdAt: r.created_at,
                 });
               });
             }
           });
         }
         setMessages(restored);
+        setDbCount(rows.length);
+        if (rows.length < limit) {
+          setHasMore(false);
+        }
       }
     } catch {
       // non-fatal
     }
   }, []);
+
+  const loadMoreHistory = useCallback(async () => {
+    if (!currentRole?.id) return;
+    const tid = buildThreadId(currentRole.id, activeExpertId);
+    const limit = 50;
+    try {
+      const res = await fetch(`/api/m4_1/history?role_id=${encodeURIComponent(currentRole.id)}&thread_id=${encodeURIComponent(tid)}&limit=${limit}&offset=${dbCount}`);
+      if (res.ok) {
+        const rows: Array<{ role: string; content: string; persona_id?: string; created_at?: string }> = await res.json();
+        if (rows.length === 0) {
+          setHasMore(false);
+          return;
+        }
+
+        const olderMessages: ChatMessage[] = [];
+        rows.forEach((r, i) => {
+          if (r.role === "system_event") {
+            try {
+              const parsed = JSON.parse(r.content);
+              olderMessages.push({
+                id: `hist_${dbCount}_${i}`,
+                role: "system_event",
+                content: "",
+                observerEvent: parsed as ObserverEvent,
+                createdAt: r.created_at,
+              });
+            } catch (err) {
+              console.error("Failed to parse system_event", err);
+            }
+          } else if (r.role !== "assistant") {
+            olderMessages.push({
+              id: `hist_${dbCount}_${i}`,
+              role: "user",
+              content: r.content,
+              createdAt: r.created_at,
+            });
+          } else {
+            const lookupKey = r.persona_id ? r.persona_id.toLowerCase() : "";
+            const isTool = !lookupKey || lookupKey === "tool_ai_default" || lookupKey.startsWith("tool_ai_");
+            const bubbles = isTool ? [r.content] : _clientSplit(r.content);
+            const histExpert = lookupKey ? useCoOSStore.getState().expertCache[lookupKey] : null;
+            bubbles.forEach((bubble, bi) => {
+              olderMessages.push({
+                id: `hist_${dbCount}_${i}_${bi}`,
+                role: "assistant",
+                content: bubble,
+                expertName: histExpert?.expertName ?? undefined,
+                expertAvatarUrl: histExpert?.avatarUrl ?? undefined,
+                createdAt: r.created_at,
+              });
+            });
+          }
+        });
+
+        setMessages((prev) => [...olderMessages, ...prev]);
+
+        setDbCount((prev) => prev + rows.length);
+        if (rows.length < limit) {
+          setHasMore(false);
+        }
+      }
+    } catch {
+      // non-fatal
+    }
+  }, [currentRole?.id, activeExpertId, dbCount]);
 
   // [D1] On role change: reset to tool AI first, reload experts, load tool AI history.
   // CRITICAL: set lastLoadedThreadRef BEFORE setActiveExpert to avoid race with the
@@ -215,7 +296,7 @@ export function MultiAgentHelper({ onWorkflowOpen }: Props) {
 
           setMessages((prev) => [
             ...prev,
-            { id: nextId(), role: "system_event", content: "", observerEvent: event },
+            { id: nextId(), role: "system_event", content: "", observerEvent: event, createdAt: new Date().toISOString() },
           ]);
         } catch { /* ignore malformed SSE frames */ }
       };
@@ -245,7 +326,8 @@ export function MultiAgentHelper({ onWorkflowOpen }: Props) {
     if (!text.trim()) return;
 
     setShowMatchSuggestion(false);
-    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: text }]);
+    const userMsgTime = new Date().toISOString();
+    setMessages((prev) => [...prev, { id: nextId(), role: "user", content: text, createdAt: userMsgTime }]);
 
     try {
       const res = await fetch("/api/m4_1/chat", {
@@ -268,6 +350,7 @@ export function MultiAgentHelper({ onWorkflowOpen }: Props) {
             ? data.split_messages
             : null;
 
+        const aiMsgTime = new Date().toISOString();
         if (splitMsgs) {
           // Render first bubble immediately
           setMessages((prev) => [
@@ -278,6 +361,7 @@ export function MultiAgentHelper({ onWorkflowOpen }: Props) {
               content: splitMsgs[0].content,
               expertName: activeExpert?.expertName,
               expertAvatarUrl: activeExpert?.avatarUrl ?? undefined,
+              createdAt: aiMsgTime,
             },
           ]);
           // Render subsequent bubbles with delay
@@ -292,6 +376,7 @@ export function MultiAgentHelper({ onWorkflowOpen }: Props) {
                 content: splitMsgs[i].content,
                 expertName: activeExpert?.expertName,
                 expertAvatarUrl: activeExpert?.avatarUrl ?? undefined,
+                createdAt: new Date().toISOString(),
               },
             ]);
           }
@@ -305,6 +390,7 @@ export function MultiAgentHelper({ onWorkflowOpen }: Props) {
               content: data.content,
               expertName: activeExpert?.expertName,
               expertAvatarUrl: activeExpert?.avatarUrl ?? undefined,
+              createdAt: aiMsgTime,
             },
           ]);
         }
@@ -416,7 +502,7 @@ export function MultiAgentHelper({ onWorkflowOpen }: Props) {
 
       {/* Chat area */}
       <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
-        <ChatMessageList messages={messages} />
+        <ChatMessageList messages={messages} onLoadMore={loadMoreHistory} hasMore={hasMore} isToolChatRoom={isToolAI} />
 
         {/* AI-triggered match suggestion banner */}
         {showMatchSuggestion && isToolAI && (

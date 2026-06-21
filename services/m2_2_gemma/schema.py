@@ -56,4 +56,4 @@ class IntentVector(BaseModel):
     valence: float = Field(default=0.0, ge=-1.0, le=1.0)
     arousal: float = Field(default=0.0, ge=0.0, le=1.0)
     stripped_entities_count: int = Field(default=0)
-    inference_mode: Literal["gemma_edge", "rule_based_fallback"] = "gemma_edge"
+    inference_mode: Literal["gemma_edge", "rule_based_fallback", "locality_hit"] = "gemma_edge"

@@ -107,7 +107,7 @@ export const useCoOSStore = create<CoOSState>()(
         set({ activeExpert: { id: "__tool__", expertName: "工具型 AI", trustLevel: 5 } });
         return;
       }
-      const expert = get().expertCache[expertId] ?? null;
+      const expert = get().expertCache[expertId.toLowerCase()] ?? null;
       if (!expert) {
         console.warn(`[M3.1] setActiveExpert: expert ${expertId} not in cache`);
         return;
@@ -132,7 +132,7 @@ export const useCoOSStore = create<CoOSState>()(
 
     seedExpertCache: (experts) => {
       const expertCache: Record<string, Expert> = {};
-      for (const e of experts) expertCache[e.id] = e;
+      for (const e of experts) expertCache[e.id.toLowerCase()] = e;
       set({ expertCache });
     },
 

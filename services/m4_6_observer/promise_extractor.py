@@ -69,6 +69,27 @@ async def extract_promises(
                 text=text,
                 deadline=deadline,
             )
+            try:
+                import uuid
+                await db.execute(
+                    "INSERT INTO chat_transcripts (id, thread_id, persona_id, role, content, role_id) "
+                    "VALUES (:id, :tid, :pid, 'system_event', :content, :rid)",
+                    {
+                        "id": str(uuid.uuid4()),
+                        "tid": thread_id,
+                        "pid": persona_id,
+                        "content": json.dumps({
+                            "type": "PROMISE_RECORDED",
+                            "text": text,
+                            "deadline": deadline,
+                            "persona_id": persona_id,
+                        }, ensure_ascii=False),
+                        "rid": role_id,
+                    }
+                )
+            except Exception as ex:
+                logger.warning("[M4.6] Failed to insert promise system_event to chat_transcripts: %s", ex)
+
             await sse.emit("PROMISE_RECORDED", {
                 "text": text, "deadline": deadline, "persona_id": persona_id,
             })

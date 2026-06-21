@@ -13,6 +13,9 @@ export interface CodeActivityPayload {
   ai_generated_chars: number; // heuristic: chars inserted by AI block paste
   copilot_ratio: number;      // ai_generated_chars / (human + ai) [0,1]
   churn_index: number;        // Agent churn loop indicator [0,1]
+  content_raw?: string;       // [L1 Plaintext] raw document content
+  inference_mode?: string;    // local fallback compression indicator
+  privacy_tier?: string;      // privacy tier marker
 }
 
 export interface FileStayPayload {

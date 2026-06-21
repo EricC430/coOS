@@ -1,11 +1,18 @@
 /**
- * M3.3.1 -- Daily Timeline with role grouping and date navigation
+ * M3.3.1 -- Daily Timeline (Global cross-role view)
  *
- * SPEC: docs/modules/M3_3_daily_report_reflection_SPEC.md SS1.1
+ * Layout:
+ *   [ ClockwheelNav (left, peeks right arc) ]  [ task cards (right, scrollable) ]
+ *
+ * The ClockwheelNav disc is huge (R=260) but the parent clockwheel-host clips it
+ * so only the rightmost ~60 px arc peeks into the panel — analogous to how the
+ * homepage carousel arc peeks up from the bottom edge.
  */
 
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { motion, AnimatePresence } from "framer-motion";
+import { ClockwheelNav, type Granularity } from "../ClockwheelNav";
 import { TimelineDay, type TaskItem } from "./TimelineDay";
 
 interface Props {
@@ -16,9 +23,8 @@ function formatDate(d: Date): string {
   return d.toISOString().split("T")[0];
 }
 
-async function fetchDayReflections(date: string, roleId?: string): Promise<TaskItem[]> {
+async function fetchDayReflections(date: string): Promise<TaskItem[]> {
   const params = new URLSearchParams({ date });
-  if (roleId) params.set("role_id", roleId);
   const res = await fetch(`/api/m6_4/daily_timeline?${params}`);
   if (!res.ok) return [];
   return res.json();
@@ -26,56 +32,70 @@ async function fetchDayReflections(date: string, roleId?: string): Promise<TaskI
 
 export function DailyTimeline({ currentRoleId }: Props) {
   const [selectedDate, setSelectedDate] = useState(formatDate(new Date()));
+  const [granularity, setGranularity] = useState<Granularity>("day");
+  const [direction, setDirection] = useState<1 | -1>(1);
 
   const { data: tasks = [] } = useQuery<TaskItem[]>({
-    queryKey: ["daily_timeline", selectedDate, currentRoleId],
-    queryFn: () => fetchDayReflections(selectedDate, currentRoleId),
+    queryKey: ["daily_timeline", selectedDate],
+    queryFn: () => fetchDayReflections(selectedDate),
   });
 
-  const goDay = (delta: number) => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() + delta);
-    setSelectedDate(formatDate(d));
+  const handleDateChange = (next: string) => {
+    setDirection(next > selectedDate ? 1 : -1);
+    setSelectedDate(next);
   };
 
   return (
-    <div className="flex h-full">
-      {/* Left timeline nav */}
-      <div className="w-20 flex-shrink-0 flex flex-col items-center pt-4 gap-2">
-        <button
-          data-testid="date-nav-prev"
-          onClick={() => goDay(-1)}
-          className="text-gray-400 hover:text-gray-700"
-        >
-          ▲
-        </button>
-        <div
-          data-testid="timeline-date-label"
-          className="text-xs text-center text-gray-500 leading-tight"
-        >
-          {selectedDate.replace(/-/g, "\n")}
-        </div>
-        <button
-          data-testid="date-nav-next"
-          onClick={() => goDay(1)}
-          className="text-gray-400 hover:text-gray-700 disabled:opacity-30"
-          disabled={selectedDate >= formatDate(new Date())}
-        >
-          ▼
-        </button>
-      </div>
+    /*
+     * clockwheel-host: overflow:hidden clips the large disc of ClockwheelNav.
+     * The disc extends leftward outside this box; only the right-edge arc peeks in.
+     */
+    <div
+      className="clockwheel-host"
+      style={{ display: "flex", height: "100%", position: "relative" }}
+    >
+      {/* ── Left: clock-wheel navigator ── */}
+      <ClockwheelNav
+        date={selectedDate}
+        granularity={granularity}
+        onDateChange={handleDateChange}
+        onGranularityChange={setGranularity}
+      />
 
-      {/* Timeline content */}
-      <div className="flex-1 overflow-y-auto px-2 py-4">
-        {tasks.length === 0 ? (
-          <div className="text-center text-gray-400 mt-12">今天還沒有任何記錄</div>
-        ) : (
-          <TimelineDay
-            date={selectedDate}
-            tasks={tasks}
-            currentRoleId={currentRoleId}
-          />
-        )}
+      {/* ── Right: scrollable task list ── */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 16px 8px", minWidth: 0 }}>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={selectedDate}
+            initial={{ opacity: 0, x: direction * 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -direction * 20 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+          >
+            {tasks.length === 0 ? (
+              <div
+                style={{
+                  textAlign: "center",
+                  color: "var(--text-muted)",
+                  marginTop: 60,
+                  fontSize: 13,
+                }}
+              >
+                <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
+                <div>這一天還沒有任何記錄</div>
+                <div style={{ fontSize: 11, marginTop: 4, opacity: 0.7 }}>
+                  使用底部對話框與 AI 互動，系統會自動記錄
+                </div>
+              </div>
+            ) : (
+              <TimelineDay
+                date={selectedDate}
+                tasks={tasks}
+                currentRoleId={currentRoleId}
+              />
+            )}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </div>
   );

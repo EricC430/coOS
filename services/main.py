@@ -11,6 +11,7 @@ coOS FastAPI Sidecar — 主入口
          docs/modules/M1_2_breakpoint_detection_SPEC.md v1.1
 """
 import asyncio
+import threading
 import json
 import logging
 import sqlite3
@@ -53,6 +54,9 @@ logger = logging.getLogger(__name__)
 _start_time = time.time()
 
 
+_sqlite_lock = threading.Lock()
+
+
 def get_safe_user_id(request: Request) -> UUID:
     """Helper to safely get user_id from request state or settings."""
     uid_str = getattr(request.state, "user_id", None) or settings.current_user_id
@@ -67,9 +71,11 @@ def get_safe_user_id(request: Request) -> UUID:
 
 
 class AsyncDBAdapter:
-    def __init__(self, sqlite_conn, pg_engine=None):
+    def __init__(self, sqlite_conn, pg_engine=None, sqlite_path: str | None = None):
         self.sqlite_conn = sqlite_conn
         self.pg_engine = pg_engine
+        # Store path directly to avoid PRAGMA database_list inside the lock
+        self._sqlite_path = sqlite_path or str(settings.local_db_path)
 
     async def fetch_all(self, query: str, params: dict | None = None) -> list[dict]:
         params = params or {}
@@ -99,14 +105,15 @@ class AsyncDBAdapter:
                 "daily_reflection_segments"
             ])
             if is_local_table or not self.pg_engine:
-                try:
-                    cursor = self.sqlite_conn.cursor()
-                    cursor.execute(query, params)
-                    rows = cursor.fetchall()
-                    return [dict(r) for r in rows]
-                except Exception as e:
-                    logger.debug("[AsyncDBAdapter] SQLite query failed: %s. Query: %s", e, query)
-                    return self._get_mock_fallback(query, params)
+                with _sqlite_lock:
+                    try:
+                        cursor = self.sqlite_conn.cursor()
+                        cursor.execute(query, params)
+                        rows = cursor.fetchall()
+                        return [dict(r) for r in rows]
+                    except Exception as e:
+                        logger.debug("[AsyncDBAdapter] SQLite query failed: %s. Query: %s", e, query)
+                        return self._get_mock_fallback(query, params)
             else:
                 try:
                     with self.pg_engine.connect() as conn:
@@ -146,15 +153,16 @@ class AsyncDBAdapter:
                 "daily_reflection_segments"
             ])
             if is_local_table or not self.pg_engine:
-                try:
-                    cursor = self.sqlite_conn.cursor()
-                    cursor.execute(query, params)
-                    row = cursor.fetchone()
-                    return dict(row) if row else None
-                except Exception as e:
-                    logger.debug("[AsyncDBAdapter] SQLite fetchone failed: %s. Query: %s", e, query)
-                    fallback_list = self._get_mock_fallback(query, params)
-                    return fallback_list[0] if fallback_list else None
+                with _sqlite_lock:
+                    try:
+                        cursor = self.sqlite_conn.cursor()
+                        cursor.execute(query, params)
+                        row = cursor.fetchone()
+                        return dict(row) if row else None
+                    except Exception as e:
+                        logger.debug("[AsyncDBAdapter] SQLite fetchone failed: %s. Query: %s", e, query)
+                        fallback_list = self._get_mock_fallback(query, params)
+                        return fallback_list[0] if fallback_list else None
             else:
                 try:
                     with self.pg_engine.connect() as conn:
@@ -196,13 +204,18 @@ class AsyncDBAdapter:
                 "daily_reflection_segments"
             ])
             if is_local_table or not self.pg_engine:
-                try:
-                    cursor = self.sqlite_conn.cursor()
-                    q = query.replace("NOW()", "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))")
-                    cursor.execute(q, params)
-                    self.sqlite_conn.commit()
-                except Exception as e:
-                    logger.warning("[AsyncDBAdapter] SQLite execute failed: %s. Query: %s", e, query)
+                with _sqlite_lock:
+                    try:
+                        import sqlite3 as _sqlite3
+                        q = query.replace("NOW()", "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))")
+                        _wconn = _sqlite3.connect(self._sqlite_path, check_same_thread=False, timeout=30.0)
+                        _wconn.row_factory = _sqlite3.Row
+                        _wconn.execute("PRAGMA journal_mode=WAL;")
+                        _wconn.cursor().execute(q, params)
+                        _wconn.commit()
+                        _wconn.close()
+                    except Exception as e:
+                        logger.warning("[AsyncDBAdapter] SQLite execute failed: %s. Query: %s", e, query)
             else:
                 try:
                     with self.pg_engine.connect() as conn:
@@ -221,14 +234,21 @@ class AsyncDBAdapter:
         """
         [M4.4.3] 撈取特定日期的活動遙測記錄，供草稿生成器彙整。
         from_date = for_date 00:00 ~ for_date+1 00:00 (UTC)。
+
+        role_id 匹配策略（寬鬆）：
+        - 精確符合 role_id = :rid（來自對話或角色操作的 logs）
+        - role_id = 'default'（系統啟動/背景遙測，歸屬到當前角色）
+        - role_id IS NULL（早期記錄無角色歸屬）
+        - user_id IS NULL（跨 session 的系統 logs）
         """
         from datetime import timedelta
         date_start = str(for_date)
         date_end = str(for_date + timedelta(days=1))
         rows = await self.fetch_all(
             "SELECT id, payload FROM raw_tracking_logs "
-            "WHERE user_id = :uid AND role_id = :rid "
-            "AND created_at >= :ds AND created_at < :de",
+            "WHERE (user_id = :uid OR user_id IS NULL) "
+            "AND (role_id = :rid OR role_id = 'default' OR role_id IS NULL) "
+            "AND timestamp >= :ds AND timestamp < :de",
             {"uid": user_id, "rid": role_id, "ds": date_start, "de": date_end},
         )
         import json
@@ -246,18 +266,22 @@ class AsyncDBAdapter:
 
     async def fetch_elicited_durations(self, user_id: str, role_id: str, for_date) -> list:
         """
-        [M4.4.3] 撈取由 M4.4 套問所得的耗時確認（task_slots 中 is_confirmed=true 的項目）。
+        [M4.4.3] 撈取由 M4.4 套問所得的耗時確認。
+        task_slots 尚未建立時優雅降級回傳空列表。
         """
-        from datetime import timedelta
-        date_start = str(for_date)
-        date_end = str(for_date + timedelta(days=1))
-        rows = await self.fetch_all(
-            "SELECT project, duration_minutes FROM task_slots "
-            "WHERE role_id = :rid AND is_confirmed = 1 "
-            "AND created_at >= :ds AND created_at < :de",
-            {"rid": role_id, "ds": date_start, "de": date_end},
-        )
-        return [dict(r) for r in rows]
+        try:
+            from datetime import timedelta
+            date_start = str(for_date)
+            date_end = str(for_date + timedelta(days=1))
+            rows = await self.fetch_all(
+                "SELECT project, duration_minutes FROM task_slots "
+                "WHERE role_id = :rid AND is_confirmed = 1 "
+                "AND created_at >= :ds AND created_at < :de",
+                {"rid": role_id, "ds": date_start, "de": date_end},
+            )
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
 
     async def get_user_active_roles(self, user_id: str) -> list:
         """[M4.4.3] 取得使用者的所有啟用角色。"""
@@ -301,37 +325,22 @@ class AsyncDBAdapter:
         ai_analysis = kwargs.get("ai_analysis", "")
         activity_minutes = kwargs.get("activity_minutes", 0)
 
-        if not self.pg_engine:
-            # SQLite insertion
-            await self.execute(
-                "INSERT INTO daily_reflection_segments "
-                "(id, reflection_id, user_id, role_id, start_time, end_time, "
-                "activity_minutes, ai_description, is_draft, is_reviewed) "
-                "VALUES (:id, :ref_id, :uid, :rid, '00:00', '00:00', :mins, :desc, 1, 0)",
-                {
-                    "id": segment_id,
-                    "ref_id": reflection_id,
-                    "uid": str(user_id),
-                    "rid": str(role_id),
-                    "mins": activity_minutes,
-                    "desc": ai_description,
-                }
-            )
-        else:
-            # PostgreSQL insertion
-            await self.execute(
-                "INSERT INTO daily_reflection_segments "
-                "(id, reflection_id, project, source_type, segment_time, "
-                "duration_minutes, ai_description, ai_analysis, is_draft, is_reviewed) "
-                "VALUES (:id, :ref_id, 'General', 'monitor', NOW(), :mins, :desc, :anal, TRUE, FALSE)",
-                {
-                    "id": segment_id,
-                    "ref_id": reflection_id,
-                    "mins": activity_minutes,
-                    "desc": ai_description,
-                    "anal": ai_analysis,
-                }
-            )
+        # Always use local SQLite schema — execute() routes daily_reflection_segments
+        # to SQLite regardless of pg_engine, matching the local table list in is_local_table.
+        await self.execute(
+            "INSERT INTO daily_reflection_segments "
+            "(id, reflection_id, user_id, role_id, start_time, end_time, "
+            "activity_minutes, ai_description, is_draft, is_reviewed) "
+            "VALUES (:id, :ref_id, :uid, :rid, '00:00', '00:00', :mins, :desc, 1, 0)",
+            {
+                "id": segment_id,
+                "ref_id": reflection_id,
+                "uid": str(user_id),
+                "rid": str(role_id),
+                "mins": activity_minutes,
+                "desc": ai_description,
+            }
+        )
 
         return SimpleNamespace(
             id=reflection_id,
@@ -380,6 +389,11 @@ async def _sse_broadcast(event: dict) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """[M0_3 SPEC §7.4] 啟動時驗證設定，關閉時清理連線"""
+    # Configure logging levels for coOS modules and root logger to ensure INFO messages propagate
+    logging.getLogger().setLevel(logging.INFO)
+    for logger_name in ("m2_3_eguard", "m2_2_gemma", "m2_1_event_debouncer", "main"):
+        logging.getLogger(logger_name).setLevel(logging.INFO)
+
     # Use global settings
 
     # 驗證本地 SQLite data/ 目錄存在
@@ -396,7 +410,26 @@ async def lifespan(app: FastAPI):
     global _gemma_pipeline, _eguard_filter, _drift_shield, _debouncer, _breakpoint_engine
     global _sqlite_conn, _db_adapter
 
-    _sqlite_conn = sqlite3.connect(str(settings.local_db_path), check_same_thread=False)
+    # Set WAL mode with retries to handle uvicorn hot-reload overlaps.
+    # We use a temporary connection with a short timeout=0.1 to avoid 30s blocks.
+    import time
+    for i in range(25):
+        try:
+            tmp_conn = sqlite3.connect(str(settings.local_db_path), timeout=0.1)
+            tmp_conn.execute("PRAGMA journal_mode=WAL;")
+            tmp_conn.execute("PRAGMA synchronous=NORMAL;")
+            tmp_conn.close()
+            logger.info("[lifespan] Successfully set SQLite WAL mode and synchronous=NORMAL.")
+            break
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e) and i < 24:
+                logger.warning("[lifespan] DB locked when setting WAL mode, retrying in 0.2s... (attempt %d/25)", i+1)
+                time.sleep(0.2)
+            else:
+                logger.warning("[lifespan] Failed to set WAL mode (probably DB is locked by another process): %s", e)
+                break
+
+    _sqlite_conn = sqlite3.connect(str(settings.local_db_path), check_same_thread=False, timeout=30.0)
     _sqlite_conn.row_factory = sqlite3.Row
 
     # Ensure local settings & consent tables exist (so they work locally without PG)
@@ -1114,6 +1147,40 @@ async def m1_1_event(event: LogEvent) -> dict[str, Any]:
     [R06: 數位表型 §2.1] Focus/keystroke events as digital phenotype sensor.
     [R02: 計算心理語言學 §1] WPM as cognitive state input feature.
     """
+    if _eguard_filter is not None and event.payload:
+        masked_payload = {}
+        for k, v in event.payload.items():
+            if isinstance(v, str):
+                masked_payload[k] = _eguard_filter.mask_pii(v, role_id=event.role_id or "").sanitized_text
+            elif isinstance(v, list):
+                masked_list = []
+                for item in v:
+                    if isinstance(item, str):
+                        masked_list.append(_eguard_filter.mask_pii(item, role_id=event.role_id or "").sanitized_text)
+                    else:
+                        masked_list.append(item)
+                masked_payload[k] = masked_list
+            elif isinstance(v, dict):
+                masked_dict = {}
+                for dk, dv in v.items():
+                    if isinstance(dv, str):
+                        masked_dict[dk] = _eguard_filter.mask_pii(dv, role_id=event.role_id or "").sanitized_text
+                    else:
+                        masked_dict[dk] = dv
+                masked_payload[k] = masked_dict
+            else:
+                masked_payload[k] = v
+        event.payload = masked_payload
+
+    # [M2.3 DRIFT Shield] Security check for content capture, keystrokes, or edit bursts
+    drift_text = event.payload.get("content_raw") or event.payload.get("text")
+    if (event.action in ("content_capture", "keystroke", "edit_burst")) and drift_text:
+        try:
+            await _drift_shield.verify_input(drift_text)
+        except Exception as e:
+            logger.warning("[M2.3] DRIFT blocked event %s: %s", event.id, e)
+            return {"status": "blocked", "reason": "security_policy"}
+
     from m0_4_logging.writer import get_logger
     log_writer = get_logger()
     await log_writer.emit(
@@ -1133,16 +1200,8 @@ async def m1_1_event(event: LogEvent) -> dict[str, Any]:
         "payload": event.payload,
     })
 
-    # [M2.3 DRIFT Shield] Security check for content capture
-    if event.action == "content_capture" and event.payload.get("content_raw"):
-        try:
-            await _drift_shield.verify_input(event.payload["content_raw"])
-        except Exception as e:
-            logger.warning("[M2.3] DRIFT blocked content capture for event %s: %s", event.id, e)
-            return {"status": "blocked", "reason": "security_policy"}
-
     # [M2.2 Gemma Background Compression]
-    if event.action == "content_capture" and event.payload.get("content_raw"):
+    if event.action in ("content_capture", "edit_burst") and event.payload.get("content_raw"):
         content_raw = event.payload["content_raw"]
         if event.payload.get("inference_mode") == "rule_based_fallback" and _gemma_pipeline:
             async def run_gemma_async(evt_id: str, raw_text: str, r_id: str | None):
@@ -1182,6 +1241,18 @@ async def m1_1_event(event: LogEvent) -> dict[str, Any]:
                     logger.warning("[M1.1] Async Gemma background execution failed: %s", ex)
 
             asyncio.create_task(run_gemma_async(event.id, content_raw, event.role_id))
+
+    if _debouncer is not None:
+        if event.role_id and event.role_id != _debouncer._role_id:
+            await _debouncer.on_role_switched(event.role_id)
+        raw_event = RawTelemetryEvent(
+            id=event.id,
+            event_type=event.action,
+            module=event.module,
+            timestamp=event.timestamp,
+            data=event.payload or {},
+        )
+        await _debouncer.push(raw_event)
 
     return {"status": "ok", "event_id": event.id}
 
@@ -1244,6 +1315,31 @@ async def m1_2_event(event: LogEvent) -> dict[str, Any]:
     [R08: §二] Defer-to-Breakpoint: only notify at natural cognitive gaps.
     [R08: §三, RISK-04] Three-tier notification gate enforced in engine.
     """
+    if _eguard_filter is not None and event.payload:
+        masked_payload = {}
+        for k, v in event.payload.items():
+            if isinstance(v, str):
+                masked_payload[k] = _eguard_filter.mask_pii(v, role_id=event.role_id or "").sanitized_text
+            elif isinstance(v, list):
+                masked_list = []
+                for item in v:
+                    if isinstance(item, str):
+                        masked_list.append(_eguard_filter.mask_pii(item, role_id=event.role_id or "").sanitized_text)
+                    else:
+                        masked_list.append(item)
+                masked_payload[k] = masked_list
+            elif isinstance(v, dict):
+                masked_dict = {}
+                for dk, dv in v.items():
+                    if isinstance(dv, str):
+                        masked_dict[dk] = _eguard_filter.mask_pii(dv, role_id=event.role_id or "").sanitized_text
+                    else:
+                        masked_dict[dk] = dv
+                masked_payload[k] = masked_dict
+            else:
+                masked_payload[k] = v
+        event.payload = masked_payload
+
     engine = _get_breakpoint_engine()
     await engine.feed({
         "module": event.module,
@@ -1955,62 +2051,62 @@ async def m6_4_heatmap(request: Request, role_id: str) -> list[dict[str, Any]]:
 
 @app.get("/api/m6_4/daily_timeline")
 async def m6_4_daily_timeline(request: Request, date: str, role_id: str | None = None) -> list[dict[str, Any]]:
-    """當日任務清單（依角色分組）"""
+    """當日日報清單（全角色全域視圖）。
+    role_id 為可選過濾器；不傳則返回使用者所有角色的當日草稿，符合日報頁面全域性設計。
+    """
     user_id = get_safe_user_id(request)
-    
-    import uuid
-    role_uuid = None
-    if role_id:
-        if isinstance(role_id, str):
-            try:
-                role_uuid = uuid.UUID(role_id)
-            except ValueError:
-                role_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, role_id)
-        else:
-            role_uuid = uuid.uuid4()
 
-    if _db_adapter:
-        try:
-            refl_query = (
-                "SELECT * FROM daily_reflections "
-                "WHERE user_id = :uid AND reflection_date = :rdate"
+    if not _db_adapter:
+        return []
+
+    try:
+        # Pre-load role name map for all roles of this user (avoid N+1 queries)
+        role_rows = await _db_adapter.fetch_all(
+            "SELECT id, display_name FROM roles WHERE user_id = :uid",
+            {"uid": str(user_id)}
+        )
+        role_name_map: dict[str, str] = {
+            str(r.get("id")): (r.get("display_name") or "未命名角色") for r in role_rows
+        }
+
+        refl_query = "SELECT * FROM daily_reflections WHERE user_id = :uid AND reflection_date = :rdate"
+        refl_params: dict[str, Any] = {"uid": str(user_id), "rdate": date}
+        if role_id:
+            # Normalize to string UUID (slug lookup not needed here)
+            refl_query += " AND role_id = :rid"
+            refl_params["rid"] = role_id
+
+        reflections = await _db_adapter.fetch_all(refl_query, refl_params)
+
+        timeline = []
+        for r in reflections:
+            rid = str(r.get("role_id") or "")
+            role_name = role_name_map.get(rid, "未命名角色")
+            segments = await _db_adapter.fetch_all(
+                "SELECT * FROM daily_reflection_segments WHERE reflection_id = :rfid",
+                {"rfid": str(r.get("id"))}
             )
-            refl_params = {"uid": str(user_id), "rdate": date}
-            if role_uuid:
-                refl_query += " AND role_id = :rid"
-                refl_params["rid"] = str(role_uuid)
-                
-            reflections = await _db_adapter.fetch_all(refl_query, refl_params)
-            
-            timeline = []
-            for r in reflections:
-                segments = await _db_adapter.fetch_all(
-                    "SELECT * FROM daily_reflection_segments "
-                    "WHERE reflection_id = :rid",
-                    {"rid": str(r.get("id"))}
-                )
-                for s in segments:
-                    timeline.append({
+            for s in segments:
+                timeline.append({
+                    "id": str(s.get("id")),
+                    "roleId": rid,
+                    "roleName": role_name,
+                    "title": s.get("project") or "未命名任務",
+                    "status": "completed" if s.get("is_reviewed") else "in_progress",
+                    "reflection": {
                         "id": str(s.get("id")),
-                        "roleId": role_id or str(r.get("role_id")),
-                        "roleName": "Role",
-                        "title": s.get("project") or "未命名任務",
-                        "status": "completed" if s.get("is_reviewed") else "in_progress",
-                        "reflection": {
-                            "id": str(s.get("id")),
-                            "ai_description": s.get("ai_description"),
-                            "ai_analysis": s.get("ai_analysis"),
-                            "user_feeling": s.get("user_feeling") or "",
-                            "user_action_plan": s.get("user_action_plan") or "",
-                            "is_draft": s.get("is_draft", True),
-                            "is_reviewed": s.get("is_reviewed", False),
-                        }
-                    })
-            return timeline
-        except Exception as e:
-            logger.warning("[daily_timeline] Failed to fetch timeline from PG: %s", e)
-
-    return []
+                        "ai_description": s.get("ai_description"),
+                        "ai_analysis": s.get("ai_analysis"),
+                        "user_feeling": s.get("user_feeling") or "",
+                        "user_action_plan": s.get("user_action_plan") or "",
+                        "is_draft": s.get("is_draft", True),
+                        "is_reviewed": s.get("is_reviewed", False),
+                    }
+                })
+        return timeline
+    except Exception as e:
+        logger.warning("[daily_timeline] query failed: %s", e)
+        return []
 
 
 @app.patch("/api/m6_4/reflections/{reflection_id}")
@@ -2039,8 +2135,7 @@ async def m6_4_patch_reflection(reflection_id: str, body: dict[str, Any]) -> dic
                 update_fields.append("is_reviewed = :is_reviewed")
                 params["is_reviewed"] = body["is_reviewed"]
                 if body["is_reviewed"]:
-                    update_fields.append("is_draft = FALSE")
-                    update_fields.append("reviewed_at = CURRENT_TIMESTAMP")
+                    update_fields.append("is_draft = 0")
                     
             if update_fields:
                 query = f"UPDATE daily_reflection_segments SET {', '.join(update_fields)} WHERE id = :rid"
@@ -2121,6 +2216,39 @@ async def m4_4_time_spent(task_id: str):
             continue
             
     return {"task_id": task_id, "time_spent_minutes": total_minutes}
+
+
+@app.post("/api/m4_4/trigger_draft_cron")
+async def m4_4_trigger_draft_cron(request: Request, for_date: str | None = None) -> dict:
+    """[M4.4.3 SPEC §9] 手動觸發深夜草稿排程，產出前一日草稿供人工測試用。
+
+    [RISK-01] 草稿永遠 is_draft=True, is_reviewed=False，不自動核准。
+    for_date: 可選，格式 YYYY-MM-DD。若指定，則查詢該日而非昨日（僅限手動測試用途）。
+    """
+    from m4_4_elicitation.draft_scheduler import run_draft_cron
+    import datetime as _dt
+
+    user_id = get_safe_user_id(request)
+    if not user_id or not _db_adapter:
+        return {"drafted": 0, "error": "user_id or db not available"}
+
+    try:
+        if for_date:
+            target = _dt.date.fromisoformat(for_date)
+            today_arg = target + _dt.timedelta(days=1)
+        else:
+            today_arg = _dt.date.today()
+        target_date = today_arg - _dt.timedelta(days=1)
+
+        drafts = await run_draft_cron(str(user_id), db=_db_adapter, today=today_arg)
+        count = len(drafts)
+        if count:
+            await _sse_broadcast({"type": "DRAFT_READY", "count": count})
+            logger.info("[M4.4.3] trigger_draft_cron: generated %d draft(s)", count)
+        return {"drafted": count, "date": str(target_date)}
+    except Exception as e:
+        logger.error("[M4.4.3] trigger_draft_cron failed: %s", e)
+        return {"drafted": 0, "error": str(e)}
 
 
 @app.get("/api/m1_1/telemetry_estimate/{task_id}")
@@ -2252,40 +2380,71 @@ class LiveXPStore:
 
 @app.post("/api/m6_5/grant_badge")
 async def m6_5_grant_badge(request: Request, body: dict[str, Any]) -> dict[str, Any]:
-    """[M6.5] Manual grant endpoint for awarding XP via XPGatekeeper."""
+    """[M6.5] XP settlement after user approves a reflection segment.
+    [RISK-01] Guards: is_reviewed=True, user_feeling non-empty, xp_settled=False.
+    [RISK-14] Increments both current_xp and lifetime_xp atomically.
+    """
     refl_id = body.get("reflection_id")
     amount = body.get("amount", 20)
     user_id = get_safe_user_id(request)
-    
-    store = LiveXPStore(_db_adapter)
-    gatekeeper = XPGatekeeper(store)
-    
-    refl_uuid = UUID(refl_id) if refl_id else None
-    
-    if refl_uuid:
-        # Check segment
-        segment = await store.segments.get(refl_uuid)
-        if segment:
-            result = await asyncio.to_thread(gatekeeper.settle_segment_xp, refl_uuid, user_id, amount)
-            if result.success:
-                await segment.save(_db_adapter)
-                user_obj = await store.users.get(user_id)
-                await user_obj.save(_db_adapter)
-                return {"granted": True, "amount": amount}
-            return {"granted": False, "reason": result.error_reason}
-        
-        # Check reflection
-        reflection = await store.reflections.get(refl_uuid)
-        if reflection:
-            result = await asyncio.to_thread(gatekeeper.settle_earned_xp, refl_uuid, user_id, amount)
-            if result.success:
-                await reflection.save(_db_adapter)
-                user_obj = await store.users.get(user_id)
-                await user_obj.save(_db_adapter)
-                return {"granted": True, "amount": amount}
-            return {"granted": False, "reason": result.error_reason}
-                
-    return {"granted": False, "reason": "Target not found or not approved"}
+
+    if not refl_id or not user_id or not _db_adapter:
+        return {"granted": False, "reason": "missing_params"}
+
+    # Pre-fetch segment (daily_reflection_segments is always local SQLite)
+    seg_row = await _db_adapter.fetch_one(
+        "SELECT * FROM daily_reflection_segments WHERE id = :sid",
+        {"sid": str(refl_id)}
+    )
+    if not seg_row:
+        return {"granted": False, "reason": "segment_not_found"}
+
+    # [RISK-01] Gatekeeper checks
+    if seg_row.get("is_draft", 1):
+        return {"granted": False, "reason": "GATEKEEPER_001: still_draft"}
+    if not seg_row.get("is_reviewed", 0):
+        return {"granted": False, "reason": "GATEKEEPER_001: not_reviewed"}
+    if not (seg_row.get("user_feeling") or "").strip():
+        return {"granted": False, "reason": "GATEKEEPER_001: missing_user_feeling"}
+    if seg_row.get("xp_settled", 0):
+        return {"granted": False, "reason": "GATEKEEPER_002: already_settled"}
+
+    # Mark segment settled
+    await _db_adapter.execute(
+        "UPDATE daily_reflection_segments SET xp_settled = 1 WHERE id = :sid",
+        {"sid": str(refl_id)}
+    )
+
+    # [RISK-14] Increment user XP
+    user_row = await _db_adapter.fetch_one(
+        "SELECT id, current_xp, lifetime_xp FROM users WHERE id = :uid",
+        {"uid": str(user_id)}
+    )
+    if user_row:
+        new_current = (user_row.get("current_xp") or 0) + amount
+        new_lifetime = (user_row.get("lifetime_xp") or 0) + amount
+        await _db_adapter.execute(
+            "UPDATE users SET current_xp = :cxp, lifetime_xp = :lxp WHERE id = :uid",
+            {"cxp": new_current, "lxp": new_lifetime, "uid": str(user_id)}
+        )
+
+    # Write ledger entry
+    await _db_adapter.execute(
+        "INSERT INTO xp_ledger (id, user_id, amount, xp_type, reason, source_module, segment_id) "
+        "VALUES (:id, :uid, :amt, :xtype, :reason, :src, :sid)",
+        {
+            "id": str(uuid.uuid4()),
+            "uid": str(user_id),
+            "amt": amount,
+            "xtype": "earned",
+            "reason": f"segment_reflection_approved_{refl_id}",
+            "src": "M4.5",
+            "sid": str(refl_id),
+        }
+    )
+
+    logger.info("[M6.5] XP granted: user=%s segment=%s amount=%d", user_id, refl_id, amount)
+    return {"granted": True, "amount": amount, "new_xp": new_current if user_row else None}
 
 
 @app.post("/api/m6_5/draw_card")
@@ -2327,12 +2486,25 @@ async def _resolve_session_thread_id(role_id: str, thread_id: str, create_if_new
     was more than 30 minutes (1800 seconds) ago.
     """
     prefix = f"{thread_id}_%"
-    row = await _db_adapter.fetch_one(
-        "SELECT thread_id, created_at FROM chat_transcripts "
-        "WHERE role_id = :rid AND (thread_id = :tid OR thread_id LIKE :prefix) "
-        "ORDER BY created_at DESC LIMIT 1",
-        {"rid": role_id, "tid": thread_id, "prefix": prefix}
-    )
+    is_tool = (thread_id == f"thread_{role_id}")
+    if is_tool:
+        row = await _db_adapter.fetch_one(
+            "SELECT thread_id, created_at FROM chat_transcripts "
+            "WHERE role_id = :rid AND (persona_id IS NULL OR persona_id = '' OR persona_id = 'tool_ai_default' OR persona_id = :tool_pid) "
+            "AND (thread_id = :tid OR thread_id LIKE :prefix) "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            {"rid": role_id, "tid": thread_id, "prefix": prefix, "tool_pid": f"tool_ai_{role_id}"}
+        )
+    else:
+        prefix_part = thread_id[len(f"thread_{role_id}_"):]
+        persona_id = prefix_part[:36]
+        row = await _db_adapter.fetch_one(
+            "SELECT thread_id, created_at FROM chat_transcripts "
+            "WHERE role_id = :rid AND persona_id = :pid "
+            "AND (thread_id = :tid OR thread_id LIKE :prefix) "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            {"rid": role_id, "tid": thread_id, "prefix": prefix, "pid": persona_id}
+        )
     if not row:
         if create_if_new:
             import uuid
@@ -2362,20 +2534,34 @@ async def _resolve_session_thread_id(role_id: str, thread_id: str, create_if_new
 
 
 @app.get("/api/m4_1/history")
-async def m4_1_history(role_id: str, thread_id: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
+async def m4_1_history(role_id: str, thread_id: str | None = None, limit: int = 200, offset: int = 0) -> list[dict[str, Any]]:
     """回傳指定角色（或特定 thread）的最近聊天紀錄，按時間排序。"""
     if thread_id:
         resolved_tid = await _resolve_session_thread_id(role_id, thread_id, create_if_new=False)
-        rows = await _db_adapter.fetch_all(
-            "SELECT role, content, persona_id, thread_id, created_at FROM chat_transcripts "
-            "WHERE role_id = :rid AND thread_id = :tid ORDER BY created_at DESC LIMIT :lim",
-            {"rid": role_id, "tid": resolved_tid, "lim": limit},
-        )
+        is_tool = (thread_id == f"thread_{role_id}")
+        if is_tool:
+            rows = await _db_adapter.fetch_all(
+                "SELECT role, content, persona_id, thread_id, created_at FROM chat_transcripts "
+                "WHERE role_id = :rid AND thread_id = :tid "
+                "AND (persona_id IS NULL OR persona_id = '' OR persona_id = 'tool_ai_default' OR persona_id = :tool_pid) "
+                "ORDER BY created_at DESC, rowid DESC LIMIT :lim OFFSET :off",
+                {"rid": role_id, "tid": resolved_tid, "tool_pid": f"tool_ai_{role_id}", "lim": limit, "off": offset},
+            )
+        else:
+            prefix_part = thread_id[len(f"thread_{role_id}_"):]
+            persona_id = prefix_part[:36]
+            rows = await _db_adapter.fetch_all(
+                "SELECT role, content, persona_id, thread_id, created_at FROM chat_transcripts "
+                "WHERE role_id = :rid AND thread_id = :tid "
+                "AND persona_id = :pid "
+                "ORDER BY created_at DESC, rowid DESC LIMIT :lim OFFSET :off",
+                {"rid": role_id, "tid": resolved_tid, "pid": persona_id, "lim": limit, "off": offset},
+            )
     else:
         rows = await _db_adapter.fetch_all(
             "SELECT role, content, persona_id, thread_id, created_at FROM chat_transcripts "
-            "WHERE role_id = :rid ORDER BY created_at DESC LIMIT :lim",
-            {"rid": role_id, "lim": limit},
+            "WHERE role_id = :rid ORDER BY created_at DESC, rowid DESC LIMIT :lim OFFSET :off",
+            {"rid": role_id, "lim": limit, "off": offset},
         )
     return [dict(r) for r in reversed(rows)]
 
@@ -2449,7 +2635,7 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     try:
         history_rows = await _db_adapter.fetch_all(
             "SELECT role, content FROM chat_transcripts "
-            "WHERE thread_id = :tid ORDER BY created_at DESC LIMIT 12",
+            "WHERE thread_id = :tid ORDER BY created_at DESC, rowid DESC LIMIT 12",
             {"tid": resolved_thread_id},
         )
         chat_history = [{"role": r["role"], "content": r["content"]} for r in reversed(history_rows)]
@@ -2469,9 +2655,18 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
         "upcoming_promises": role_ctx.upcoming_promises,
     }
 
-    # 若前端明確指定了 expert persona_id，直接注入 route_decision，跳過 rule_router
-    # [RISK-06] 仍驗證該 persona 確實屬於此 role
-    if requested_persona_id and requested_persona_id not in ("__tool__", "tool_ai_default"):
+    # 若前端指定為工具型 AI、特定專家，或者當前是工具型 AI 的 thread，直接注入 route_decision，跳過 rule_router
+    is_tool_thread = (thread_id == f"thread_{role_uuid}" or thread_id == "tool_ai_default" or resolved_thread_id == f"thread_{role_uuid}")
+    if (requested_persona_id in ("__tool__", "tool_ai_default") or 
+        (requested_persona_id and requested_persona_id.startswith("tool_ai_")) or 
+        is_tool_thread):
+        router_input["route_decision"] = {
+            "persona_id": f"tool_ai_{role_uuid}",
+            "route_reason": "frontend_explicit",
+            "confidence": 1.0,
+            "thread_id": resolved_thread_id,
+        }
+    elif requested_persona_id:
         expert_in_role = next(
             (e for e in role_ctx.active_experts if str(e.get("id")) == requested_persona_id),
             None,
@@ -2505,10 +2700,14 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
             "suggest_match": False,
         }
 
-    persona_id = (res.get("route_decision") or {}).get("persona_id") or "tool_ai_default"
+    persona_id = (res.get("route_decision") or {}).get("persona_id")
+    if not persona_id or persona_id in ("tool_ai_default", "__tool__") or persona_id.startswith("tool_ai_"):
+        persona_id = f"tool_ai_{role_uuid}"
     reply = res.get("persona_response") or "我在聽，你繼續說說看？"
     suggest_match = bool(res.get("suggest_match", False))
     split_messages = res.get("split_messages") or []  # [W6] 多氣泡序列
+    if persona_id.startswith("tool_ai_"):
+        split_messages = []
 
     # [GAP-B5] M4.6 project detection は M4.1 invoke_persona_node の
     # _dispatch_observer_bg に一本化（二重検出を廃止）。
@@ -2886,7 +3085,8 @@ async def m4_1_match_persona(body: dict[str, Any]) -> dict[str, Any]:
             role_rules=[],
         )
         # 若已有專家但無任何專家符合要求（低於配對閥值 0.80 或 fallback），則自動生成全新專家
-        if (decision.persona_id == "tool_ai_default" or decision.confidence < 0.80) and user_msg:
+        is_tool = not decision.persona_id or decision.persona_id == "tool_ai_default" or decision.persona_id.startswith("tool_ai_")
+        if (is_tool or decision.confidence < 0.80) and user_msg:
             new_expert = await _ai_generate_expert(user_msg, str(role_uuid))
             if new_expert:
                 decision = RouteDecision(
@@ -2896,7 +3096,7 @@ async def m4_1_match_persona(body: dict[str, Any]) -> dict[str, Any]:
                     confidence=0.9,
                 )
 
-    matched = decision.persona_id is not None and decision.persona_id != "tool_ai_default"
+    matched = decision.persona_id is not None and decision.persona_id != "tool_ai_default" and not decision.persona_id.startswith("tool_ai_")
 
     try:
         from m0_4_logging.writer import get_logger as get_log_writer
@@ -2909,7 +3109,7 @@ async def m4_1_match_persona(body: dict[str, Any]) -> dict[str, Any]:
                 "matched_persona_id": decision.persona_id,
                 "confidence": decision.confidence,
                 "route_reason": decision.route_reason,
-                "fallback_to_generation": (decision.persona_id == "tool_ai_default" or decision.confidence < 0.80) and bool(user_msg)
+                "fallback_to_generation": (not decision.persona_id or decision.persona_id == "tool_ai_default" or decision.persona_id.startswith("tool_ai_") or decision.confidence < 0.80) and bool(user_msg)
             },
             user_id=settings.current_user_id,
             role_id=str(role_uuid)

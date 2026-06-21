@@ -37,7 +37,7 @@ const EVENT_MESSAGES: Record<string, (e: ObserverEvent) => string> = {
   PROJECT_CREATED: (e) => `${sourceLabel(e.source)}，已建立「${e.project_name}」`,
   PROJECT_SWITCHED: (e) => `偵測切換到「${e.project_name}」專案`,
   GOAL_INFERRED: (e) => `目標「${e.goal}」已記錄`,
-  GOAL_CONFIRMED: (e) => `與 ${e.expert_name} 確立目標「${e.title}」`,
+  GOAL_CONFIRMED: (e) => `與 ${e.expert_name ?? ""} 確立目標「${e.title}」`,
   PROMISE_RECORDED: (e) =>
     `承諾「${e.text}」已記錄${e.deadline ? `，deadline: ${e.deadline}` : ""}`,
   PROMISE_REMINDER: (e) => `承諾「${e.text}」即將到期`,
@@ -53,8 +53,20 @@ interface Props {
   onDeleteProject?: (projectId: string) => void;
 }
 
+// Icon per event type — keeps the marker visually distinct from timestamp dividers
+const EVENT_ICONS: Record<string, string> = {
+  PROJECT_CREATED: "🏷️",
+  PROJECT_SWITCHED: "🔀",
+  GOAL_CONFIRMED: "🎯",
+  GOAL_INFERRED: "💡",
+  PROMISE_RECORDED: "🤝",
+  PROMISE_REMINDER: "⏰",
+  EXPERT_POOL_EMPTY: "⚠️",
+};
+
 export function SystemEventHint({ event, onEditProject, onDeleteProject }: Props) {
   const message = EVENT_MESSAGES[event.type]?.(event) ?? event.type;
+  const icon = EVENT_ICONS[event.type] ?? "ℹ️";
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(event.project_name ?? "");
 
@@ -67,24 +79,33 @@ export function SystemEventHint({ event, onEditProject, onDeleteProject }: Props
     return (
       <div
         data-testid="system-event-hint-edit"
-        className="system-event-hint-inline text-center text-xs text-gray-500 py-1 flex items-center justify-center gap-1"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 4,
+          margin: "6px 16px",
+          padding: "4px 10px",
+          borderRadius: 8,
+          background: "var(--glass-bg, rgba(255,255,255,0.06))",
+          border: "1px solid var(--glass-border, rgba(255,255,255,0.12))",
+          fontSize: 12,
+        }}
       >
+        <span>{icon}</span>
         <input
-          className="border rounded px-1 text-xs"
+          style={{ border: "1px solid var(--glass-border)", borderRadius: 4, padding: "1px 4px", fontSize: 12, background: "transparent", color: "inherit", width: 140 }}
           value={draftName}
           onChange={(e) => setDraftName(e.target.value)}
           autoFocus
         />
         <button
-          className="text-indigo-500"
-          onClick={() => {
-            onEditProject?.(event.project_id!, draftName.trim());
-            setEditing(false);
-          }}
+          style={{ color: "var(--role-primary, #6366f1)", fontWeight: 600, fontSize: 12 }}
+          onClick={() => { onEditProject?.(event.project_id!, draftName.trim()); setEditing(false); }}
         >
           存
         </button>
-        <button className="text-gray-400" onClick={() => setEditing(false)}>
+        <button style={{ color: "var(--text-muted, #888)", fontSize: 12 }} onClick={() => setEditing(false)}>
           取消
         </button>
       </div>
@@ -92,28 +113,44 @@ export function SystemEventHint({ event, onEditProject, onDeleteProject }: Props
   }
 
   return (
-    // Centered grey inline text -- not a Toast, not a Modal
+    // Permanent system-event separator — visually distinct from timestamp dividers.
+    // [R09 SS6.1] Inline, never Modal/Toast. Persistent after history reload (stored in DB).
     <div
       data-testid="system-event-hint"
-      className="system-event-hint-inline text-center text-xs text-gray-400 py-1 select-none group"
+      className="group select-none"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+        margin: "4px 16px",
+        padding: "4px 12px",
+        borderRadius: 10,
+        background: "var(--glass-bg, rgba(255,255,255,0.05))",
+        border: "1px solid var(--glass-border, rgba(255,255,255,0.10))",
+        fontSize: 11,
+        color: "var(--text-muted, #8a8a9a)",
+        backdropFilter: "blur(4px)",
+        cursor: "default",
+      }}
     >
-      ── {message} ──
+      <span style={{ fontSize: 13, lineHeight: 1 }}>{icon}</span>
+      <span>{message}</span>
       {canManage && (
-        <span className="ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <span className="opacity-0 group-hover:opacity-100 transition-opacity" style={{ display: "flex", gap: 2 }}>
           <button
             data-testid="event-edit-btn"
-            className="text-gray-400 hover:text-indigo-500 px-1"
-            onClick={() => {
-              setDraftName(event.project_name ?? "");
-              setEditing(true);
-            }}
+            style={{ fontSize: 11, color: "var(--text-muted)", padding: "0 3px" }}
+            className="hover:text-indigo-400"
+            onClick={() => { setDraftName(event.project_name ?? ""); setEditing(true); }}
             title="編輯專案名稱"
           >
             ✎
           </button>
           <button
             data-testid="event-delete-btn"
-            className="text-gray-400 hover:text-red-500 px-1"
+            style={{ fontSize: 11, color: "var(--text-muted)", padding: "0 3px" }}
+            className="hover:text-red-400"
             onClick={() => onDeleteProject?.(event.project_id!)}
             title="刪除專案"
           >

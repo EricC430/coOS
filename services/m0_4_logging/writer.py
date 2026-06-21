@@ -112,8 +112,13 @@ class LogWriter:
         self._db_path = db_path or str(_DEFAULT_DB)
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path)
+        conn = sqlite3.connect(self._db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+        except sqlite3.OperationalError:
+            pass
         return conn
 
     def init_table(self) -> None:
@@ -305,6 +310,7 @@ class AsyncLogWriter:
 
     async def start(self) -> None:
         """Initialise table and launch background flush worker."""
+        self._queue = asyncio.Queue(maxsize=10000)
         self._sync_writer.init_table()
         self._worker_task = asyncio.create_task(self._flush_worker())
 
@@ -479,65 +485,84 @@ class AsyncLogWriter:
         await loop.run_in_executor(None, self._sync_write_batch, batch)
 
     def _sync_write_batch(self, batch: list[LogEvent | LLMInferenceLog | SystemExecutionLog]) -> None:
-        conn = sqlite3.connect(self._db_path, timeout=10.0)
+        lock = None
         try:
-            log_events = []
-            llm_events = []
-            exec_events = []
-            for e in batch:
-                if isinstance(e, LogEvent):
-                    log_events.append((
-                        e.id,
-                        e.timestamp.isoformat(),
-                        e.module,
-                        e.action,
-                        e.level,
-                        json.dumps(e.payload, ensure_ascii=False),
-                        e.user_id,
-                        e.role_id,
-                        e.correlation_id,
-                    ))
-                elif isinstance(e, LLMInferenceLog):
-                    llm_events.append((
-                        e.id,
-                        e.timestamp.isoformat(),
-                        e.model_name,
-                        e.caller_module,
-                        e.prompt_text,
-                        e.response_text,
-                        e.prompt_tokens,
-                        e.completion_tokens,
-                        e.latency_ms,
-                        e.temperature,
-                        e.status,
-                        e.error_message,
-                        e.role_id,
-                        e.correlation_id,
-                    ))
-                elif isinstance(e, SystemExecutionLog):
-                    exec_events.append((
-                        e.id,
-                        e.timestamp.isoformat(),
-                        e.module,
-                        e.action,
-                        e.level,
-                        e.message,
-                        e.exception_trace,
-                        json.dumps(e.payload, ensure_ascii=False),
-                        e.user_id,
-                        e.role_id,
-                    ))
+            import main as _main
+            lock = getattr(_main, "_sqlite_lock", None)
+        except Exception:
+            pass
 
-            if log_events:
-                conn.executemany(_INSERT_SQL, log_events)
-            if llm_events:
-                conn.executemany(_INSERT_LLM_SQL, llm_events)
-            if exec_events:
-                conn.executemany(_INSERT_EXECUTION_SQL, exec_events)
+        if lock is not None:
+            lock.acquire()
 
-            conn.commit()
+        try:
+            conn = sqlite3.connect(self._db_path, timeout=30.0)
+            try:
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA synchronous=NORMAL;")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                log_events = []
+                llm_events = []
+                exec_events = []
+                for e in batch:
+                    if isinstance(e, LogEvent):
+                        log_events.append((
+                            e.id,
+                            e.timestamp.isoformat(),
+                            e.module,
+                            e.action,
+                            e.level,
+                            json.dumps(e.payload, ensure_ascii=False),
+                            e.user_id,
+                            e.role_id,
+                            e.correlation_id,
+                        ))
+                    elif isinstance(e, LLMInferenceLog):
+                        llm_events.append((
+                            e.id,
+                            e.timestamp.isoformat(),
+                            e.model_name,
+                            e.caller_module,
+                            e.prompt_text,
+                            e.response_text,
+                            e.prompt_tokens,
+                            e.completion_tokens,
+                            e.latency_ms,
+                            e.temperature,
+                            e.status,
+                            e.error_message,
+                            e.role_id,
+                            e.correlation_id,
+                        ))
+                    elif isinstance(e, SystemExecutionLog):
+                        exec_events.append((
+                            e.id,
+                            e.timestamp.isoformat(),
+                            e.module,
+                            e.action,
+                            e.level,
+                            e.message,
+                            e.exception_trace,
+                            json.dumps(e.payload, ensure_ascii=False),
+                            e.user_id,
+                            e.role_id,
+                        ))
+
+                if log_events:
+                    conn.executemany(_INSERT_SQL, log_events)
+                if llm_events:
+                    conn.executemany(_INSERT_LLM_SQL, llm_events)
+                if exec_events:
+                    conn.executemany(_INSERT_EXECUTION_SQL, exec_events)
+
+                conn.commit()
+            finally:
+                conn.close()
         finally:
-            conn.close()
+            if lock is not None:
+                lock.release()
 
 
 # Module-level singleton (initialised lazily)

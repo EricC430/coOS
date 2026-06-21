@@ -146,8 +146,17 @@ class EventDebouncer:
                 self._write_offline_sqlite(batch)
 
     def _write_offline_sqlite(self, batch: EventBatch) -> None:
+        lock = None
         try:
-            conn = sqlite3.connect(self._db_path)
+            import main as _main
+            lock = getattr(_main, "_sqlite_lock", None)
+        except Exception:
+            pass
+
+        if lock is not None:
+            lock.acquire()
+        try:
+            conn = sqlite3.connect(self._db_path, timeout=30.0)
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute(
                 "INSERT INTO temp_event_queue(id, batch_id, events_json, role_id) VALUES(?,?,?,?)",
@@ -162,3 +171,6 @@ class EventDebouncer:
             conn.close()
         except Exception:
             pass  # best-effort; in-memory offline_buffer is the authoritative fallback
+        finally:
+            if lock is not None:
+                lock.release()

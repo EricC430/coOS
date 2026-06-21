@@ -256,3 +256,49 @@ class TestGracefulDegradation:
         )
         resp = client.post(ENDPOINT, json=event)
         assert resp.status_code == 200
+
+
+class TestTelemetryCompressionIntegration:
+    @pytest.mark.anyio
+    async def test_telemetry_debounced_compression_write(self, client):
+        import services.main as main_mod
+        from services.m2_1_event_debouncer.schema import RawTelemetryEvent
+        import asyncio
+        import sqlite3
+
+        with client as active_client:
+            # Save previous window
+            prev_window = main_mod._debouncer._window
+            main_mod._debouncer._window = 0.05
+            
+            # Simulate edge offline to speed up testing and bypass Ollama
+            main_mod._gemma_pipeline.simulate_edge_offline()
+
+            try:
+                # Send a valid content_capture event
+                event = _log_event(
+                    module="M1.1.1",
+                    action="content_capture",
+                    payload={"app_name": "Notepad", "content_raw": "Writing calculus homework formulas."},
+                )
+                resp = active_client.post(ENDPOINT, json=event)
+                assert resp.status_code == 200
+
+                # Wait for the debouncer flush timer to trigger and run M2.2/M2.3/M6.1
+                await asyncio.sleep(0.2)
+
+                # Check intent_logs in database
+                db_path = main_mod.settings.local_db_path
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                try:
+                    row = conn.execute("SELECT * FROM intent_logs ORDER BY created_at DESC LIMIT 1").fetchone()
+                    assert row is not None
+                    assert row["inference_mode"] == "rule_based_fallback"
+                    assert row["intent_label"] == "math_study"
+                finally:
+                    conn.close()
+            finally:
+                main_mod._debouncer._window = prev_window
+                main_mod._gemma_pipeline.simulate_edge_online()
+

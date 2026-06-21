@@ -85,25 +85,38 @@ async def github_oauth_callback(
         settings = get_settings()
         
         def _save():
-            conn = sqlite3.connect(str(settings.local_db_path))
+            lock = None
             try:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS github_tokens (
-                        id TEXT PRIMARY KEY,
-                        encrypted_token TEXT NOT NULL,
-                        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                import main as _main
+                lock = getattr(_main, "_sqlite_lock", None)
+            except Exception:
+                pass
+
+            if lock is not None:
+                lock.acquire()
+            try:
+                conn = sqlite3.connect(str(settings.local_db_path), timeout=30.0)
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS github_tokens (
+                            id TEXT PRIMARY KEY,
+                            encrypted_token TEXT NOT NULL,
+                            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                        )
+                    """)
+                    # For MVP, we only support one token
+                    cursor.execute("DELETE FROM github_tokens")
+                    cursor.execute(
+                        "INSERT INTO github_tokens (id, encrypted_token) VALUES (?, ?)",
+                        ("default", encrypted_token)
                     )
-                """)
-                # For MVP, we only support one token
-                cursor.execute("DELETE FROM github_tokens")
-                cursor.execute(
-                    "INSERT INTO github_tokens (id, encrypted_token) VALUES (?, ?)",
-                    ("default", encrypted_token)
-                )
-                conn.commit()
+                    conn.commit()
+                finally:
+                    conn.close()
             finally:
-                conn.close()
+                if lock is not None:
+                    lock.release()
         
         await asyncio.to_thread(_save)
         

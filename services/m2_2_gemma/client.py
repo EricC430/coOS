@@ -115,6 +115,10 @@ class GemmaEdgeClient:
             if content.startswith("```"):
                 lines = content.split("\n")
                 content = "\n".join(lines[1:-1]) if len(lines) > 2 else content
+            import re
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
+            if json_match:
+                content = json_match.group(0)
             return json.loads(content)
 
         from m2_2_gemma.queue import enqueue_inference

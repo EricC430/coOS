@@ -40,6 +40,16 @@ class LogEvent(BaseModel):
         description="Cross-module trace ID shared within one business flow",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def populate_defaults_and_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "module" not in data:
+                data["module"] = "M1.1.2"
+            if "action" not in data:
+                data["action"] = data.get("event_type") or "keystroke"
+        return data
+
     @field_validator("module")
     @classmethod
     def validate_module_format(cls, v: str) -> str:

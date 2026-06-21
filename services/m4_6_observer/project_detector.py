@@ -31,17 +31,29 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 EXTRACT_PATTERNS: list[str] = [
+    # 「我想做/要做/正在做 X 專案/作業/報告」— 擷取名詞主題，不含動詞前綴
     r"(?:我想做|開始做|要做|在做|想開始做|正在做|準備做)\s*(.{2,20}?)(?:的(?:期末)?(?:專案|作業|報告|side project)|專案|作業|報告)",
+    # 「X 專案 開始/啟動」
     r"(.{2,20}?)(?:專案|project)\s*(?:開始|啟動|建立|進行|推進|開發)",
+    # 「我在學/想學 X」— 擷取學習主題名詞
     r"(?:我(?:在|要|想|開始)學|正在學習)\s*(.{2,20}?)(?:$|，|。|，|這個|的)",
+    # 「做一個/建一個 X」
     r"(?:我有個|做一個|做個|建一個|建個)\s*(.{2,20}?)(?:$|，|。|的|，)",
-    r"(.{2,20}?)(?:的期末|期末報告|期末考|期中報告|作業|homework)",
+    # 「微積分/Python/X 的期末考」— 擷取學科名詞（不含動詞前綴「應付/準備」等）
+    r"([^\s，。！？我你他]{2,10}?)(?:的期末考|的期末報告|期末報告|期中報告)",
+    # 「side project / 個人專案 叫做 X」
     r"(?:side project|副業|個人專案|自己的專案)\s*[：:是叫叫做]?\s*(.{2,20}?)(?:$|，|。)",
 ]
 
 _TRAILING_NOISE = (
     "的", "期末", "這個", "那個", "一個", "個", "要做", " 要做",
-    "一下", "看看", "之類的", "什麼的", "吧", "啊", "喔", "欸",  # [W9.6] 口語化尾綴
+    "一下", "看看", "之類的", "什麼的", "吧", "啊", "喔", "欸",
+)
+
+# 動詞前綴黑名單：若擷取結果是動詞短語開頭，拒絕（非名詞標籤）
+_VERB_PREFIX_BLOCKLIST = (
+    "我想", "我要", "我需", "我得", "應付", "準備", "搞定", "衝刺",
+    "複習", "開始", "趕快", "努力", "想辦法", "想要",
 )
 
 FUZZY_THRESHOLD = 0.85
@@ -56,6 +68,10 @@ def _clean_candidate(text: str) -> str:
             if text.endswith(noise):
                 text = text[: -len(noise)].strip()
                 changed = True
+    # Reject candidates that are verb phrases (not noun tags)
+    for prefix in _VERB_PREFIX_BLOCKLIST:
+        if text.startswith(prefix):
+            return ""
     return text
 
 
@@ -198,6 +214,7 @@ async def detect_and_upsert_project(
     source: str = "chat",
     expert_name: str | None = None,
     intention: str | None = None,
+    thread_id: str | None = None,
 ) -> str | None:
     """
     [SPEC §9] 主題標籤偵測三段式流程：
@@ -270,21 +287,46 @@ async def detect_and_upsert_project(
             logger.warning("[M4.6] Failed to insert project tag: %s", e)
             return None
 
-    # 8. SSE：新建 → PROJECT_CREATED；切換到既有 → PROJECT_SWITCHED
+    event_type = "PROJECT_CREATED" if is_new else "PROJECT_SWITCHED"
+    payload = {
+        "project_name": final_name,
+        "role_id": role_id,
+        "source": source,
+    }
+    if expert_name:
+        payload["expert_name"] = expert_name
+    if intention:
+        payload["intention"] = intention
+
     if hasattr(sse, "emit"):
-        event_type = "PROJECT_CREATED" if is_new else "PROJECT_SWITCHED"
-        payload = {
-            "project_name": final_name,
-            "role_id": role_id,
-            "source": source,
-        }
-        if expert_name:
-            payload["expert_name"] = expert_name
-        if intention:
-            payload["intention"] = intention
         try:
             await sse.emit(event_type, payload)
         except Exception:
             pass
+
+    if thread_id:
+        import json
+        import uuid
+        # Extract persona_id from thread_id if possible
+        persona_id = None
+        if thread_id.startswith(f"thread_{role_id}_"):
+            persona_id = thread_id[len(f"thread_{role_id}_"):]
+        try:
+            await db.execute(
+                "INSERT INTO chat_transcripts (id, thread_id, persona_id, role, content, role_id) "
+                "VALUES (:id, :tid, :pid, 'system_event', :content, :rid)",
+                {
+                    "id": str(uuid.uuid4()),
+                    "tid": thread_id,
+                    "pid": persona_id,
+                    "content": json.dumps({
+                        "type": event_type,
+                        **payload
+                    }, ensure_ascii=False),
+                    "rid": role_id,
+                }
+            )
+        except Exception as e:
+            logger.warning("[M4.6] Failed to insert project system_event to chat_transcripts: %s", e)
 
     return final_name

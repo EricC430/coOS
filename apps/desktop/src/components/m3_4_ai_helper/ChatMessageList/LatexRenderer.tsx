@@ -1,78 +1,95 @@
 /**
- * M3.4 -- LaTeX Renderer
+ * M3.4 -- LaTeX & Markdown Renderer
  *
  * Parses $inline$ and $$display$$ math in message content.
- * Uses KaTeX for rendering; falls back to original text on error.
- *
- * [FIX-07] Resolves LaTeX rendering failure in chat messages.
+ * Renders Markdown content using marked.
+ * Uses KaTeX for rendering math; falls back to original text on error.
  */
 
 import React from "react";
 import katex from "katex";
+import { marked } from "marked";
 import "katex/dist/katex.min.css";
 
 interface LatexRendererProps {
   content: string;
 }
 
+// Configure marked options
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+});
+
 /**
- * Splits text into segments: plain text, inline math ($...$), and display math ($$...$$).
+ * Parses LaTeX display and inline equations, replaces them with unique tokens,
+ * runs the Markdown parser, and then substitutes KaTeX-rendered HTML back.
  */
-function parseSegments(text: string): Array<{ type: "text" | "inline" | "display"; value: string }> {
-  const segments: Array<{ type: "text" | "inline" | "display"; value: string }> = [];
-  // Regex: match $$...$$ first (display), then $...$ (inline)
-  const re = /(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$)/g;
-  let last = 0;
-  let match: RegExpExecArray | null;
+function renderMarkdownWithKatex(content: string): string {
+  const inlineFormulas: string[] = [];
+  const displayFormulas: string[] = [];
 
-  while ((match = re.exec(text)) !== null) {
-    if (match.index > last) {
-      segments.push({ type: "text", value: text.slice(last, match.index) });
-    }
-    const raw = match[1];
-    if (raw.startsWith("$$")) {
-      segments.push({ type: "display", value: raw.slice(2, -2) });
-    } else {
-      segments.push({ type: "inline", value: raw.slice(1, -1) });
-    }
-    last = match.index + raw.length;
-  }
-  if (last < text.length) {
-    segments.push({ type: "text", value: text.slice(last) });
-  }
-  return segments;
-}
+  // Temporarily replace display math ($$...$$)
+  let processed = content.replace(/\$\$([\s\S]+?)\$\$/g, (_, formula) => {
+    displayFormulas.push(formula);
+    return `LATEXDISPLAYTOKEN${displayFormulas.length - 1}LATEXDISPLAYTOKEN`;
+  });
 
-function renderKatex(formula: string, displayMode: boolean): string {
+  // Temporarily replace inline math ($...$)
+  processed = processed.replace(/\$([^$\n]+?)\$/g, (_, formula) => {
+    inlineFormulas.push(formula);
+    return `LATEXINLINETOKEN${inlineFormulas.length - 1}LATEXINLINETOKEN`;
+  });
+
+  // Parse Markdown using marked
+  let html = "";
   try {
-    return katex.renderToString(formula, {
-      displayMode,
-      throwOnError: false,
-      output: "html",
-    });
-  } catch {
-    return formula;
+    html = marked.parse(processed, { async: false }) as string;
+  } catch (e) {
+    html = processed;
   }
+
+  // Restore display formulas
+  html = html.replace(/LATEXDISPLAYTOKEN(\d+)LATEXDISPLAYTOKEN/g, (_, idxStr) => {
+    const idx = parseInt(idxStr, 10);
+    const formula = displayFormulas[idx];
+    try {
+      const rendered = katex.renderToString(formula, {
+        displayMode: true,
+        throwOnError: false,
+        output: "html",
+      });
+      return `<div class="katex-display-block" style="display: block; text-align: center; margin: 0.5em 0; overflow-x: auto;">${rendered}</div>`;
+    } catch {
+      return `$$${formula}$$`;
+    }
+  });
+
+  // Restore inline formulas
+  html = html.replace(/LATEXINLINETOKEN(\d+)LATEXINLINETOKEN/g, (_, idxStr) => {
+    const idx = parseInt(idxStr, 10);
+    const formula = inlineFormulas[idx];
+    try {
+      return katex.renderToString(formula, {
+        displayMode: false,
+        throwOnError: false,
+        output: "html",
+      });
+    } catch {
+      return `$${formula}$`;
+    }
+  });
+
+  return html;
 }
 
 export function LatexRenderer({ content }: LatexRendererProps) {
-  const segments = parseSegments(content);
+  const htmlContent = renderMarkdownWithKatex(content);
 
   return (
-    <>
-      {segments.map((seg, i) => {
-        if (seg.type === "text") {
-          return <span key={i}>{seg.value}</span>;
-        }
-        const html = renderKatex(seg.value, seg.type === "display");
-        return (
-          <span
-            key={i}
-            dangerouslySetInnerHTML={{ __html: html }}
-            style={seg.type === "display" ? { display: "block", textAlign: "center", margin: "4px 0" } : undefined}
-          />
-        );
-      })}
-    </>
+    <div
+      className="chat-markdown"
+      dangerouslySetInnerHTML={{ __html: htmlContent }}
+    />
   );
 }

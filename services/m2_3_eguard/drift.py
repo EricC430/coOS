@@ -107,6 +107,7 @@ class DriftShield:
                 logger.warning("[M2.3] Semantic audit failed: %s", e)
 
         if matched_keyword is None:
+            logger.info("[M2.3] Semantic audit passed")
             return text  # clean
 
         is_ignored = any(
@@ -156,7 +157,7 @@ class DriftShield:
             content = "{}"
 
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
+                async with httpx.AsyncClient(timeout=15.0) as client:
                     resp = await client.post(url, json=payload)
                     resp.raise_for_status()
                     data = resp.json()
@@ -164,6 +165,10 @@ class DriftShield:
                     if content.startswith("```"):
                         lines = content.split("\n")
                         content = "\n".join(lines[1:-1]) if len(lines) > 2 else content
+                    import re
+                    json_match = re.search(r"\{.*\}", content, re.DOTALL)
+                    if json_match:
+                        content = json_match.group(0)
                     result = json.loads(content)
                     return bool(result.get("is_injection")) and result.get("confidence", 0.0) > 0.85
             except Exception as e:
@@ -189,12 +194,12 @@ class DriftShield:
                     )
                 )
 
-        from m2_2_gemma.queue import enqueue_inference
         try:
+            from m2_2_gemma.queue import enqueue_inference
             return await asyncio.wait_for(
                 enqueue_inference(priority=1, fn=_run_request, tag="drift_audit"),
-                timeout=8.0
+                timeout=18.0
             )
         except asyncio.TimeoutError:
-            logger.warning("[M2.3] Semantic audit timed out in priority queue/execution (8s limit)")
+            logger.warning("[M2.3] Semantic audit timed out in priority queue/execution (18s limit)")
             return False

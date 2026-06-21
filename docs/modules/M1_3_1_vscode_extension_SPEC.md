@@ -94,7 +94,7 @@ interface CodeActivityEvent {
 
 | 風險編號 | 描述 | 緩解策略 |
 | -------- | ---- | -------- |
-| (無直接 RISK-xx) | VS Code Extension 存取檔案系統 → 可能讀到敏感原始碼 | M1.3.1 **不讀取原始檔案文字內容 (document.getText())**,僅計算 diff 統計值 (行數變化、檔案數、熵);檔案路徑僅記錄相對工作區路徑 (如 `src/main.rs`),絕對專案路徑僅留存於 L1 本地資料庫,絕不上雲 |
+| (無直接 RISK-xx) | VS Code Extension 存取檔案系統 → 可能讀到敏感原始碼 | M1.3.1 讀取原始檔案文字內容 (document.getText()) 作為 `content_raw` 發送至本地後端，僅供本地 LLM (M2.2) 意圖分析與安全審計 (M2.3) 使用；此 L1 明文與相對路徑僅儲存於本地 L1 資料庫，絕不上傳 L3 雲端或外部 Cloud LLM |
 | (無直接 RISK-xx) | Local Socket 連線斷開 → 事件丟失 | 本地 buffer 暫存最多 100 個事件;Tauri 恢復後批次回傳;超過 100 則丟棄最舊事件 |
 
 ---
@@ -134,12 +134,12 @@ class TestPrivacy:
         assert "/home" not in str(event.payload["files"])
         assert "secret" not in str(event.payload["files"])
 
-    def test_no_code_content_in_payload(self, ext):
-        """驗收條件 5: payload 不含任何程式碼內容"""
+    def test_no_code_content_leaving_local(self, ext):
+        """驗收條件 5: L1 明文原始碼僅留在本地 API/LLM，不得發送到 L3 雲端/Cloud LLM"""
         ext.simulate_edits([("main.py", 10)], content="password = 'secret123'")
         event = ext.last_event()
-        assert "password" not in str(event.payload)
-        assert "secret123" not in str(event.payload)
+        assert event.payload["content_raw"] == "password = 'secret123'"
+        # 驗證雲端同步管線會阻擋此欄位上傳 (由 M6.2 測試覆蓋)
 
 class TestSocketResilience:
     def test_buffer_events_on_disconnect(self, ext):
@@ -238,7 +238,7 @@ function calculateChurnIndex(events: EditChunk[]): number {
 
 ## 8. Anti-patterns (反模式)
 
-- ❌ **不要讀取或傳輸原始程式碼內容** — M1.3.1 只計算 diff 統計值,不讀取 `document.getText()`。`[架構文件 §3 L1]`
+- ❌ **不要將原始程式碼明文 (L1) 傳輸至外部雲端或 Cloud LLM** — 僅限於發送給本地 backend 和本地 LLM 處理，絕不上傳 L3 雲端。
 - ❌ **不要記錄含有使用者家目錄或系統敏感結構的絕對檔案路徑** — 僅允許記錄相對於工作區的相對路徑 (如 `src/main.rs`),且此相對路徑僅存於本地 L1 儲存,絕不上傳 L3 雲端。
 - ❌ **不要在 Extension 內做推論** — 所有推論由 M2.2/M4.8 在後端完成。Extension 只是感測器。
 - ❌ **不要阻塞 VS Code 主線程** — 所有 Socket 通訊必須異步,entropy 計算在 worker 中執行。

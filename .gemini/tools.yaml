@@ -1,0 +1,26 @@
+kind: source
+name: coos-db
+type: sqlite
+database: C:/Users/chent/Desktop/我的資料夾/學校/大學/三下/生成式人工智慧導論/coOS/data/coos.db
+
+---
+kind: tool
+name: execute_sql
+type: sqlite-execute-sql
+source: coos-db
+description: Execute raw SQL statements on the coos.db SQLite database (supports both read and write queries).
+
+---
+kind: tool
+name: list_tables
+type: sqlite-sql
+source: coos-db
+description: List all tables in the SQLite database.
+statement: SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'
+
+---
+kind: toolset
+name: coos-db-toolset
+tools:
+  - execute_sql
+  - list_tables

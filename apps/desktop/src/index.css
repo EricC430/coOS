@@ -423,6 +423,9 @@ body {
   flex-direction: column;
   gap: 12px;
   padding: 16px 20px;
+  flex: 1;
+  height: 100%;
+  min-height: 0;
 }
 
 .context-role-title {
@@ -445,6 +448,8 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   gap: 12px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .context-slot {
@@ -452,6 +457,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-height: 0;
 }
 
 .context-slot-label {
@@ -474,6 +480,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: 0;
+  overflow: auto;
 }
 
 .dashboard-title {
@@ -1146,3 +1154,96 @@ body {
 [data-theme="dark"] .system-event-hint-inline {
   color: var(--text-muted);
 }
+
+/* ---------- Markdown Styles for Chat Message Bubble ---------- */
+.chat-markdown {
+  word-break: break-word;
+}
+.chat-markdown p {
+  margin-bottom: 0.5em;
+}
+.chat-markdown p:last-child {
+  margin-bottom: 0;
+}
+.chat-markdown h1, .chat-markdown h2, .chat-markdown h3, .chat-markdown h4 {
+  font-weight: 700;
+  margin-top: 0.8em;
+  margin-bottom: 0.4em;
+  color: inherit;
+}
+.chat-markdown h1 { font-size: 1.4em; }
+.chat-markdown h2 { font-size: 1.25em; }
+.chat-markdown h3 { font-size: 1.1em; }
+.chat-markdown ul, .chat-markdown ol {
+  margin-top: 0.4em;
+  margin-bottom: 0.4em;
+  padding-left: 1.4em;
+}
+.chat-markdown ul {
+  list-style-type: disc;
+}
+.chat-markdown ol {
+  list-style-type: decimal;
+}
+.chat-markdown li {
+  margin-bottom: 0.2em;
+}
+.chat-markdown code {
+  font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+  background: rgba(0, 0, 0, 0.08);
+  padding: 0.15em 0.3em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: var(--coral-accent, #e76f51);
+}
+[data-theme="dark"] .chat-markdown code {
+  background: rgba(255, 255, 255, 0.12);
+  color: #f4a261;
+}
+.chat-markdown pre {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  padding: 10px 14px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 8px;
+  overflow-x: auto;
+  border: 1px solid var(--glass-border);
+}
+.chat-markdown pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.85em;
+  color: inherit;
+}
+.chat-markdown blockquote {
+  border-left: 3px solid var(--gold-accent);
+  padding-left: 10px;
+  margin: 0.5em 0;
+  color: var(--text-secondary);
+}
+
+/* ============================================================
+   M3.3.4 -- ClockwheelNav
+   Analogue: homepage carousel-arc peeks up from bottom.
+   Here the large clock disc peeks in from the LEFT edge.
+   The host must clip so only the right arc of the disc is visible.
+   ============================================================ */
+.clockwheel-host {
+  position: relative;
+  overflow: hidden; /* clips the protruding disc that extends left off-screen */
+}
+
+/* Faint warm glow emanating from the left arc peek-in zone */
+.clockwheel-host::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 80px;
+  background: radial-gradient(ellipse at left, var(--role-glow) 0%, transparent 70%);
+  z-index: 0;
+}
+

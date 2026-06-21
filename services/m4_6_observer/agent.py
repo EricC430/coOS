@@ -101,6 +101,7 @@ async def _do_extraction(
     persona_id: str = "",
     current_active_project: str | None = None,
     expert_name: str | None = None,
+    assistant_msg: str = "",
 ) -> ObserverResult:
     """執行所有萃取步驟。慢/失敗的子步驟不應拖垮整體（由上層 timeout 守護）。"""
     result = ObserverResult(role_id=role_id)
@@ -112,6 +113,7 @@ async def _do_extraction(
         current_active_project=current_active_project,
         source="chat",
         expert_name=expert_name,
+        thread_id=thread_id,
     )
 
     # 2. 意圖萃取
@@ -141,7 +143,9 @@ async def _do_extraction(
         # Goal detector might need the conversation history or just user intent.
         # In this MVP, we pass empty string for assistant_msg or skip if not available.
         result.goal_established = await detect_goal_establishment(
-            user_msg, "", thread_id, role_id, persona_id, existing_goals, gemma, eguard, db, sse
+            user_msg, assistant_msg, thread_id, role_id, persona_id,
+            existing_goals, gemma, eguard, db, sse,
+            expert_name=expert_name,
         )
 
     return result
@@ -159,6 +163,7 @@ async def run_observer(
     timeout: float = OBSERVER_TIMEOUT_SECS,
     current_active_project: str | None = None,
     expert_name: str | None = None,
+    assistant_msg: str = "",
 ) -> ObserverResult:
     """
     一次性背景萃取入口。
@@ -171,6 +176,7 @@ async def run_observer(
                 gemma=gemma, thread_id=thread_id, persona_id=persona_id,
                 current_active_project=current_active_project,
                 expert_name=expert_name,
+                assistant_msg=assistant_msg,
             ),
             timeout=timeout,
         )

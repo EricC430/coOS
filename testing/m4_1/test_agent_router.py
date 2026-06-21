@@ -283,7 +283,7 @@ class TestM4_1_1_ConfidenceRouting:
 
         async def fake_call_cloud_llm(prompt: str, task_difficulty: str) -> str:
             captured["prompt"] = prompt
-            return "cs_mentor"
+            return "0"
 
         with patch("m4_1_router.routing_engine.call_cloud_llm_with_fallback", fake_call_cloud_llm):
             asyncio.run(
@@ -295,6 +295,63 @@ class TestM4_1_1_ConfidenceRouting:
             )
         assert "我的程式碼有 bug" not in str(captured.get("prompt", ""))
         assert "intent" in str(captured.get("prompt", "")).lower()
+
+    def test_llm_route_falls_back_to_general_for_unrelated_queries(self):
+        """Verify that llm_route returns tool_ai_default when the LLM routes to 'general' or 'none'"""
+        captured = {}
+
+        async def fake_call_cloud_llm(prompt: str, task_difficulty: str) -> str:
+            captured["prompt"] = prompt
+            return "general"
+
+        with patch("m4_1_router.routing_engine.call_cloud_llm_with_fallback", fake_call_cloud_llm):
+            decision = asyncio.run(
+                __import__("m4_1_router.routing_engine", fromlist=["llm_route"]).llm_route(
+                    intent_vector={"intent_label": "mathematical_concept_query"},
+                    active_experts=MOCK_EXPERTS,
+                    role_id="role_csie",
+                )
+            )
+        assert decision.persona_id == "tool_ai_default"
+        assert decision.route_reason == "llm_primary:general"
+        prompt_content = captured.get("prompt", "")
+        assert "微積分" in prompt_content
+        assert "程式" in prompt_content
+
+    def test_llm_route_index_based_routing_with_multiple_study_experts(self):
+        """Verify that llm_route avoids domain ambiguity by correctly using the index returned by the LLM"""
+        study_experts = [
+            {"id": "expert_zhiming", "name": "志明", "domain": "study", "domain_keywords": ["計算機結構"]},
+            {"id": "expert_hongxuan", "name": "宏軒", "domain": "study", "domain_keywords": ["微積分"]},
+        ]
+        
+        async def fake_call_0(prompt: str, task_difficulty: str) -> str:
+            return "0"
+
+        with patch("m4_1_router.routing_engine.call_cloud_llm_with_fallback", fake_call_0):
+            decision = asyncio.run(
+                __import__("m4_1_router.routing_engine", fromlist=["llm_route"]).llm_route(
+                    intent_vector={"intent_label": "computer_arch"},
+                    active_experts=study_experts,
+                    role_id="role_csie",
+                )
+            )
+        assert decision.persona_id == "expert_zhiming"
+        assert decision.route_reason == "llm_primary:study"
+
+        async def fake_call_1(prompt: str, task_difficulty: str) -> str:
+            return "[1]"
+
+        with patch("m4_1_router.routing_engine.call_cloud_llm_with_fallback", fake_call_1):
+            decision = asyncio.run(
+                __import__("m4_1_router.routing_engine", fromlist=["llm_route"]).llm_route(
+                    intent_vector={"intent_label": "calculus"},
+                    active_experts=study_experts,
+                    role_id="role_csie",
+                )
+            )
+        assert decision.persona_id == "expert_hongxuan"
+        assert decision.route_reason == "llm_primary:study"
 
 
 # ===========================================================================

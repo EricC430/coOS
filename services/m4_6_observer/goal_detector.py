@@ -33,6 +33,7 @@ async def detect_goal_establishment(
     eguard: Any,
     db: Any,
     sse: Any,
+    expert_name: str | None = None,
 ) -> dict | None:
     """
     判斷對話是否確立新核心目標；若有且不與既有 active goals 重複 -> 寫入 goals 表。
@@ -70,5 +71,31 @@ async def detect_goal_establishment(
         title=title,
         description=result.get("description", ""),
     )
-    await sse.emit("GOAL_CONFIRMED", {"title": title, "persona_id": persona_id})
+    try:
+        import uuid
+        payload = {
+            "type": "GOAL_CONFIRMED",
+            "title": title,
+            "persona_id": persona_id,
+        }
+        if expert_name:
+            payload["expert_name"] = expert_name
+        await db.execute(
+            "INSERT INTO chat_transcripts (id, thread_id, persona_id, role, content, role_id) "
+            "VALUES (:id, :tid, :pid, 'system_event', :content, :rid)",
+            {
+                "id": str(uuid.uuid4()),
+                "tid": thread_id,
+                "pid": persona_id,
+                "content": json.dumps(payload, ensure_ascii=False),
+                "rid": role_id,
+            }
+        )
+    except Exception as ex:
+        logger.warning("[M4.6] Failed to insert goal system_event to chat_transcripts: %s", ex)
+
+    sse_payload = {"title": title, "persona_id": persona_id}
+    if expert_name:
+        sse_payload["expert_name"] = expert_name
+    await sse.emit("GOAL_CONFIRMED", sse_payload)
     return {"title": title, "description": result.get("description", "")}

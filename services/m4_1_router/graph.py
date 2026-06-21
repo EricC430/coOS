@@ -75,15 +75,14 @@ async def _tool_ai_reply_gemini(
         history_block = "\n".join(lines)
 
     system_prompt = (
-        "你是 coOS 系統的工具型助理 AI，你的任務是透過對話幫使用者釐清他的目標與方向。\n"
-        "風格要求：口語、簡短（1~2句）、不說廢話、不用條列式、像真人朋友聊天。\n"
-        "絕對禁止：不要說「都可以」、「隨時」、「歡迎」這類廢話結尾。\n"
-        "每次只問一個具體問題，推動對話往更具體的方向走。\n\n"
-        "【配對判斷規則】\n"
-        f"系統目前有這些專家可以配對：{expert_list_str}\n"
-        "當你判斷使用者的需求已經足夠具體（例如：已知道要找哪方面工作、有明確學習目標、"
-        "有具體專案要做），請在回應的最後單獨一行輸出 [SUGGEST_MATCH]。\n"
-        "若使用者還在摸索方向，繼續對話引導，不要輸出這個標記。"
+        "你是 coOS 系統的工具型助理 AI。你的任務是提供客觀、中立、詳盡且專業的解答，協助使用者解決問題或釐清目標。\n"
+        "回答風格：不要帶有任何特定角色口氣或人設背景。不需要以口語化的真人朋友方式聊天，也不必簡短限制在1~2句。請直接、完整、詳盡地回答使用者的提問，可以使用段落、程式碼區塊或條列式整理，以提供最完整實用的資訊為唯一目的。\n\n"
+        "【專家建議配對規則】\n"
+        f"系統目前有這些專家可供配對：{expert_list_str}\n"
+        "如果使用者的問題或目前對話主題，與上述某個專家的專業範疇高度契合（例如：使用者想討論演算法/微積分，而系統有對應學長/專家；或者使用者需要心理諮商，而系統有諮商師），"
+        "請在回答的最末端，另起新行附上專家配對建議提示。注意：這個提示必須是你回答的最後一句話，並且格式必須完全一致為：\n"
+        "💡 偵測到與您對話主題相關的專家職責，建議您點擊下方「配對」按鈕，與我們的專家【專家姓名】進行深入對話。\n"
+        "如果不適合配對任何現有專家，則不需要在最末端附上任何建議提示。"
     )
 
     # 組合 prompt（帶歷史）
@@ -92,15 +91,15 @@ async def _tool_ai_reply_gemini(
         f"SYSTEM:\n{system_prompt}"
         f"{history_section}\n"
         f"使用者：{user_msg}\n"
-        f"助理（繁體中文，1~2句，口語）："
+        f"助理（繁體中文，詳細、中立、專業）："
     )
 
     last_err: Exception | None = None
     for model in (PERSONA_MODEL, PERSONA_MODEL_FALLBACK):
         try:
             client = get_cloud_llm_client(model)
-            raw = await client.complete(full_prompt, max_output_tokens=150, temperature=0.7)
-            suggest_match = "[SUGGEST_MATCH]" in raw
+            raw = await client.complete(full_prompt, max_output_tokens=1000, temperature=0.7)
+            suggest_match = "[SUGGEST_MATCH]" in raw or "💡 偵測到" in raw or "建議您" in raw
             reply = raw.replace("[SUGGEST_MATCH]", "").strip()
             return reply, suggest_match
         except (RateLimitError, ServiceUnavailableError) as e:
@@ -191,8 +190,8 @@ async def invoke_persona_node(state: RouterState) -> RouterState:
     # [Observer] 非同步派發，不阻塞主流程
     asyncio.create_task(_dispatch_observer_bg(state))
 
-    # [Tool AI path] 呼叫 Gemini 生成真實對話 + 偵測配對時機
-    if not persona_id or persona_id == "tool_ai_default":
+    is_tool_ai = not persona_id or persona_id == "tool_ai_default" or persona_id.startswith("tool_ai_")
+    if is_tool_ai:
         history = state.get("chat_history") or []
         reply, suggest_match = await _tool_ai_reply_gemini(user_msg, active_experts, history)
         return {**state, "persona_response": reply, "suggest_match": suggest_match}

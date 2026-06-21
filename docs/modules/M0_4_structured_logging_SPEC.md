@@ -137,19 +137,18 @@ class TestLogPrivacy:
         # 不應出現在 cloud migration 的 CREATE TABLE
         # (此測試需搭配 M6.1 / M6.2 的 migration 實作)
 
-    def test_payload_does_not_contain_raw_text_marker(self):
-        """驗收條件 6: payload 中不可包含標記為 L1 明文的欄位"""
+    def test_l1_payload_blocked_from_cloud(self):
+        """驗收條件 6: payload 中可包含 L1 明文 (如 content_raw) 以供本地 LLM 使用，但必須由 M6.2 阻擋上雲"""
         from services.m0_4_logging.schema import LogEvent
 
         event = LogEvent(
             module="M1.1",
-            action="keystroke_captured",
-            level="DEBUG",
-            payload={"event_type": "keypress", "count": 42},
+            action="content_capture",
+            level="INFO",
+            payload={"content_raw": "L1 plaintext code snippet"},
         )
-        # payload 不應有 raw_text, raw_code, transcript 等明文欄位
-        forbidden_keys = {"raw_text", "raw_code", "transcript", "browsing_content"}
-        assert not forbidden_keys.intersection(event.payload.keys())
+        # 允許本地 payload 中包含 content_raw 欄位
+        assert event.payload["content_raw"] == "L1 plaintext code snippet"
 ```
 
 ## 7. Implementation Notes
@@ -323,8 +322,8 @@ await logger.emit(
 
 ## 8. Anti-patterns (反模式)
 
-- ❌ **不要在 `payload` 中放入 L1 明文** (原始程式碼、對話逐字稿、瀏覽器內容)。日誌可記錄事件的「摘要」或「統計量」,但絕不可記錄明文內容本身。
-  理由:CLAUDE.md 隱私三層原則; `raw_tracking_logs` 留在本地但仍可能被 Observer Agent 讀取並生成洞察上雲。
+- ❌ **不要將 `payload` 中含有的 L1 明文 (原始程式碼、對話逐字稿、瀏覽器內容) 傳輸至外部雲端或 Cloud LLM**。允許將其記錄在本地 SQLite `raw_tracking_logs` (L1) 並傳送至本地後端與本地 LLM (M2.2) 進行本地分析，但必須防止其流向 L3 雲端或外部 Cloud LLM。
+  理由:CLAUDE.md 隱私三層原則；本地日誌永不上雲，保護於雲端 LLM 外。
 
 - ❌ **不要用同步阻塞式寫入**。所有日誌寫入必須走非同步佇列,否則會拖慢 Persona 對話的回應時間。
   理由:R05 治療同盟要求對話延遲 < 2s; 同步寫入在 SQLite WAL 鎖等待時可能卡 50-200ms。

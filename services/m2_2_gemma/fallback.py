@@ -19,13 +19,34 @@ from config import get_settings
 logger = logging.getLogger(__name__)
 
 DEFAULT_INTENT_KEYWORDS: dict[str, str] = {
-    r"debug|error|exception|traceback|fix": "debugging_session",
-    r"calculus|integral|derivative|math|homework": "math_study",
-    r"test|pytest|unittest|assert": "testing_activity",
-    r"sql|database|db|query|migration": "database_development",
-    r"read|doc|reference|mdn|stack": "documentation_reading",
-    r"commit|push|pull|merge|git": "version_control_activity",
-    r"write|essay|report|draft": "writing_task",
+    # --- Debugging / Error fixing (highest priority — matches error signals first) ---
+    r"debug|traceback|exception|fix bug|undefined|null pointer|segfault|stack trace": "debugging_session",
+    # --- Code writing / development (broad coding patterns) ---
+    r"\bimport\b|\bdef\b|\bclass\b|\bfunction\b|\bconst\b|\bvoid\b|\breturn\b": "code_writing",
+    r"coding|programming|implement|refactor|scaffold|boilerplate|snippet": "code_writing",
+    r"\.py\b|\.ts\b|\.tsx\b|\.js\b|\.rs\b|\.go\b|\.java\b|\.cpp\b|\.c\b": "code_writing",
+    r"vscode|cursor|jetbrains|vim|neovim|emacs|editor|ide": "code_writing",
+    # --- Testing ---
+    r"test|pytest|unittest|vitest|jest|assert|mock|fixture|coverage": "testing_activity",
+    # --- Math / academic study ---
+    r"calculus|integral|derivative|riemann|differential|gradient|eigenvalue": "math_study",
+    r"積分|微分|極限|矩陣|線代|微積分|期末考|數學|統計": "math_study",
+    # --- Database / SQL ---
+    r"sql|database|db|query|migration|schema|orm|sqlalchemy|prisma": "database_development",
+    # --- Documentation / reading ---
+    r"readme|doc|reference|mdn|stackoverflow|wiki|spec|rfc": "documentation_reading",
+    # --- Version control ---
+    r"commit|push|pull request|merge|rebase|branch|git|github|gitlab": "version_control_activity",
+    # --- Writing / essay ---
+    r"write|essay|report|draft|thesis|outline|paragraph": "writing_task",
+    # --- API / network ---
+    r"api|endpoint|rest|graphql|grpc|websocket|http|fetch|axios|curl": "api_development",
+    # --- DevOps / infra ---
+    r"docker|kubernetes|k8s|deploy|ci/cd|pipeline|nginx|cloud|terraform": "devops_activity",
+    # --- Design / UI ---
+    r"figma|wireframe|prototype|ui|ux|design|layout|tailwind|css": "design_activity",
+    # --- General error (lower priority fallback) ---
+    r"error|fail|crash|broken|wrong|invalid": "debugging_session",
 }
 
 DEFAULT_FRUSTRATION_SIGNALS: dict[str, float] = {

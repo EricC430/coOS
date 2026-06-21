@@ -19,6 +19,7 @@ PII_PATTERNS: dict[str, re.Pattern] = {
     ),
     "API_KEY_GOOGLE": re.compile(r"\bAIzaSy[A-Za-z0-9_-]{33}\b"),
     "CREDIT_CARD": re.compile(r"\b(?:\d[ -]*?){13,16}\b"),
+    "TAIWAN_ID": re.compile(r"\b[A-Z][12]\d{8}\b"),
     "GENERIC_SECRET": re.compile(
         r"(?i)(?:secret|token|password|passwd|api[_-]?key)\s*[=:]\s*\S+"
     ),

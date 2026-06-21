@@ -63,8 +63,8 @@
 | 風險編號 | 描述 | 緩解策略 |
 | -------- | ---- | -------- |
 | (無直接 RISK-xx) | 瀏覽器擴充權限過度 → 使用者拒絕安裝 | 僅申請 `tabs` 與 `idle` 權限；不申請 `<all_urls>` 或 `webRequest` |
-| (無直接 RISK-xx) | URL 含敏感資訊 (如 email subject, token) → 隱私洩漏 | **不記錄 URL 敏感參數**；僅擷取 domain (如 `youtube.com`) 與過濾參數後的相對路徑（如 `/issues/1`）；且僅保留在本地 L1，絕不上傳雲端 |
-| RISK-15 | 若 Opt-in 模式開啟，頁面標題與擷取之內文可能含敏感資訊 | 標題與內文記錄遵循 M1.1 的 `CaptureConsent` 機制，全數限於 L1 本地資料庫儲存，絕不上傳 L3 雲端；未授權時僅能記錄 domain_bucket 與 domain |
+| (無直接 RISK-xx) | URL 含敏感資訊 (如 email subject, token) → 隱私洩漏 | **不記錄 URL 敏感參數**；僅擷取 domain (如 `youtube.com`) 與過濾參數後的相對路徑（如 `/issues/1`）；且僅保留在本地 L1/L2 以進行本地分析，絕不上傳雲端 |
+| RISK-15 | 若 Opt-in 模式開啟，頁面標題與擷取之內文可能含敏感資訊 | 標題與內文記錄遵循 M1.1 的 `CaptureConsent` 機制，全數限於 L1 本地，允許發送給本地後端及本地 LLM，絕不上傳至 L3 雲端或外部 Cloud LLM；未授權時僅能記錄 domain_bucket 與 domain |
 
 ---
 
@@ -213,7 +213,7 @@ function getCleanPathAndDomain(urlStr) {
 
 - ❌ **不要記錄或上傳完整帶有敏感引數的 URL 至 L3 雲端** — 只能在本地 L1/L2 層級記錄 domain、網頁標題與過濾掉 Query string/Hash 的純淨相對路徑（如 `/issues/1`）。
 - ❌ **不要申請 `<all_urls>` 權限** — 僅需 `tabs`、`idle` 權限。過度權限會被使用者拒絕且違反最小權限原則。
-- ❌ **不要在沒有 Opt-in 授權下讀取頁面 DOM 內容** — 未開啟 `content_capture` 時不得注入 Content Script。若使用者 Opt-in 開啟，則允許在本地安全擷取網頁主體文字（不含輸入欄位與密碼）用作本機摘要，且嚴禁傳離本地。
+- ❌ **不要在沒有 Opt-in 授權下讀取頁面 DOM 內容** — 未開啟 `content_capture` 時不得注入 Content Script。若使用者 Opt-in 開啟，則允許在本地安全擷取網頁主體文字（不含輸入欄位與密碼）並發送至本地 API/本地 LLM，但嚴禁發送至雲端儲存或外部 Cloud LLM。
 - ❌ **不要在 Incognito 模式下運作** — 即使使用者勾選允許，也絕不在隱私模式記錄。
 
 ---
