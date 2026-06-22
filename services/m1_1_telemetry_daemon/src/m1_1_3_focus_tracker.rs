@@ -18,16 +18,22 @@ pub struct FocusTracker {
     current_bucket: AppBucket,
     session_start: Instant,
     last_activity: Instant,
-    last_heartbeat: Instant,
+    pub last_heartbeat: Instant,
     last_secondary_scan: Instant,
     app_switch_count_5min: u32,
     switch_window_start: Instant,
-    scroll_events_per_min: u32,
-    page_stay_avg_s: f32,
+    pub scroll_events_per_min: u32,
+    pub page_stay_avg_s: f32,
     is_entertainment: bool,
     is_meeting_app: bool,
     is_media_app: bool,
     is_fullscreen: bool,
+    // Rate tracking fields
+    total_scroll_events: u32,
+    page_visit_count: u32,
+    last_window_title: String,
+    // Behavioural State tracking
+    current_state: ActivityState,
 }
 
 impl FocusTracker {
@@ -48,6 +54,55 @@ impl FocusTracker {
             is_meeting_app: false,
             is_media_app: false,
             is_fullscreen: false,
+            total_scroll_events: 0,
+            page_visit_count: 0,
+            last_window_title: String::new(),
+            current_state: ActivityState::Active,
+        }
+    }
+
+    /// Record tick activity (scroll count, window title, and fullscreen state)
+    pub fn record_tick(&mut self, scrolls: u32, window_title: &Option<String>, is_fullscreen: bool) {
+        self.total_scroll_events += scrolls;
+        self.is_fullscreen = is_fullscreen;
+        if scrolls > 0 {
+            self.record_activity();
+        }
+        if let Some(title) = window_title {
+            if title != &self.last_window_title {
+                self.page_visit_count += 1;
+                self.last_window_title = title.clone();
+            }
+        }
+    }
+
+    /// Evaluates current activity state and generates activity_state_changed if it changes.
+    pub fn tick_activity_state(&mut self, wpm_avg: f32) -> Option<TelemetryEvent> {
+        if self.current_app.is_empty() {
+            return None;
+        }
+
+        let elapsed_s = self.session_start.elapsed().as_secs();
+
+        // Dynamically compute current rates
+        if elapsed_s > 0 {
+            self.scroll_events_per_min = ((self.total_scroll_events as f32 / elapsed_s as f32) * 60.0) as u32;
+            self.page_stay_avg_s = elapsed_s as f32 / self.page_visit_count.max(1) as f32;
+        }
+
+        let new_state = self.classify_activity_state(elapsed_s, wpm_avg);
+        if new_state != self.current_state {
+            let prev_state = self.current_state.clone();
+            self.current_state = new_state.clone();
+
+            let payload = serde_json::json!({
+                "prev_state": prev_state,
+                "new_state": new_state,
+                "confidence": 0.85,
+            });
+            Some(TelemetryEvent::new("M1.1.3", "activity_state_changed", payload))
+        } else {
+            None
         }
     }
 
@@ -62,12 +117,23 @@ impl FocusTracker {
         mouse_distance_norm: f32,
     ) -> Option<TelemetryEvent> {
         let elapsed = self.session_start.elapsed();
-        let emit = if elapsed.as_secs() >= MIN_SESSION_DURATION_S && !self.current_app.is_empty() {
-            let state = self.classify_activity_state(elapsed.as_secs(), wpm_avg);
+        let elapsed_s = elapsed.as_secs();
+
+        // Calculate rate parameters before classification
+        if elapsed_s > 0 {
+            self.scroll_events_per_min = ((self.total_scroll_events as f32 / elapsed_s as f32) * 60.0) as u32;
+            self.page_stay_avg_s = elapsed_s as f32 / self.page_visit_count.max(1) as f32;
+        } else {
+            self.scroll_events_per_min = 0;
+            self.page_stay_avg_s = 0.0;
+        }
+
+        let emit = if elapsed_s >= MIN_SESSION_DURATION_S && !self.current_app.is_empty() {
+            let state = self.classify_activity_state(elapsed_s, wpm_avg);
             let payload = serde_json::json!({
                 "app_name": self.current_app,
                 "app_bucket": self.current_bucket,
-                "duration_s": elapsed.as_secs(),
+                "duration_s": elapsed_s,
                 "wpm_avg": wpm_avg,
                 "mouse_clicks": mouse_clicks,
                 "mouse_distance_norm": mouse_distance_norm,
@@ -95,8 +161,14 @@ impl FocusTracker {
         self.is_media_app = matches!(new_app.to_lowercase().trim_end_matches(".exe"),
             "wmplayer" | "vlc" | "mpchc" | "potplayer");
 
+        // Reset counters for the new session
+        self.total_scroll_events = 0;
+        self.page_visit_count = 0;
+        self.last_window_title = String::new();
+
         emit
     }
+
 
     /// [M1.1 SPEC §7.5] ActivityStateClassifier — eight-state multi-signal fusion.
     /// [R06: 數位表型 §2.1]
@@ -287,7 +359,7 @@ mod tests {
     #[test]
     fn test_classify_idle_after_5min() {
         // [R06 §2.1] No input for > 5 min → IDLE
-        let mut tracker = FocusTracker::new();
+        let tracker = FocusTracker::new();
         // Simulate 6 minutes of idle by setting last_activity far in the past
         // (We can't easily mock Instant, so we test the logic boundary directly)
         let state = tracker.classify_activity_state(360, 0.0);

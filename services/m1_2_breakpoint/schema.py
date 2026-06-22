@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 
 class BreakpointEvent(BaseModel):
-    type: Literal["app_switch", "idle_timeout", "wpm_drop", "ide_focus_leave"]
+    type: Literal["app_switch", "idle_timeout", "wpm_drop", "ide_focus_leave", "doom_scrolling"]
     confidence: float           # 0.0~1.0
     timestamp: str
     preceding_app: str = ""

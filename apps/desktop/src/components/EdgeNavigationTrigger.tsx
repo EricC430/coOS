@@ -9,7 +9,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
 
-type EdgeSide = "left" | "right" | "top";
+type EdgeSide = "left" | "right" | "top" | "bottom";
 
 interface Props {
   side: EdgeSide;
@@ -36,6 +36,11 @@ const VARIANTS: Record<EdgeSide, Variants> = {
     animate: { y: 0, opacity: 1 },
     exit: { y: -60, opacity: 0 },
   },
+  bottom: {
+    initial: { y: 60, opacity: 0 },
+    animate: { y: 0, opacity: 1 },
+    exit: { y: 60, opacity: 0 },
+  },
 };
 
 export function EdgeNavigationTrigger({
@@ -51,11 +56,13 @@ export function EdgeNavigationTrigger({
     (e: MouseEvent) => {
       const { clientX, clientY } = e;
       const w = window.innerWidth;
+      const h = window.innerHeight;
 
       let shouldShow = false;
       if (side === "left") shouldShow = clientX <= threshold;
       else if (side === "right") shouldShow = clientX >= w - threshold;
       else if (side === "top") shouldShow = clientY <= threshold;
+      else if (side === "bottom") shouldShow = clientY >= h - threshold;
 
       setVisible(shouldShow);
     },

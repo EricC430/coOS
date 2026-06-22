@@ -77,6 +77,10 @@ async fn main() {
             let is_foreground = win.app_name != "Unknown";
             debouncer.set_foreground_active(is_foreground);
 
+            // Drain scroll events and record them in FocusTracker along with window title and fullscreen state
+            let scrolls = debouncer.drain_scroll_count();
+            tracker.record_tick(scrolls, &win.window_title, win.is_fullscreen);
+
             // Apply CaptureMode policy — produces WindowCapture with optional content
             let capture = process_window(&win, &consent);
 
@@ -173,6 +177,12 @@ async fn main() {
         // M1.1.3: Heartbeat tick
         if let Some(hb) = tracker.tick_heartbeat() {
             emitter.emit(hb).await;
+            
+            // Re-classify and emit activity state transitions on the same 30s heartbeat interval
+            let wpm = debouncer.current_wpm();
+            if let Some(state_ev) = tracker.tick_activity_state(wpm) {
+                emitter.emit(state_ev).await;
+            }
         }
 
         // M1.1.3: Secondary window scan (EnumWindows every 30s)

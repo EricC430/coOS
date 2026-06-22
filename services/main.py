@@ -46,6 +46,7 @@ from m4_3_role_isolation.context import build_role_context
 
 # M4 / M6 integration imports
 from m4_3_role_isolation.middleware import RoleIsolationMiddleware
+from m4_13_community_engine.routes import router as m6_6_community_router
 from m6_2_postgresql.engine import get_cloud_engine, is_cloud_available
 from m6_5_acid_gatekeeper.gatekeeper import XPGatekeeper
 
@@ -68,6 +69,23 @@ def get_safe_user_id(request: Request) -> UUID:
         # Fallback to a zero-UUID if the configured ID is malformed
         logger.warning("[Auth] Malformed UUID detected: %s. Falling back to zero-UUID.", uid_str)
         return UUID("00000000-0000-0000-0000-000000000000")
+
+
+from dataclasses import dataclass, field as _dc_field
+
+
+@dataclass
+class DailyContext:
+    """
+    Snapshot context for daily report generation (M4.4.3).
+    Privacy split: local-only fields vs cloud-safe fields documented per attribute.
+    """
+    # L1 local-only: project names / goal titles / promise text
+    active_projects: list[dict] = _dc_field(default_factory=list)   # [{name, description}]
+    active_goals: list[dict] = _dc_field(default_factory=list)      # [{title, progress}]  progress=L3
+    due_promises: list[dict] = _dc_field(default_factory=list)      # [{text, deadline}]   text=L1
+    # intent_summaries: label=L2(telemetry)/L1(chat_digest), summary=L1
+    intent_summaries: list[dict] = _dc_field(default_factory=list)  # [{label, summary, source, mode}]
 
 
 class AsyncDBAdapter:
@@ -232,37 +250,178 @@ class AsyncDBAdapter:
 
     async def fetch_tracking_logs(self, user_id: str, role_id: str, for_date) -> list:
         """
-        [M4.4.3] 撈取特定日期的活動遙測記錄，供草稿生成器彙整。
+        [M4.4.3] 撈取特定日期的業務相關遙測記錄，供草稿生成器彙整。
         from_date = for_date 00:00 ~ for_date+1 00:00 (UTC)。
 
-        role_id 匹配策略（寬鬆）：
-        - 精確符合 role_id = :rid（來自對話或角色操作的 logs）
-        - role_id = 'default'（系統啟動/背景遙測，歸屬到當前角色）
-        - role_id IS NULL（早期記錄無角色歸屬）
-        - user_id IS NULL（跨 session 的系統 logs）
+        只撈取對日報有意義的 action 類型（決策表 2026-06-22）：
+          - focus_session_ended   : 主要活動時長 + app_bucket + activity_state
+          - content_capture       : content_summary（僅限本地 LLM，RISK-15）
+          - activity_state_changed: new_state 轉換訊號
+          - breakpoint_detected   : 認知負荷邊界訊號
+
+        排除：daemon_heartbeat / window_changed / keystroke_burst /
+              secondary_window_snapshot / tab_switch / privacy_assertion_*
         """
+        import json
         from datetime import timedelta
+        from types import SimpleNamespace
+
         date_start = str(for_date)
         date_end = str(for_date + timedelta(days=1))
-        rows = await self.fetch_all(
-            "SELECT id, payload FROM raw_tracking_logs "
-            "WHERE (user_id = :uid OR user_id IS NULL) "
-            "AND (role_id = :rid OR role_id = 'default' OR role_id IS NULL) "
-            "AND timestamp >= :ds AND timestamp < :de",
-            {"uid": user_id, "rid": role_id, "ds": date_start, "de": date_end},
+
+        _RELEVANT_ACTIONS = (
+            "focus_session_ended",
+            "content_capture",
+            "activity_state_changed",
+            "breakpoint_detected",
         )
-        import json
+        _role_filter = (
+            "AND (user_id = :uid OR user_id IS NULL) "
+            "AND (role_id = :rid OR role_id = 'default' OR role_id IS NULL) "
+            "AND timestamp >= :ds AND timestamp < :de "
+            "AND action = :action"
+        )
+
         result = []
-        for r in rows:
-            payload = r.get("payload")
-            if isinstance(payload, str):
-                try:
-                    payload = json.loads(payload)
-                except Exception:
-                    payload = {}
-            from types import SimpleNamespace
-            result.append(SimpleNamespace(id=r["id"], payload=payload or {}))
+        for action in _RELEVANT_ACTIONS:
+            rows = await self.fetch_all(
+                "SELECT id, action, timestamp, payload FROM raw_tracking_logs WHERE 1=1 "
+                + _role_filter
+                + " ORDER BY timestamp ASC",
+                {"uid": user_id, "rid": role_id, "ds": date_start, "de": date_end, "action": action},
+            )
+            for r in rows:
+                payload = r.get("payload")
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except Exception:
+                        payload = {}
+                result.append(SimpleNamespace(
+                    id=r["id"],
+                    action=r.get("action", action),
+                    timestamp=r.get("timestamp", ""),
+                    payload=payload or {},
+                ))
+
+        # Sort all signals chronologically
+        result.sort(key=lambda x: x.timestamp)
         return result
+
+    async def fetch_daily_context(self, user_id: str, role_id: str, for_date) -> "DailyContext":
+        """
+        [M4.4.3] Fetch snapshot context for report generation:
+          - role_projects (active, all -- not date-filtered; state-type data)
+          - goals         (active, up to 5)
+          - promises      (active, due on or before for_date+1, up to 5)
+          - intent_logs   (today's telemetry + chat_digest entries, up to 10)
+
+        Privacy routing:
+          - goals.title / promises.text are L1 -- local LLM only
+          - role_projects.name / intent_logs.intent_label / intent_logs.context_summary
+            from 'chat_digest' source are L1 -- local LLM only
+          - intent_logs.intent_label from 'telemetry' source is L2 -- cloud-safe
+          - goals.progress (numeric) and promises count are L3 -- cloud-safe
+        """
+        from datetime import timedelta
+
+        date_end = str(for_date + timedelta(days=1))
+
+        try:
+            projects_rows = await self.fetch_all(
+                "SELECT name, description, status FROM role_projects "
+                "WHERE role_id = :rid AND status = 'active' ORDER BY created_at ASC",
+                {"rid": role_id},
+            )
+        except Exception:
+            projects_rows = []
+
+        try:
+            goals_rows = await self.fetch_all(
+                "SELECT title, description, progress FROM goals "
+                "WHERE role_id = :rid AND status = 'active' ORDER BY created_at ASC LIMIT 5",
+                {"rid": role_id},
+            )
+        except Exception:
+            goals_rows = []
+
+        try:
+            promises_rows = await self.fetch_all(
+                "SELECT text, deadline FROM promises "
+                "WHERE role_id = :rid AND status = 'active' "
+                "AND (deadline IS NULL OR deadline < :de) "
+                "ORDER BY deadline ASC LIMIT 5",
+                {"rid": role_id, "de": date_end},
+            )
+        except Exception:
+            promises_rows = []
+
+        try:
+            intent_rows = await self.fetch_all(
+                "SELECT intent_label, context_summary, inference_mode, source_type "
+                "FROM intent_logs "
+                "WHERE role_id = :rid AND date(created_at) = :fordate "
+                "ORDER BY created_at DESC LIMIT 10",
+                {"rid": role_id, "fordate": str(for_date)},
+            )
+        except Exception:
+            intent_rows = []
+
+        def _row(r, key):
+            return r[key] if hasattr(r, "__getitem__") else getattr(r, key, None)
+
+        return DailyContext(
+            active_projects=[{"name": _row(r, "name"), "description": _row(r, "description")} for r in projects_rows],
+            active_goals=[{"title": _row(r, "title"), "progress": _row(r, "progress") or 0.0} for r in goals_rows],
+            due_promises=[{"text": _row(r, "text"), "deadline": _row(r, "deadline")} for r in promises_rows],
+            intent_summaries=[
+                {
+                    "label": _row(r, "intent_label"),
+                    "summary": _row(r, "context_summary"),
+                    "source": _row(r, "source_type") or "telemetry",
+                    "mode": _row(r, "inference_mode"),
+                }
+                for r in intent_rows
+            ],
+        )
+
+    async def fetch_role_anchor_map(self, user_id: str) -> dict[str, list[str]]:
+        """
+        [M4.4.4 / RISK-06] Build {role_id: [project_name, goal_title, ...]} for role
+        attribution inference. Each role's anchors come ONLY from that role's own
+        projects/goals -- no cross-role leakage.
+        """
+        anchor_map: dict[str, list[str]] = {}
+        try:
+            role_rows = await self.fetch_all(
+                "SELECT id FROM roles WHERE user_id = :uid AND is_active = 1",
+                {"uid": str(user_id)},
+            )
+            role_ids = [str(r["id"]) for r in role_rows]
+        except Exception:
+            return {}
+
+        for rid in role_ids:
+            anchors: list[str] = []
+            try:
+                proj = await self.fetch_all(
+                    "SELECT name FROM role_projects WHERE role_id = :rid AND status = 'active'",
+                    {"rid": rid},
+                )
+                anchors += [r["name"] for r in proj if r.get("name")]
+            except Exception:
+                pass
+            try:
+                goals = await self.fetch_all(
+                    "SELECT title FROM goals WHERE role_id = :rid AND status = 'active'",
+                    {"rid": rid},
+                )
+                anchors += [r["title"] for r in goals if r.get("title")]
+            except Exception:
+                pass
+            if anchors:
+                anchor_map[rid] = anchors
+        return anchor_map
 
     async def fetch_elicited_durations(self, user_id: str, role_id: str, for_date) -> list:
         """
@@ -322,23 +481,66 @@ class AsyncDBAdapter:
 
         segment_id = str(_uuid.uuid4())
         ai_description = kwargs.get("ai_description", "")
+        ai_description_generalized = kwargs.get("ai_description_generalized", "") or ai_description
+        title = kwargs.get("title", "")
+        title_generalized = kwargs.get("title_generalized", "") or title
         ai_analysis = kwargs.get("ai_analysis", "")
         activity_minutes = kwargs.get("activity_minutes", 0)
+        app_bucket = kwargs.get("app_bucket", "")
+        app_name = kwargs.get("app_name", "")
+        activity_state = kwargs.get("activity_state", "")
+        inference_mode = kwargs.get("inference_mode", "")
+
+        # Compute real start/end times from end_timestamp + duration_s.
+        # end_timestamp is ISO 8601 from raw_tracking_logs.timestamp (focus_session_ended).
+        # start_time = end_timestamp - duration_s; both stored as HH:MM for display.
+        end_timestamp_iso = kwargs.get("end_timestamp_iso", "")
+        start_time_str = "00:00"
+        end_time_str = "00:00"
+        if end_timestamp_iso:
+            try:
+                from datetime import timezone
+                import re as _re
+                # Normalise to UTC-aware datetime
+                _ts = end_timestamp_iso.rstrip("Z")
+                if "+" in _ts:
+                    _ts = _ts[:_ts.index("+")]
+                from datetime import datetime as _dt
+                _end_dt = _dt.fromisoformat(_ts).replace(tzinfo=timezone.utc)
+                end_time_str = _end_dt.strftime("%H:%M")
+                _dur_s = int(activity_minutes * 60)
+                from datetime import timedelta as _td
+                _start_dt = _end_dt - _td(seconds=_dur_s)
+                start_time_str = _start_dt.strftime("%H:%M")
+            except Exception:
+                pass  # leave 00:00 fallbacks; non-critical display field
 
         # Always use local SQLite schema — execute() routes daily_reflection_segments
         # to SQLite regardless of pg_engine, matching the local table list in is_local_table.
         await self.execute(
             "INSERT INTO daily_reflection_segments "
             "(id, reflection_id, user_id, role_id, start_time, end_time, "
-            "activity_minutes, ai_description, is_draft, is_reviewed) "
-            "VALUES (:id, :ref_id, :uid, :rid, '00:00', '00:00', :mins, :desc, 1, 0)",
+            "activity_minutes, app_bucket, app_name, activity_state, "
+            "title, title_generalized, ai_description, ai_description_generalized, "
+            "inference_mode, is_draft, is_reviewed) "
+            "VALUES (:id, :ref_id, :uid, :rid, :st, :et, :mins, :bucket, :app, :state, "
+            ":title, :title_g, :desc, :desc_g, :mode, 1, 0)",
             {
                 "id": segment_id,
                 "ref_id": reflection_id,
                 "uid": str(user_id),
                 "rid": str(role_id),
+                "st": start_time_str,
+                "et": end_time_str,
                 "mins": activity_minutes,
+                "bucket": app_bucket,
+                "app": app_name,
+                "state": activity_state,
+                "title": title,
+                "title_g": title_generalized,
                 "desc": ai_description,
+                "desc_g": ai_description_generalized,
+                "mode": inference_mode,
             }
         )
 
@@ -347,7 +549,9 @@ class AsyncDBAdapter:
             user_id=kwargs.get("user_id"),
             role_id=kwargs.get("role_id"),
             reflection_date=kwargs.get("reflection_date"),
+            title=title,
             ai_description=kwargs.get("ai_description"),
+            ai_description_generalized=ai_description_generalized,
             ai_analysis=kwargs.get("ai_analysis"),
             is_draft=True,
             is_reviewed=False,
@@ -474,6 +678,15 @@ async def lifespan(app: FastAPI):
             pass
         try:
             cursor.execute("ALTER TABLE git_watched_paths ADD COLUMN last_seen_hash TEXT")
+        except sqlite3.OperationalError:
+            pass
+        # [M1.2 domain settings] user-extensible work/entertainment domain lists
+        try:
+            cursor.execute("ALTER TABLE role_settings ADD COLUMN work_domains_extra TEXT DEFAULT '[]'")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            cursor.execute("ALTER TABLE role_settings ADD COLUMN entertainment_domains_extra TEXT DEFAULT '[]'")
         except sqlite3.OperationalError:
             pass
         _sqlite_conn.commit()
@@ -695,7 +908,14 @@ async def lifespan(app: FastAPI):
                 start_time      TEXT NOT NULL,
                 end_time        TEXT NOT NULL,
                 activity_minutes INTEGER DEFAULT 0,
+                app_bucket      TEXT,
+                app_name        TEXT,
+                activity_state  TEXT,
+                title           TEXT,
+                title_generalized TEXT,
                 ai_description  TEXT,
+                ai_description_generalized TEXT,
+                inference_mode  TEXT,
                 user_feeling    TEXT,
                 user_action_plan TEXT,
                 user_learned    TEXT,
@@ -741,10 +961,42 @@ async def lifespan(app: FastAPI):
                 intent_label    TEXT,
                 context_summary TEXT,
                 inference_mode  TEXT,
+                source_type     TEXT DEFAULT 'telemetry',
                 created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             )
         """)
         _sqlite_conn.commit()
+        # Schema migrations for existing databases: add new columns if absent.
+        _existing_seg_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(daily_reflection_segments)").fetchall()
+        }
+        for _col, _ddl in [
+            ("app_bucket",     "ALTER TABLE daily_reflection_segments ADD COLUMN app_bucket TEXT"),
+            ("app_name",       "ALTER TABLE daily_reflection_segments ADD COLUMN app_name TEXT"),
+            ("activity_state", "ALTER TABLE daily_reflection_segments ADD COLUMN activity_state TEXT"),
+            ("title",          "ALTER TABLE daily_reflection_segments ADD COLUMN title TEXT"),
+            ("title_generalized", "ALTER TABLE daily_reflection_segments ADD COLUMN title_generalized TEXT"),
+            ("ai_description_generalized", "ALTER TABLE daily_reflection_segments ADD COLUMN ai_description_generalized TEXT"),
+            ("inference_mode", "ALTER TABLE daily_reflection_segments ADD COLUMN inference_mode TEXT"),
+        ]:
+            if _col not in _existing_seg_cols:
+                try:
+                    cursor.execute(_ddl)
+                    _sqlite_conn.commit()
+                    logger.info("[lifespan] Migrated daily_reflection_segments: added %s", _col)
+                except Exception as _me:
+                    logger.warning("[lifespan] Migration skipped (%s): %s", _col, _me)
+
+        _existing_intent_cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(intent_logs)").fetchall()
+        }
+        if "source_type" not in _existing_intent_cols:
+            try:
+                cursor.execute("ALTER TABLE intent_logs ADD COLUMN source_type TEXT DEFAULT 'telemetry'")
+                _sqlite_conn.commit()
+                logger.info("[lifespan] Migrated intent_logs: added source_type")
+            except Exception as _me:
+                logger.warning("[lifespan] Migration skipped (source_type): %s", _me)
         logger.info("[lifespan] All local tables ensured and seeded.")
     except Exception as e:
         logger.warning("[lifespan] Failed to auto-create settings tables in SQLite: %s", e)
@@ -843,6 +1095,20 @@ async def lifespan(app: FastAPI):
     )
 
     _breakpoint_engine = BreakpointEngine()
+
+    # [M1.2] Load user-defined domain extras from role_settings and merge into engine
+    try:
+        _domain_rows = _sqlite_conn.execute(
+            "SELECT work_domains_extra, entertainment_domains_extra FROM role_settings LIMIT 1"
+        ).fetchone()
+        if _domain_rows:
+            import json as _json
+            _work_extras = _json.loads(_domain_rows[0] or "[]")
+            _ent_extras = _json.loads(_domain_rows[1] or "[]")
+            if _work_extras or _ent_extras:
+                _breakpoint_engine.update_domains(_work_extras, _ent_extras)
+    except Exception as _exc:
+        logger.warning("[M1.2] Could not load domain extras from DB at startup: %s", _exc)
 
     _gemma_pipeline = GemmaInferencePipeline(
         ai_local_host=settings.ai_local_host,
@@ -1130,6 +1396,9 @@ app.add_middleware(RoleIsolationMiddleware)
 # M1.4 routers
 app.include_router(m1_4_webhook_router)
 app.include_router(m1_4_oauth_router)
+
+# M4.13 / M6.6 community engine
+app.include_router(m6_6_community_router)
 
 
 # ---------------------------------------------------------------------------
@@ -1888,6 +2157,85 @@ async def update_app_whitelist(body: list[str], request: Request) -> dict[str, A
     return {"status": "success"}
 
 
+# --- M1.2 Domain Settings (work-group whitelist + entertainment list) ---
+
+class DomainSettings(BaseModel):
+    work_domains_extra: list[str] = []
+    entertainment_domains_extra: list[str] = []
+
+
+@app.get("/api/settings/domains")
+async def get_domain_settings(role_id: str, request: Request) -> dict[str, Any]:
+    """[M1.2] Return current domain lists (defaults + user extras) for a role.
+
+    Returns both the immutable defaults (read-only) and the user-editable extras
+    so the frontend can render a settings panel that shows what's fixed vs. customizable.
+    """
+    import uuid
+    try:
+        role_uuid = str(uuid.UUID(role_id))
+    except ValueError:
+        role_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, role_id))
+
+    row = await _db_adapter.fetch_one(
+        "SELECT work_domains_extra, entertainment_domains_extra FROM role_settings WHERE role_id = :rid",
+        {"rid": role_uuid},
+    )
+    work_extras: list[str] = json.loads(row["work_domains_extra"] or "[]") if row else []
+    ent_extras: list[str] = json.loads(row["entertainment_domains_extra"] or "[]") if row else []
+
+    from m1_2_breakpoint.breakpoint_engine import _WORK_DOMAINS, _ENTERTAINMENT_DOMAINS
+    return {
+        "work_domains_default": sorted(_WORK_DOMAINS),
+        "work_domains_extra": work_extras,
+        "entertainment_domains_default": sorted(_ENTERTAINMENT_DOMAINS),
+        "entertainment_domains_extra": ent_extras,
+    }
+
+
+@app.post("/api/settings/domains")
+async def update_domain_settings(
+    role_id: str, body: DomainSettings, request: Request
+) -> dict[str, Any]:
+    """[M1.2] Persist user-defined domain extras and apply them to the live engine.
+
+    work_domains_extra   — additional domains treated as work (no breakpoint on switch).
+    entertainment_domains_extra — additional domains counted towards doom scrolling.
+    Both lists are merged with immutable defaults; defaults cannot be removed.
+    """
+    import uuid
+    try:
+        role_uuid = str(uuid.UUID(role_id))
+    except ValueError:
+        role_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, role_id))
+
+    work_json = json.dumps([d.lower().strip() for d in body.work_domains_extra if d.strip()])
+    ent_json = json.dumps([d.lower().strip() for d in body.entertainment_domains_extra if d.strip()])
+
+    existing = await _db_adapter.fetch_one(
+        "SELECT id FROM role_settings WHERE role_id = :rid", {"rid": role_uuid}
+    )
+    if existing:
+        await _db_adapter.execute(
+            "UPDATE role_settings SET work_domains_extra = :w, entertainment_domains_extra = :e, "
+            "updated_at = (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) WHERE role_id = :rid",
+            {"rid": role_uuid, "w": work_json, "e": ent_json},
+        )
+    else:
+        await _db_adapter.execute(
+            "INSERT INTO role_settings (id, role_id, work_domains_extra, entertainment_domains_extra, "
+            "created_at, updated_at) VALUES (:id, :rid, :w, :e, "
+            "(strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))",
+            {"id": str(uuid.uuid4()), "rid": role_uuid, "w": work_json, "e": ent_json},
+        )
+
+    # Apply to live engine immediately — no restart needed
+    engine = _get_breakpoint_engine()
+    engine.update_domains(body.work_domains_extra, body.entertainment_domains_extra)
+
+    return {"status": "ok", "work_extras": body.work_domains_extra, "ent_extras": body.entertainment_domains_extra}
+
+
 # --- Google OAuth Stubs (L3 identity — future multi-device sync) ---
 # Architecture: Google OAuth token is only stored as a foreign key reference.
 # The google_id + google_email are stored in the LOCAL users table (L1).
@@ -2087,15 +2435,59 @@ async def m6_4_daily_timeline(request: Request, date: str, role_id: str | None =
                 {"rfid": str(r.get("id"))}
             )
             for s in segments:
+                # Prefer the LLM-generated high-level title (M4.4.3). Fall back to
+                # deriving from app_name / app_bucket / activity_state only when absent
+                # (legacy segments written before the title column existed).
+                _title = (s.get("title") or "").strip()
+                if not _title:
+                    _bucket = s.get("app_bucket") or ""
+                    _app = s.get("app_name") or ""
+                    _state = s.get("activity_state") or ""
+                    _bucket_labels: dict[str, str] = {
+                        "coding": "程式開發", "writing": "寫作創作",
+                        "reading": "閱讀研究", "communication": "溝通協作",
+                        "productivity": "生產力工具", "idle": "待機", "unknown": "其他應用",
+                    }
+                    _app_labels: dict[str, str] = {
+                        "antigravity.exe": "Antigravity IDE", "code.exe": "VS Code",
+                        "msedge.exe": "Microsoft Edge", "msedgewebview2.exe": "Microsoft Edge",
+                        "chrome.exe": "Chrome", "coos-desktop.exe": "coOS 桌面程式",
+                    }
+                    _state_labels: dict[str, str] = {
+                        "DEEP_FOCUS": "深度專注", "ACTIVE": "主動作業",
+                        "PASSIVE_CONSUMPTION": "被動接收", "DOOM_SCROLLING": "無意識滑動",
+                        "CONTEXT_SWITCHING": "頻繁切換", "RESEARCH_READING": "研究閱讀",
+                        "MEETING_CALL": "會議通話", "IDLE": "閒置",
+                    }
+                    # Prefer friendly app name over the useless "其他應用" bucket
+                    if _bucket and _bucket != "unknown":
+                        _blabel = _bucket_labels.get(_bucket, _bucket)
+                    elif _app:
+                        _blabel = _app_labels.get(_app.lower(), _app[:-4] if _app.lower().endswith(".exe") else _app)
+                    else:
+                        _blabel = _bucket_labels.get(_bucket, "")
+                    _slabel = _state_labels.get(_state, _state) if _state else ""
+                    if _blabel and _slabel:
+                        _title = f"{_blabel} · {_slabel}"
+                    elif _blabel:
+                        _mins = s.get("activity_minutes") or 0
+                        _title = f"{_blabel}（{_mins} 分鐘）" if _mins else _blabel
+                    else:
+                        _title = "未命名活動"
                 timeline.append({
                     "id": str(s.get("id")),
                     "roleId": rid,
                     "roleName": role_name,
-                    "title": s.get("project") or "未命名任務",
+                    "title": _title,
+                    "startTime": s.get("start_time") or "00:00",
+                    "endTime": s.get("end_time") or "00:00",
+                    "activityMinutes": s.get("activity_minutes") or 0,
                     "status": "completed" if s.get("is_reviewed") else "in_progress",
                     "reflection": {
                         "id": str(s.get("id")),
-                        "ai_description": s.get("ai_description"),
+                        # Local app: show the rich L1 description. ai_description_generalized
+                        # is the cloud-safe variant used by M6.2 sync (RISK-15).
+                        "ai_description": s.get("ai_description") or s.get("ai_description_generalized"),
                         "ai_analysis": s.get("ai_analysis"),
                         "user_feeling": s.get("user_feeling") or "",
                         "user_action_plan": s.get("user_action_plan") or "",
@@ -2107,6 +2499,184 @@ async def m6_4_daily_timeline(request: Request, date: str, role_id: str | None =
     except Exception as e:
         logger.warning("[daily_timeline] query failed: %s", e)
         return []
+
+
+@app.get("/api/m6_4/topic_groups")
+async def m6_4_topic_groups(request: Request, date: str, role_id: str | None = None) -> list[dict[str, Any]]:
+    """
+    Topic-grouped view of daily segments.
+
+    Uses Gemma edge LLM to scan all of the day's segments and cluster them by
+    semantic theme (e.g. "coOS 開發", "娛樂休閒", "學業"). Each group aggregates
+    cumulative duration and the segment IDs it contains.
+
+    [RISK-15] Only ai_description (L1, already de-identified by M4.4) and title
+    are sent to Gemma — never raw content_summaries or window titles.
+    Result is cached in daily_reflection_segments.topic_group column (if exists)
+    but computed fresh on demand if not stored.
+    """
+    user_id = get_safe_user_id(request)
+    if not _db_adapter:
+        return []
+
+    try:
+        refl_query = "SELECT * FROM daily_reflections WHERE user_id = :uid AND reflection_date = :rdate"
+        refl_params: dict[str, Any] = {"uid": str(user_id), "rdate": date}
+        if role_id:
+            refl_query += " AND role_id = :rid"
+            refl_params["rid"] = role_id
+        reflections = await _db_adapter.fetch_all(refl_query, refl_params)
+
+        role_rows = await _db_adapter.fetch_all(
+            "SELECT id, display_name FROM roles WHERE user_id = :uid",
+            {"uid": str(user_id)}
+        )
+        role_name_map = {str(r.get("id")): (r.get("display_name") or "未命名角色") for r in role_rows}
+
+        all_segments: list[dict[str, Any]] = []
+        for r in reflections:
+            rid = str(r.get("role_id") or "")
+            segs = await _db_adapter.fetch_all(
+                "SELECT * FROM daily_reflection_segments WHERE reflection_id = :rfid",
+                {"rfid": str(r.get("id"))}
+            )
+            for s in segs:
+                _title = (s.get("title") or "").strip()
+                if not _title:
+                    _title = friendly_app_name_main(s.get("app_name") or "") or s.get("app_bucket") or "活動"
+                all_segments.append({
+                    "id": str(s.get("id")),
+                    "roleId": rid,
+                    "roleName": role_name_map.get(rid, "未命名角色"),
+                    "title": _title,
+                    "ai_description": s.get("ai_description") or "",
+                    "start_time": s.get("start_time") or "00:00",
+                    "end_time": s.get("end_time") or "00:00",
+                    "activity_minutes": float(s.get("activity_minutes") or 0),
+                    "is_reviewed": bool(s.get("is_reviewed")),
+                    "inference_mode": s.get("inference_mode") or "template",
+                    "reflection": {
+                        "id": str(s.get("id")),
+                        "ai_description": s.get("ai_description") or s.get("ai_description_generalized"),
+                        "user_feeling": s.get("user_feeling") or "",
+                        "user_action_plan": s.get("user_action_plan") or "",
+                        "is_draft": s.get("is_draft", True),
+                        "is_reviewed": bool(s.get("is_reviewed")),
+                    }
+                })
+
+        if not all_segments:
+            return []
+
+        # Build Gemma prompt with ALL titles + descriptions (L1 already, safe for local LLM)
+        seg_lines = []
+        for i, s in enumerate(all_segments):
+            desc_snippet = (s["ai_description"] or "")[:80].replace("\n", " ")
+            seg_lines.append(f"[{i}] {s['title']} — {desc_snippet}")
+
+        prompt = (
+            "你是 coOS 日報主題分析助理。請將以下活動卡片分類到 3-7 個主題群組。\n"
+            "群組名稱應是 4-10 字的高層次中文主題（例如「coOS 專案開發」、「學術課業」、「娛樂休閒」、「資訊瀏覽」）。\n"
+            "每張卡片只能屬於一個群組。\n"
+            "輸出嚴格 JSON 格式：\n"
+            "{\"groups\": [{\"name\": \"群組名稱\", \"indices\": [0, 2, 5]}, ...]}\n"
+            "不要輸出任何其他文字。\n\n"
+            "活動卡片清單：\n" + "\n".join(seg_lines)
+        )
+
+        groups_raw: list[dict] = []
+        ai_local_host = settings.ai_local_host if settings else ""
+        if ai_local_host and _gemma_pipeline:
+            try:
+                from m4_4_elicitation.gibbs_template import _call_local_gemma
+                from config import settings as _cfg
+                gemma_model = getattr(_cfg, "gemma_model", "gemma-4-e4b-it-4bit")
+                raw = await _call_local_gemma(prompt, ai_local_host, model=gemma_model)
+                if raw:
+                    import json as _json, re as _re
+                    m = _re.search(r"\{.*\}", raw, _re.DOTALL)
+                    if m:
+                        data = _json.loads(m.group(0))
+                        groups_raw = data.get("groups", [])
+            except Exception as _ge:
+                logger.warning("[topic_groups] Gemma grouping failed: %s", _ge)
+
+        # Fallback: keyword-based semantic grouping when Gemma is unavailable.
+        # Uses title + ai_description keywords to assign each segment to a named bucket.
+        if not groups_raw:
+            _TOPIC_KEYWORDS: list[tuple[str, list[str]]] = [
+                ("coOS 專案開發", ["coos", "coOS", "antigravity", "ide", "開發", "程式", "debug",
+                                   "元件", "component", "資料庫", "sqlite", "前端", "後端",
+                                   "報告", "draft", "segment", "程式碼", "code", "vs code",
+                                   "測試", "test", "pipeline", "排查", "除錯"]),
+                ("學術課業",      ["課程", "作業", "考試", "學校", "成績", "大學", "微積分",
+                                   "ncu", "nccu", "eeclass", "ee-class", "課", "學期",
+                                   "hw", "homework", "quiz", "midterm", "final", "報告"]),
+                ("娛樂休閒",      ["youtube", "喜劇", "影片", "播客", "podcast", "節目",
+                                   "觀看", "comedy", "watching", "entertainment", "音樂",
+                                   "遊戲", "movie", "影音"]),
+                ("資訊研究",      ["hackathon", "黑客松", "ai", "research", "論文", "研究",
+                                   "技術", "transformer", "machine learning", "學習",
+                                   "多益", "toeic", "英文"]),
+                ("行政雜務",      ["email", "郵件", "信件", "行事曆", "calendar", "設定",
+                                   "系統", "lockapp", "天氣", "搜尋", "截圖"]),
+            ]
+
+            def _classify_segment(seg: dict) -> str:
+                text = (seg["title"] + " " + seg.get("ai_description", "")).lower()
+                best_group = "其他活動"
+                best_count = 0
+                for group_name, kws in _TOPIC_KEYWORDS:
+                    count = sum(1 for kw in kws if kw.lower() in text)
+                    if count > best_count:
+                        best_count = count
+                        best_group = group_name
+                return best_group
+
+            kw_groups: dict[str, list[int]] = {}
+            for i, s in enumerate(all_segments):
+                g_name = _classify_segment(s)
+                kw_groups.setdefault(g_name, []).append(i)
+            groups_raw = [{"name": name, "indices": idxs} for name, idxs in kw_groups.items()]
+
+        # Build output: each group gets its segments + cumulative minutes
+        result: list[dict[str, Any]] = []
+        for g in groups_raw:
+            name = g.get("name", "未分類")
+            indices = [i for i in g.get("indices", []) if 0 <= i < len(all_segments)]
+            if not indices:
+                continue
+            segs_out = [all_segments[i] for i in indices]
+            total_mins = sum(s["activity_minutes"] for s in segs_out)
+            result.append({
+                "groupName": name,
+                "totalMinutes": round(total_mins, 1),
+                "segments": segs_out,
+            })
+
+        return result
+    except Exception as e:
+        logger.warning("[topic_groups] query failed: %s", e)
+        return []
+
+
+def friendly_app_name_main(app_name: str) -> str:
+    """Local copy of friendly_app_name for use without importing gibbs_template."""
+    _labels = {
+        "antigravity.exe": "Antigravity IDE", "code.exe": "VS Code",
+        "msedge.exe": "Microsoft Edge", "msedgewebview2.exe": "Microsoft Edge",
+        "chrome.exe": "Chrome", "coos-desktop.exe": "coOS 桌面程式",
+        "windowsterminal.exe": "終端機", "powershell.exe": "PowerShell",
+    }
+    if not app_name:
+        return ""
+    key = app_name.strip().lower()
+    if key in _labels:
+        return _labels[key]
+    stem = app_name.strip()
+    if stem.lower().endswith(".exe"):
+        stem = stem[:-4]
+    return stem
 
 
 @app.patch("/api/m6_4/reflections/{reflection_id}")
@@ -2480,10 +3050,17 @@ async def m6_5_draw_card(request: Request, body: dict[str, Any]) -> dict[str, An
     return {"success": False, "reason": result.error_reason}
 
 
-async def _resolve_session_thread_id(role_id: str, thread_id: str, create_if_new: bool = False) -> str:
+async def _resolve_session_thread_id(
+    role_id: str,
+    thread_id: str,
+    create_if_new: bool = False,
+) -> tuple[str, str | None]:
     """Resolve the latest active thread_id segment.
-    If create_if_new is True, it starts a new thread ID segment if the last message
-    was more than 30 minutes (1800 seconds) ago.
+
+    Returns (resolved_thread_id, ended_thread_id).
+    ended_thread_id is non-None only when a 30-minute inactivity split occurs;
+    it is the just-ended thread that should be compressed by M2.2.2.
+    If create_if_new is False, ended_thread_id is always None.
     """
     prefix = f"{thread_id}_%"
     is_tool = (thread_id == f"thread_{role_id}")
@@ -2508,8 +3085,8 @@ async def _resolve_session_thread_id(role_id: str, thread_id: str, create_if_new
     if not row:
         if create_if_new:
             import uuid
-            return f"{thread_id}_{uuid.uuid4().hex[:8]}"
-        return thread_id
+            return f"{thread_id}_{uuid.uuid4().hex[:8]}", None
+        return thread_id, None
 
     last_thread_id = row["thread_id"]
     last_created_at = row["created_at"]
@@ -2520,24 +3097,25 @@ async def _resolve_session_thread_id(role_id: str, thread_id: str, create_if_new
             clean_time = last_created_at.replace("Z", "+00:00")
             dt = datetime.fromisoformat(clean_time)
         except Exception:
-            return last_thread_id
-        
+            return last_thread_id, None
+
         now = datetime.now(timezone.utc)
         diff = (now - dt).total_seconds()
         if diff > 1800:
             import uuid
             new_tid = f"{thread_id}_{uuid.uuid4().hex[:8]}"
             logger.info("[ThreadSplit] Inactivity timeout (diff=%.1fs > 1800s). Splitting thread from %s to %s", diff, last_thread_id, new_tid)
-            return new_tid
+            # last_thread_id is the just-ended thread; signal it for M2.2.2 compression
+            return new_tid, last_thread_id
 
-    return last_thread_id
+    return last_thread_id, None
 
 
 @app.get("/api/m4_1/history")
 async def m4_1_history(role_id: str, thread_id: str | None = None, limit: int = 200, offset: int = 0) -> list[dict[str, Any]]:
     """回傳指定角色（或特定 thread）的最近聊天紀錄，按時間排序。"""
     if thread_id:
-        resolved_tid = await _resolve_session_thread_id(role_id, thread_id, create_if_new=False)
+        resolved_tid, _ = await _resolve_session_thread_id(role_id, thread_id, create_if_new=False)
         is_tool = (thread_id == f"thread_{role_id}")
         if is_tool:
             rows = await _db_adapter.fetch_all(
@@ -2624,10 +3202,12 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
             logger.warning("Gemma compress failed in chat route: %s", e)
             
     # Use thread_id from frontend and resolve it dynamically to handle inactivity splitting
+    # ended_thread_id is non-None when a 30-min split just occurred -- triggers M2.2.2 compression.
     if thread_id:
-        resolved_thread_id = await _resolve_session_thread_id(str(role_uuid), thread_id, create_if_new=True)
+        resolved_thread_id, ended_thread_id = await _resolve_session_thread_id(str(role_uuid), thread_id, create_if_new=True)
     else:
         resolved_thread_id = f"thread_{role_uuid}"
+        ended_thread_id = None
         
     # 拉近期對話歷史（最多 12 條）供工具型 AI 保持連貫
     # DESC LIMIT 12 取最新 12 條，再反轉為時間正序送入 LLM context
@@ -2788,6 +3368,31 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
         )
     except Exception as e:
         logger.error("Failed to save chat transcript to SQLite: %s", e)
+
+    # [M2.2.2] Chat digest compression fires ONCE when a thread ends (30-min inactivity split).
+    # [RISK-15] chat content stays local; only de-identified intent_label+context_summary written.
+    # ended_thread_id is set by _resolve_session_thread_id only on a split event.
+    if _gemma_pipeline and _db_adapter and ended_thread_id:
+        _ended_tid_capture = ended_thread_id
+        _role_id_capture = str(role_uuid)
+
+        async def _compress_ended_thread_bg() -> None:
+            try:
+                from m2_2_gemma.chat_compressor import ChatCompressor
+                compressor = ChatCompressor(
+                    ai_local_host=settings.ai_local_host,
+                    model=settings.gemma_model,
+                )
+                await compressor.compress_thread(
+                    thread_id=_ended_tid_capture,
+                    role_id=_role_id_capture,
+                    db=_db_adapter,
+                )
+            except Exception as _ce:
+                logger.debug("[M2.2.2] compress ended thread failed (non-fatal): %s", _ce)
+
+        import asyncio as _asyncio
+        _asyncio.ensure_future(_compress_ended_thread_bg())
 
     return {
         "content": reply,
@@ -3201,7 +3806,7 @@ async def m4_1_confirm_match(body: dict[str, Any]) -> dict[str, Any]:
     if not expert_row:
         raise HTTPException(status_code=404, detail="Expert not found")
 
-    thread_id = await _resolve_session_thread_id(str(role_uuid), f"thread_{role_uuid}_{persona_id}", create_if_new=True)
+    thread_id, _ = await _resolve_session_thread_id(str(role_uuid), f"thread_{role_uuid}_{persona_id}", create_if_new=True)
 
     # 呼叫 M4.2 persona graph 以 persona 語氣生成問候
     greeting_text: str | None = None

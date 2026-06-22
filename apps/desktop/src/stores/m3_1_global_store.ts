@@ -54,6 +54,7 @@ export interface CoOSState {
   isRoleTransitioning: boolean;
   // [FIX-04] Project tags: SSE project events persisted by threadId
   projectTags: Record<string, ProjectTagEvent[]>;
+  activeCommunityId: string | null;
 
   // Actions
   switchRole: (roleId: string) => void;
@@ -64,6 +65,7 @@ export interface CoOSState {
   setRoleTransitioning: (v: boolean) => void;
   addProjectTag: (threadId: string, event: ProjectTagEvent) => void;
   clearProjectTags: (threadId: string) => void;
+  setActiveCommunity: (id: string | null) => void;
 }
 
 // [R08 SS1] Level formula: floor(sqrt(xp/100)), capped at 99
@@ -82,6 +84,7 @@ export const useCoOSStore = create<CoOSState>()(
     expertCache: {},
     isRoleTransitioning: false,
     projectTags: {},
+    activeCommunityId: null,
 
     switchRole: (roleId) => {
       const { currentRole, roleCache } = get();
@@ -157,5 +160,7 @@ export const useCoOSStore = create<CoOSState>()(
       delete next[threadId];
       set({ projectTags: next });
     },
+
+    setActiveCommunity: (id) => set({ activeCommunityId: id }),
   }))
 );

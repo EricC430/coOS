@@ -760,6 +760,15 @@ class DraftGenerator:
 2. M4.4 草稿生成器在引用 `content_summary` 時,必須經 M2.3 Eguard 泛化為無具體細節的描述
 3. M6.2 雲端同步管線設置 hard block:payload 含 `content_raw` 或 `content_summary` 欄位 → 拒絕同步
 
+**v1.2 雙欄位策略 (2026-06-23 拍板)**：
+
+為兼顧「高品質本地日報卡片」與「絕不上雲」,`daily_reflection_segments` 採雙欄位:
+- `ai_description` / `title`:L1 原文,含 content_summary 歸納出的具體主題 (如「coOS 社群前端設計調校」)。**僅供本地桌面程式顯示**。`daily_reflection_segments` 已列入 `main.py` 的 `is_local_table` 白名單 → 整張表永不進雲端 PG 同步路徑 (滿足上方第 3 層 hard block)。
+- `ai_description_generalized` / `title_generalized`:經 M2.3 Eguard 泛化後的雲端安全版本 (如「進行軟體開發」)。**若**未來新增雲端 segment 同步管線,必須只同步此欄位,絕不同步 L1 欄位。
+
+M4.4.3 流程:本地 Gemma 以 content_summary 為主幹產出 L1 卡片 → Eguard 泛化出 generalized 欄位 → 兩者一併寫入 segment。雲端 prompt (`_build_cloud_prompt`) 永遠排除 content_summary。
+此即「L1 可傳本地 LLM,保護於雲端 LLM 外」(架構憲章隱私三層) 在日報場景的具體落地。
+
 **驗收測試**：
 
 ```python

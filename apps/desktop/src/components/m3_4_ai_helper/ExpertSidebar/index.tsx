@@ -37,8 +37,11 @@ export function ExpertSidebar({
   const { currentRole } = useCoOSStore();
 
   const handlePersonaClick = (expert: Expert) => {
-    // [R05 §therapy alliance] Direct click switches to that expert's chat room
-    onSelectPersona(expert);
+    // [R05 §therapy alliance] Direct click shows match-required hint instead of switching
+    setMatchHint(expert.id);
+    setTimeout(() => {
+      setMatchHint((prev) => (prev === expert.id ? null : prev));
+    }, 3000);
   };
 
   const handleDeleteClick = (expertId: string) => {
@@ -108,7 +111,7 @@ export function ExpertSidebar({
           <ExpertItem
             expert={expert}
             isActive={activeExpertId === expert.id}
-            onClick={() => handlePersonaClick(expert)}
+            onClick={() => onSelectPersona(expert)}
             onDelete={onDeleteExpert ? handleDeleteClick : undefined}
           />
           {matchHint === expert.id && (

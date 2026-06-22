@@ -36,7 +36,7 @@ class GemmaEdgeClient:
     InferencePriorityQueue in pipeline.py (SPEC §8 anti-pattern 2).
     """
 
-    def __init__(self, ai_local_host: str, model: str, timeout: float = 6.0) -> None:
+    def __init__(self, ai_local_host: str, model: str, timeout: float = 90.0) -> None:
         self._base_url = ai_local_host.rstrip("/")
         self._model = model
         self._timeout = timeout

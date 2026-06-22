@@ -26,6 +26,8 @@ import { EdgeNavigationTrigger } from "./components/EdgeNavigationTrigger";
 import { PageTransition } from "./components/PageTransition";
 import { SettingsModal } from "./components/SettingsModal";
 import { OnboardingScreen } from "./components/OnboardingScreen";
+import { AnimatePresence } from "framer-motion";
+import { PieMenu } from "./components/PieMenu";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -34,40 +36,6 @@ const queryClient = new QueryClient({
 });
 
 type ActiveView = "home" | "report" | "achievements" | "community" | "chat";
-
-function ThemeToggle() {
-  const [dark, setDark] = useState(() =>
-    document.documentElement.getAttribute("data-theme") === "dark"
-  );
-
-  // Stay in sync when settings modal changes the theme
-  useEffect(() => {
-    const handler = (e: Event) => {
-      setDark((e as CustomEvent<string>).detail === "dark");
-    };
-    window.addEventListener("coos:theme-changed", handler);
-    return () => window.removeEventListener("coos:theme-changed", handler);
-  }, []);
-
-  const toggle = () => {
-    const next = !dark;
-    setDark(next);
-    document.documentElement.setAttribute("data-theme", next ? "dark" : "light");
-    window.dispatchEvent(new CustomEvent("coos:theme-changed", { detail: next ? "dark" : "light" }));
-  };
-
-  return (
-    <button
-      className="theme-toggle"
-      onClick={toggle}
-      data-testid="theme-toggle"
-      aria-label="Toggle theme"
-      title={dark ? "切換淺色模式" : "切換深色模式"}
-    >
-      {dark ? "☀" : "🌙"}
-    </button>
-  );
-}
 
 function AppContent() {
   const [activeView, setActiveView] = useState<ActiveView>("home");
@@ -80,6 +48,57 @@ function AppContent() {
   // isOnboarding = true while there are no roles at all
   const hasRoles = Object.keys(roleCache).length > 0;
   const isOnboarding = !loading && !hasRoles;
+
+  // Theme Management
+  const [dark, setDark] = useState(() =>
+    document.documentElement.getAttribute("data-theme") === "dark"
+  );
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      setDark((e as CustomEvent<string>).detail === "dark");
+    };
+    window.addEventListener("coos:theme-changed", handler);
+    return () => window.removeEventListener("coos:theme-changed", handler);
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    const next = !dark;
+    setDark(next);
+    document.documentElement.setAttribute("data-theme", next ? "dark" : "light");
+    window.dispatchEvent(
+      new CustomEvent("coos:theme-changed", { detail: next ? "dark" : "light" })
+    );
+  }, [dark]);
+
+  // Pie Menu Management
+  const [pieMenuOpen, setPieMenuOpen] = useState(false);
+  const [pieMenuPos, setPieMenuPos] = useState({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const handleDblClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Skip interactive elements
+      if (
+        target.closest("button") ||
+        target.closest("input") ||
+        target.closest("textarea") ||
+        target.closest("select") ||
+        target.closest("[role='button']") ||
+        target.isContentEditable ||
+        target.closest("[contenteditable='true']")
+      ) {
+        return;
+      }
+
+      e.preventDefault();
+      setPieMenuPos({ x: e.clientX, y: e.clientY });
+      setPieMenuOpen(true);
+    };
+
+    window.addEventListener("dblclick", handleDblClick);
+    return () => window.removeEventListener("dblclick", handleDblClick);
+  }, []);
 
   const refreshRoles = useCallback(async () => {
     try {
@@ -113,9 +132,12 @@ function AppContent() {
   useEffect(() => {
     if (isOnboarding) return;
     const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
       if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable ||
+        target.closest("[contenteditable='true']")
       )
         return;
 
@@ -125,6 +147,10 @@ function AppContent() {
         else if (e.key === "ArrowUp") { e.preventDefault(); setActiveView("achievements"); }
       } else {
         if (e.key === "Escape") { e.preventDefault(); goHome(); }
+        else if (activeView === "report" && e.key === "ArrowRight") { e.preventDefault(); goHome(); }
+        else if (activeView === "community" && e.key === "ArrowLeft") { e.preventDefault(); goHome(); }
+        else if (activeView === "achievements" && e.key === "ArrowDown") { e.preventDefault(); goHome(); }
+        else if (activeView === "chat" && e.key === "ArrowUp") { e.preventDefault(); goHome(); }
       }
     };
     window.addEventListener("keydown", handler);
@@ -148,18 +174,22 @@ function AppContent() {
 
   return (
     <div style={{ width: "100vw", height: "100vh", position: "relative", overflow: "hidden" }}>
-      {/* Theme toggle */}
-      <ThemeToggle />
-
-      {/* Settings toggle */}
-      <button
-        className="settings-toggle"
-        onClick={() => setSettingsOpen(true)}
-        aria-label="Open settings"
-        title="系統與隱私設定"
-      >
-        ⚙️
-      </button>
+      {/* Radial Menu on Double Click */}
+      <AnimatePresence>
+        {pieMenuOpen && (
+          <PieMenu
+            x={pieMenuPos.x}
+            y={pieMenuPos.y}
+            onClose={() => setPieMenuOpen(false)}
+            onOpenSettings={() => {
+              setSettingsOpen(true);
+              setPieMenuOpen(false);
+            }}
+            dark={dark}
+            toggleTheme={toggleTheme}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Main content */}
       <main style={{ width: "100%", height: "100%", position: "relative" }}>
@@ -184,7 +214,7 @@ function AppContent() {
       </PageTransition>
 
       <PageTransition isOpen={activeView === "community"} direction="right" onBack={goHome}>
-        <CommunityUI stubMode />
+        <CommunityUI stubMode={false} />
       </PageTransition>
 
       <PageTransition isOpen={activeView === "achievements"} direction="top" onBack={goHome}>

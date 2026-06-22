@@ -46,20 +46,18 @@ describe("M3.4.1 Expert Sidebar", () => {
     expect(items[1]).toHaveTextContent("Robert");
   });
 
-  it("[R05 §therapy] clicking persona shows match-required-hint not chat", async () => {
+  it("[R05 §therapy] clicking persona triggers onSelectPersona to switch chat", async () => {
+    const selectSpy = vi.fn();
     render(
       <ExpertSidebar
         activeExperts={mockExperts}
         onSelectTool={vi.fn()}
-        onSelectPersona={vi.fn()}
+        onSelectPersona={selectSpy}
       />
     );
     const personaItem = screen.getAllByTestId("expert-item")[1];
     fireEvent.click(personaItem);
-    await waitFor(() => {
-      expect(screen.getByTestId("match-required-hint")).toBeInTheDocument();
-    });
-    expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
+    expect(selectSpy).toHaveBeenCalledWith(mockExperts[0]);
   });
 });
 

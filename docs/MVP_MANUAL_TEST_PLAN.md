@@ -91,26 +91,46 @@
 ### 步驟 5：切換狀態，觸發斷點與草稿提示
 *   **測試目的**：驗證 M1.2 斷點偵測、M3.3.3 草稿生成與儀表板通知。
 *   **操作說明**：
-    1. 模擬使用者停止寫程式並切換到娛樂網頁（如 YouTube）。使用 `curl` 發送 BREAKPOINT 事件：
-       ```bash
-       curl -X POST http://localhost:8000/api/m1_1/event \
-         -H "Content-Type: application/json" \
-         -d '{
-           "event_type": "breakpoint",
-           "role_id": "dcd6cb12-1cbe-4eab-8b7d-03d6a490f654",
-           "payload": {
-             "reason": "focus_lost",
-             "url": "https://www.youtube.com"
-           }
-         }'
-       ```
-    2. 執行排程器產生草稿（此處手動觸發排程 API 或 Cron 方法）：
-       ```bash
-       # 呼叫模擬深夜排程草稿生成的端點
-       curl -X POST http://localhost:8000/api/m4_4/trigger_draft_cron
-       ```
+    *   **快速自動化模擬**：
+        1. 模擬使用者停止寫程式並切換到娛樂網頁（如 YouTube）。使用 `curl` 發送 BREAKPOINT 事件：
+           ```bash
+           curl -X POST http://localhost:8000/api/m1_1/event \
+             -H "Content-Type: application/json" \
+             -d '{
+               "event_type": "breakpoint",
+               "role_id": "dcd6cb12-1cbe-4eab-8b7d-03d6a490f654",
+               "payload": {
+                 "reason": "focus_lost",
+                 "url": "https://www.youtube.com"
+               }
+             }'
+           ```
+        2. 執行排程器產生草稿（此處手動觸發排程 API 或 Cron 方法）：
+           ```bash
+           # 呼叫模擬深夜排程草稿生成的端點
+           curl -X POST http://localhost:8000/api/m4_4/trigger_draft_cron
+           ```
+    *   **專業 QA 人工測試情境 SOP (共 10 項豐富場景)**：
+        為真實模擬使用者在 Windows 上的行為，請依序執行以下人工測試案例，以確保 M1.2 斷點偵測引擎在真實 OS 環境中之正確性：
+
+        | 編號 | 測試情境 (Scenario) | 人工測試 SOP (Steps) | 預期結果 & 驗收標準 (Expected Results) |
+        |---|---|---|---|
+        | **1** | **標準編碼切換至娛樂網頁 (App Switch - Entertainment)** | 1. 開啟 VS Code，在程式碼檔案中持續打字 1-2 分鐘以累積專注信號。<br>2. 開啟 Chrome 瀏覽器，手動輸入網址 `https://www.youtube.com` 並開始播放任一影片。 | 1. 後端日誌應偵測到 ActivityState 改變，並記錄 `type: "app_switch"` 的斷點。<br>2. 前端 Tauri 應用應成功廣播 `BREAKPOINT_DETECTED`，使 L2 延遲通知釋放。 |
+        | **2** | **編碼切換至工作相關文獻 (App Switch - Work Doc)** | 1. 在 VS Code 中持續編寫代碼 1 分鐘。<br>2. 切換至 Chrome 瀏覽器並開啟 StackOverflow (`https://stackoverflow.com`) 或 Python 官方文件 (`https://docs.python.org`) 查詢語法。 | 1. 雖然偵測到視窗切換，但因 URL 屬於允許的「工作組(Work Group)」，故**不**會觸發任何斷點。<br>2. L2 通知應繼續留在隊列中，不會打擾開發者。 |
+        | **3** | **長時間無活動閒置斷點 (Idle Timeout)** | 1. 在 VS Code 中進行若干代碼輸入。<br>2. 停止敲擊鍵盤，且不移動滑鼠，將電腦完全靜置 5 分鐘。 | 1. 靜置滿 5 分鐘後，後端自動觸發 `type: "idle_timeout"` 斷點。<br>2. 儀表板成功接收事件，日報草稿通知亮起。 |
+        | **4** | **高速編碼突然停頓卡住 (WPM Drop)** | 1. 在 VS Code 中高速打字（WPM > 40）持續 1 分鐘。<br>2. 突然放慢打字速度（如 10 秒敲 1 個字元），但視窗焦點仍維持在 VS Code。 | 1. 在 30 秒內 WPM 下滑 > 50% 時，觸發 `type: "wpm_drop"` 斷點。<br>2. 驗證在沒有切換視窗的情況下，僅靠輸入流變化也能精準觸發斷點。 |
+        | **5** | **VS Code 焦點移出 (IDE Focus Leave)** | 1. 在 VS Code 編輯器中進行程式撰寫。<br>2. 用滑鼠點擊 Windows 工作列上的「檔案總管」或點擊 Windows 桌面空白處，讓 VS Code 失去焦點。 | 1. M1.3.1 擴充功能偵測到焦點離開，並拋出 `ide_focus_leave` 事件。<br>2. 斷點引擎將此視為 `BreakpointType::IDE_FOCUS_LEAVE`，成功將焦點移出列為斷點。 |
+        | **6** | **斷點冷卻防禦功能 (Cooldown Gating)** | 1. 執行「情境 1」切換至 YouTube 並觸發第一個斷點。<br>2. 立即切換回 VS Code 打字 10 秒，再次切換至 Netflix 網頁。 | 1. 由於冷卻時間限制（5 分鐘），第二次切換在 5 分鐘內**不**會再發送新的 `BREAKPOINT_DETECTED` 事件。<br>2. 防止頻繁來回切換視窗造成通知轟炸。 |
+        | **7** | **多 AI 專家通知錯開釋放 (Staggered Dispatcher)** | 1. 在後端暫存區手動排隊 3 個不同專家的 L2 通知。<br>2. 在 VS Code 編碼後切換至娛樂網頁觸發斷點。 | 1. 3 個通知應以隨機延遲（1~60秒）依序彈出，不得在同一秒內全部顯示。<br>2. 觀察後端 Log 是否顯示 `StaggeredNotificationDispatcher` 計算出的延遲秒數。 |
+        | **8** | **錯開釋放期間重回深度工作 (Re-entry Block)** | 1. 與「情境 7」相同，排隊 3 個通知並觸發斷點。<br>2. 在第一個通知彈出後，立刻切換回 VS Code 開始高速編碼。 | 1. 系統檢測到狀態重回 `DEEP_WORK`。<br>2. 錯開釋放調度器應立即**暫停**後續未發送的通知，將其留至下一個斷點。 |
+        | **9** | **深度工作 Windows 全域靜音與恢復 (System Mute)** | 1. 在 `user_consents` 中確保已授權系統通知控制權。<br>2. 持續編碼 10 分鐘進入 `DEEP_WORK` 狀態。<br>3. 切換至娛樂網頁（觸發斷點）。 | 1. 進入 `DEEP_WORK` 時，Windows 通知模式（Focus Assist）應被設定為「請勿打擾/靜音」模式。<br>2. 觸發斷點時，應**立即恢復**正常的 Windows 通知模式。 |
+        | **10** | **守護行程斷線之降級防禦 (Degraded Mode)** | 1. 手動關閉 Telemetry Daemon 或停止其 Heartbeat 發送。<br>2. 等待 10 秒以上（Heartbeat 超時），並生成一筆 L2 通知。 | 1. 斷點引擎日誌應發出 WARN，並自動進入 `degraded` 降級模式。<br>2. L2 通知應**不經過斷點門控**直接發送，確保在背景服務異常時通知仍可達。 |
+        | **11** | **Doom Scrolling 狀態偵測 (Doom Scrolling)** | 1. 開啟瀏覽器並切換至娛樂/社交網頁（例如 YouTube、Bilibili 或 Facebook）。<br>2. 持續頻繁地向下滾動頁面（每分鐘捲動 > 30 次），且每次更換頁面或點擊不同影片（使平均頁面停留時間 < 15 秒），持續進行 5 分鐘。 | 1. 後端 `focus_session_ended` 事件的 payload 應成功將該專注時段判定為 `activity_state: "DOOM_SCROLLING"`。<br>2. 驗證滑鼠滾動與頁面停留的多信號融合分類功能運作正常。 |
+
 *   **驗收準則**：
     *   前端儀表板右上角或日報模組會亮起「草稿待審核」的紅色徽章或通知（M3.9）。
+    *   所有的斷點事件皆正確記錄至 `raw_tracking_logs` 中（M0.4）。
+
 
 ---
 

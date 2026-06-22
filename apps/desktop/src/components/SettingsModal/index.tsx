@@ -18,6 +18,13 @@ interface SettingsState {
   ipad_ai_local_host: string;
 }
 
+interface DomainSettings {
+  work_domains_default: string[];
+  work_domains_extra: string[];
+  entertainment_domains_default: string[];
+  entertainment_domains_extra: string[];
+}
+
 interface Props {
   isOpen: boolean;
   onClose: () => void;
@@ -34,6 +41,14 @@ export function SettingsModal({ isOpen, onClose }: Props) {
   const [newGithubRepo, setNewGithubRepo] = useState("");
   const [whitelist, setWhitelist] = useState<string[]>([]);
   const [newApp, setNewApp] = useState("");
+  const [domains, setDomains] = useState<DomainSettings>({
+    work_domains_default: [],
+    work_domains_extra: [],
+    entertainment_domains_default: [],
+    entertainment_domains_extra: [],
+  });
+  const [newWorkDomain, setNewWorkDomain] = useState("");
+  const [newEntDomain, setNewEntDomain] = useState("");
   const [settings, setSettings] = useState<SettingsState>({
     content_capture: "off",
     voice_cloud: false,
@@ -68,6 +83,7 @@ export function SettingsModal({ isOpen, onClose }: Props) {
     if (isOpen) {
         loadGitSources();
         loadWhitelist();
+        loadDomains();
     }
   }, [isOpen, currentRole?.id]);
 
@@ -89,6 +105,55 @@ export function SettingsModal({ isOpen, onClose }: Props) {
     } catch (err) {
       console.error("Failed to load whitelist:", err);
     }
+  }
+
+  async function loadDomains() {
+    if (!currentRole?.id) return;
+    try {
+      const data = await apiCall<DomainSettings>(`/api/settings/domains?role_id=${currentRole.id}`);
+      setDomains(data);
+    } catch (err) {
+      console.error("Failed to load domain settings:", err);
+    }
+  }
+
+  async function saveDomains(workExtras: string[], entExtras: string[]) {
+    if (!currentRole?.id) return;
+    try {
+      await apiCall(`/api/settings/domains?role_id=${currentRole.id}`, {
+        method: "POST",
+        body: JSON.stringify({ work_domains_extra: workExtras, entertainment_domains_extra: entExtras }),
+      });
+      setDomains(d => ({ ...d, work_domains_extra: workExtras, entertainment_domains_extra: entExtras }));
+    } catch (err) {
+      alert("儲存域名設定失敗");
+    }
+  }
+
+  async function handleAddWorkDomain() {
+    const domain = newWorkDomain.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
+    if (!domain || domains.work_domains_extra.includes(domain)) return;
+    const next = [...domains.work_domains_extra, domain];
+    await saveDomains(next, domains.entertainment_domains_extra);
+    setNewWorkDomain("");
+  }
+
+  async function handleRemoveWorkDomain(domain: string) {
+    const next = domains.work_domains_extra.filter(d => d !== domain);
+    await saveDomains(next, domains.entertainment_domains_extra);
+  }
+
+  async function handleAddEntDomain() {
+    const domain = newEntDomain.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
+    if (!domain || domains.entertainment_domains_extra.includes(domain)) return;
+    const next = [...domains.entertainment_domains_extra, domain];
+    await saveDomains(domains.work_domains_extra, next);
+    setNewEntDomain("");
+  }
+
+  async function handleRemoveEntDomain(domain: string) {
+    const next = domains.entertainment_domains_extra.filter(d => d !== domain);
+    await saveDomains(domains.work_domains_extra, next);
   }
 
   async function handleAddWhitelist() {
@@ -322,6 +387,66 @@ export function SettingsModal({ isOpen, onClose }: Props) {
                       </div>
                     </div>
                   )}
+
+                  {/* Work-group domain whitelist */}
+                  <div className="settings-field" style={{ marginTop: '16px', background: 'rgba(0,0,0,0.1)', padding: '12px', borderRadius: '8px' }}>
+                    <label>
+                      <strong>工作域名白名單（自訂）</strong>
+                      <span className="field-desc" style={{ display: 'block', fontSize: '0.8rem', opacity: 0.7, marginTop: '2px' }}>
+                        切換至這些網域時不觸發斷點偵測。預設已含 stackoverflow、github 等 {domains.work_domains_default.length} 個。
+                      </span>
+                    </label>
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', marginTop: '8px' }}>
+                      <input
+                        type="text"
+                        placeholder="例如: leetcode.com 或 https://hackmd.io"
+                        value={newWorkDomain}
+                        onChange={(e) => setNewWorkDomain(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleAddWorkDomain()}
+                        style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid #444', background: '#222', color: '#fff' }}
+                      />
+                      <button className="settings-save-btn" style={{ height: 'auto', padding: '4px 12px' }} onClick={handleAddWorkDomain}>新增</button>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {domains.work_domains_extra.map(d => (
+                        <span key={d} style={{ display: 'inline-flex', alignItems: 'center', background: 'rgba(52,211,153,0.15)', border: '1px solid rgba(52,211,153,0.3)', padding: '2px 8px', borderRadius: '4px', fontSize: '0.8rem' }}>
+                          {d}
+                          <button onClick={() => handleRemoveWorkDomain(d)} style={{ background: 'none', border: 'none', color: '#ef4444', marginLeft: '6px', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}>&times;</button>
+                        </span>
+                      ))}
+                      {domains.work_domains_extra.length === 0 && <span style={{ opacity: 0.45, fontSize: '0.8rem' }}>尚未新增自訂工作域名</span>}
+                    </div>
+                  </div>
+
+                  {/* Entertainment domain list */}
+                  <div className="settings-field" style={{ marginTop: '12px', background: 'rgba(0,0,0,0.1)', padding: '12px', borderRadius: '8px' }}>
+                    <label>
+                      <strong>娛樂域名清單（自訂）</strong>
+                      <span className="field-desc" style={{ display: 'block', fontSize: '0.8rem', opacity: 0.7, marginTop: '2px' }}>
+                        在這些網域持續切換頁面 ≥5 分鐘時觸發 Doom Scrolling 偵測。預設已含 instagram、youtube 等 {domains.entertainment_domains_default.length} 個。
+                      </span>
+                    </label>
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', marginTop: '8px' }}>
+                      <input
+                        type="text"
+                        placeholder="例如: dcard.tw 或 ptt.cc"
+                        value={newEntDomain}
+                        onChange={(e) => setNewEntDomain(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleAddEntDomain()}
+                        style={{ flex: 1, padding: '4px 8px', borderRadius: '4px', border: '1px solid #444', background: '#222', color: '#fff' }}
+                      />
+                      <button className="settings-save-btn" style={{ height: 'auto', padding: '4px 12px' }} onClick={handleAddEntDomain}>新增</button>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {domains.entertainment_domains_extra.map(d => (
+                        <span key={d} style={{ display: 'inline-flex', alignItems: 'center', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', padding: '2px 8px', borderRadius: '4px', fontSize: '0.8rem' }}>
+                          {d}
+                          <button onClick={() => handleRemoveEntDomain(d)} style={{ background: 'none', border: 'none', color: '#ef4444', marginLeft: '6px', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}>&times;</button>
+                        </span>
+                      ))}
+                      {domains.entertainment_domains_extra.length === 0 && <span style={{ opacity: 0.45, fontSize: '0.8rem' }}>尚未新增自訂娛樂域名</span>}
+                    </div>
+                  </div>
 
                   <div className="settings-field row">
                     <label>

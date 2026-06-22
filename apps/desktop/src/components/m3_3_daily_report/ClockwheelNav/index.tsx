@@ -191,8 +191,7 @@ export function ClockwheelNav({ date, granularity, onDateChange, onGranularityCh
   }, [step]);
 
   useEffect(() => {
-    const host = stripRef.current?.closest(".clockwheel-host") as HTMLElement | null;
-    const el = host ?? stripRef.current;
+    const el = stripRef.current;
     if (!el) return;
     el.addEventListener("wheel", handleWheel, { passive: false });
     return () => el.removeEventListener("wheel", handleWheel);
@@ -277,7 +276,14 @@ export function ClockwheelNav({ date, granularity, onDateChange, onGranularityCh
     <div
       ref={stripRef}
       data-testid="clockwheel-nav"
-      style={{ position: "relative", width: STRIP_W, height: "100%", flexShrink: 0, userSelect: "none" }}
+      style={{
+        position: "relative",
+        width: STRIP_W,
+        height: "100%",
+        flexShrink: 0,
+        userSelect: "none",
+        background: "linear-gradient(to right, var(--bg-surface), var(--bg-base))",
+      }}
     >
       <svg
         ref={svgRef}

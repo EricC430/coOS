@@ -211,6 +211,22 @@ body {
   gap: 6px;
 }
 
+.edge-trigger-bottom {
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 180px;
+  height: 48px;
+  border-radius: 24px 24px 0 0;
+  background: var(--edge-trigger-bg);
+  border: 1px solid var(--edge-trigger-border);
+  border-bottom: none;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  flex-direction: row;
+  gap: 6px;
+}
+
 .edge-trigger-label {
   font-size: 11px;
   font-weight: 600;
@@ -1245,5 +1261,67 @@ body {
   width: 80px;
   background: radial-gradient(ellipse at left, var(--role-glow) 0%, transparent 70%);
   z-index: 0;
+}
+
+/* ---------- Double-Click Pie Menu (Radial Menu) ---------- */
+.pie-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 299;
+  background: transparent;
+}
+
+.pie-menu-container {
+  position: fixed;
+  z-index: 300;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 0;
+  height: 0;
+}
+
+.pie-menu-center-node {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--gold-accent);
+  box-shadow: 0 0 10px var(--gold-accent);
+  position: absolute;
+  transform: translate(-50%, -50%);
+  opacity: 0.8;
+}
+
+.pie-menu-item {
+  pointer-events: auto;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  cursor: pointer;
+  color: var(--gold-accent);
+  font-size: 18px;
+  position: absolute;
+  transform: translate(-50%, -50%);
+  transition: background-color 0.2s, border-color 0.2s, box-shadow 0.2s, color 0.2s;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.pie-menu-item:hover {
+  background: var(--edge-trigger-bg);
+  border-color: var(--gold-accent);
+  color: var(--coral-accent);
+  box-shadow: 0 0 16px rgba(244, 162, 97, 0.35);
+}
+
+.pie-menu-item:active {
+  transform: translate(-50%, -50%) scale(0.95);
 }
 

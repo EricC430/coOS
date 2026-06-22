@@ -12,6 +12,7 @@
  */
 
 import React from "react";
+import { FullCommunityUI } from "./FullCommunityUI";
 
 interface Props {
   stubMode?: boolean;
@@ -31,10 +32,5 @@ export function CommunityUI({ stubMode = true }: Props) {
     );
   }
 
-  // Full implementation placeholder -- filled in Phase 6b
-  return (
-    <div className="h-full flex items-center justify-center text-gray-400">
-      社群完整功能建置中...
-    </div>
-  );
+  return <FullCommunityUI />;
 }

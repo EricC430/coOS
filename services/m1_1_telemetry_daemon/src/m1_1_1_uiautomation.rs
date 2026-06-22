@@ -27,6 +27,7 @@ pub struct ForegroundWindow {
     pub app_bucket: AppBucket,
     /// Raw window title — only populated when CaptureMode != Off.
     pub window_title: Option<String>,
+    pub is_fullscreen: bool,
 }
 
 #[cfg(windows)]
@@ -35,7 +36,9 @@ pub fn get_foreground_window() -> Option<ForegroundWindow> {
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     use windows::Win32::UI::WindowsAndMessaging::{
         GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+        GetWindowRect, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN,
     };
+    use windows::Win32::Foundation::RECT;
     use windows::Win32::System::ProcessStatus::GetProcessImageFileNameW;
 
     unsafe {
@@ -74,9 +77,19 @@ pub fn get_foreground_window() -> Option<ForegroundWindow> {
             Err(_) => "Unknown".to_string(),
         };
 
+        // Check if window is in fullscreen mode (covers the primary monitor)
+        let mut rect = RECT::default();
+        let is_fullscreen = if GetWindowRect(hwnd, &mut rect).is_ok() {
+            let cx = GetSystemMetrics(SM_CXSCREEN);
+            let cy = GetSystemMetrics(SM_CYSCREEN);
+            rect.left == 0 && rect.top == 0 && rect.right == cx && rect.bottom == cy
+        } else {
+            false
+        };
+
         eprintln!(
-            "[M1.1.1 DEBUG] foreground: {:?} | process: {}",
-            window_title_raw, process_name
+            "[M1.1.1 DEBUG] foreground: {:?} | process: {} | fullscreen: {}",
+            window_title_raw, process_name, is_fullscreen
         );
 
         let bucket = classify_process(&process_name);
@@ -84,6 +97,7 @@ pub fn get_foreground_window() -> Option<ForegroundWindow> {
             app_name: process_name,
             app_bucket: bucket,
             window_title: window_title_raw,
+            is_fullscreen,
         })
     }
 }
@@ -574,13 +588,14 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AppBucket, CaptureConsent, CaptureMode};
+    use crate::models::{CaptureConsent, CaptureMode};
 
     fn make_win(app: &str, title: Option<&str>) -> ForegroundWindow {
         ForegroundWindow {
             app_name: app.to_string(),
             app_bucket: crate::models::classify_process(app),
             window_title: title.map(|s| s.to_string()),
+            is_fullscreen: false,
         }
     }
 

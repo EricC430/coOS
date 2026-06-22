@@ -29,6 +29,8 @@ EXEMPT_PATHS = {
     # 日報頁面是全域視圖（跨角色），不應被 role_id 過濾攔截
     "/api/m6_4/daily_timeline",
     "/api/m6_4/heatmap",
+    # 社群頁面是全域融合，不應被 role_id 隔離限制
+    "/api/m6_6",
 }
 
 

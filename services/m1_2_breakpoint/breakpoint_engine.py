@@ -33,11 +33,61 @@ _COOLDOWN_S = 300               # 5 min minimum between breakpoints
 _DEEP_FOCUS_DURATION_S = 600    # 10 min sustained work → DEEP_WORK (WPM path)
 _WPM_THRESHOLD = 40             # default WPM threshold for DEEP_WORK (configurable 20-80)
 
+# [Scenario 2] Work-group domains — window switches to these do NOT trigger breakpoints.
+# Rationale: switching to a reference doc while coding is not a cognitive gap.
+_WORK_DOMAINS: frozenset[str] = frozenset({
+    "stackoverflow.com",
+    "docs.python.org",
+    "developer.mozilla.org",
+    "github.com",
+    "gitlab.com",
+    "docs.rs",
+    "pkg.go.dev",
+    "learn.microsoft.com",
+    "docs.microsoft.com",
+    "pypi.org",
+    "npmjs.com",
+    "crates.io",
+    "man7.org",
+    "cppreference.com",
+    "doc.rust-lang.org",
+    "docs.docker.com",
+    "kubernetes.io",
+    "aws.amazon.com",
+    "cloud.google.com",
+    "azure.microsoft.com",
+})
+
+# [Scenario 11] Entertainment domains for Python-side doom scrolling detection.
+# Rust daemon detects via process name; browser-based Instagram/Reels need domain matching.
+_ENTERTAINMENT_DOMAINS: frozenset[str] = frozenset({
+    "instagram.com",
+    "youtube.com",
+    "youtu.be",
+    "tiktok.com",
+    "twitter.com",
+    "x.com",
+    "facebook.com",
+    "bilibili.com",
+    "reddit.com",
+    "twitch.tv",
+    "netflix.com",
+    "xiaohongshu.com",
+})
+
+# [Scenario 11] Doom scrolling: >= 1 URL switch per minute for >= 5 min on entertainment
+_DOOM_SCROLL_SWITCH_RATE = 1.0   # switches per minute minimum
+_DOOM_SCROLL_MIN_DURATION_S = 300  # 5 min sustained session
+
 
 class BreakpointEngine:
     """[R08 §二] Multi-signal breakpoint detection state machine.
 
     States: IDLE → ACTIVE → DEEP_WORK → BREAKPOINT → (cooldown) → IDLE/ACTIVE
+
+    Domain lists are user-extensible at runtime via update_domains().
+    Defaults come from module-level _WORK_DOMAINS / _ENTERTAINMENT_DOMAINS frozensets;
+    update_domains() merges user extras so neither list can be overridden to empty.
     """
 
     def __init__(self, wpm_threshold: int = _WPM_THRESHOLD):
@@ -54,11 +104,39 @@ class BreakpointEngine:
         self._wpm_threshold: int = wpm_threshold
         self._pending_notifications: list[dict] = []
 
+        # [Scenario 11] Python-side doom scrolling tracker (browser domain-based)
+        self._doom_tab_switches: list[float] = []   # monotonic timestamps of entertainment tab switches
+        self._doom_session_start: float | None = None  # when current entertainment session began
+
+        # Runtime-extensible domain sets (defaults + user extras merged together)
+        self._work_domains: frozenset[str] = _WORK_DOMAINS
+        self._entertainment_domains: frozenset[str] = _ENTERTAINMENT_DOMAINS
+
         # Test-injectable time offsets (for unit tests that can't sleep)
         self._idle_offset: float = 0.0
         self._cooldown_offset: float = 0.0
         self._heartbeat_offset: float = 0.0
         self._focus_duration_offset: float = 0.0
+
+    def update_domains(
+        self,
+        work_extras: list[str],
+        entertainment_extras: list[str],
+    ) -> None:
+        """Merge user-defined domain extras with module defaults.
+
+        Called by main.py after loading role_settings from DB.
+        Extras are lowercased and deduplicated; defaults are never removed.
+        """
+        extra_work = frozenset(d.lower().strip() for d in work_extras if d.strip())
+        extra_ent = frozenset(d.lower().strip() for d in entertainment_extras if d.strip())
+        self._work_domains = _WORK_DOMAINS | extra_work
+        self._entertainment_domains = _ENTERTAINMENT_DOMAINS | extra_ent
+        if extra_work or extra_ent:
+            logger.info(
+                "[M1.2] Domain lists updated — work_extra=%d ent_extra=%d",
+                len(extra_work), len(extra_ent),
+            )
 
     # ------------------------------------------------------------------
     # Public API
@@ -79,6 +157,12 @@ class BreakpointEngine:
             return await self._on_window_changed(payload)
         if action == "keystroke_burst":
             return await self._on_keystroke(payload)
+        # [Scenario 5] ide_focus_leave from M1.3.1 VSCode extension
+        if action == "ide_focus_leave":
+            return await self._on_ide_focus_leave(payload)
+        # [Scenario 11] tab_switch from M1.3.2 browser extension — doom scrolling signal
+        if action == "tab_switch":
+            return await self._on_tab_switch(payload)
         return None
 
     def gate_notification(self, tier: str, content: str) -> dict:
@@ -173,12 +257,20 @@ class BreakpointEngine:
         self._last_activity = time.monotonic()
         new_app = payload.get("app_name", "")
 
+        # [Scenario 2] Suppress breakpoint when switching to a work-group domain.
+        # URL may be provided directly by M1.3.2 browser extension or Rust daemon.
+        url: str = payload.get("url", "") or payload.get("domain", "") or ""
+        if self._is_work_url(url):
+            logger.debug("[M1.2] window_changed to work URL — breakpoint suppressed: %s", url)
+            self._current_app = new_app
+            self.current_state = "ACTIVE"
+            return None
+
         if self.current_state == "DEEP_WORK":
             await self._emit_breakpoint("app_switch", confidence=0.90,
                                         preceding_app=self._current_app)
             await exit_deep_work()
         elif self.current_state in ("ACTIVE", "IDLE"):
-            # Any app switch from active or idle qualifies as a natural breakpoint
             await self._emit_breakpoint("app_switch", confidence=0.75,
                                         preceding_app=self._current_app)
             self.current_state = "ACTIVE"
@@ -187,6 +279,101 @@ class BreakpointEngine:
         self._focus_start = time.monotonic()
         self._focus_duration_offset = 0.0
         return self.last_breakpoint
+
+    def _is_work_url(self, url: str) -> bool:
+        """[Scenario 2] Return True if url belongs to the work-group whitelist (default + user extras)."""
+        if not url:
+            return False
+        url_lower = url.lower().strip()
+        for domain in self._work_domains:
+            if domain in url_lower:
+                return True
+        return False
+
+    async def _on_ide_focus_leave(self, payload: dict) -> dict | None:
+        """[Scenario 5] M1.3.1 VSCode extension lost focus → treat as ide_focus_leave breakpoint.
+
+        [R08 §二] Leaving the IDE is a natural cognitive gap equivalent to app_switch.
+        Confidence is slightly lower (0.65) than a full window switch because the user
+        may have clicked a floating dialog that stays work-related.
+        """
+        self._last_activity = time.monotonic()
+        if self.current_state == "DEEP_WORK":
+            await self._emit_breakpoint("ide_focus_leave", confidence=0.80,
+                                        preceding_app=self._current_app)
+            await exit_deep_work()
+        elif self.current_state in ("ACTIVE", "IDLE"):
+            await self._emit_breakpoint("ide_focus_leave", confidence=0.65,
+                                        preceding_app=self._current_app)
+            self.current_state = "ACTIVE"
+        logger.info("[M1.2] ide_focus_leave breakpoint candidate emitted")
+        return self.last_breakpoint
+
+    async def _on_tab_switch(self, payload: dict) -> dict | None:
+        """[Scenario 11] M1.3.2 browser tab switch — feed doom scrolling detector.
+
+        The Rust daemon classifies doom scrolling only when the foreground process IS
+        the entertainment app (e.g. 'instagram.exe').  When Instagram runs inside
+        msedge/chrome, the Rust process name check fails.  This Python handler uses
+        the domain from M1.3.2 tab_switch events to fill that gap.
+
+        Triggers doom_scrolling breakpoint when:
+          - domain is entertainment AND
+          - tab switch rate >= 1/min AND
+          - entertainment session duration >= 5 min
+        """
+        now = time.monotonic()
+        domain: str = (payload.get("to_domain") or payload.get("domain") or "").lower().strip()
+
+        if not self._is_entertainment_domain(domain):
+            # Leaving entertainment resets the session tracker
+            self._doom_session_start = None
+            self._doom_tab_switches.clear()
+            return None
+
+        # Start or extend entertainment session
+        if self._doom_session_start is None:
+            self._doom_session_start = now
+
+        self._doom_tab_switches.append(now)
+
+        # Prune switches older than 60 s (for rate calculation)
+        cutoff = now - 60.0
+        self._doom_tab_switches = [t for t in self._doom_tab_switches if t >= cutoff]
+
+        session_duration = now - self._doom_session_start
+        switch_rate_per_min = len(self._doom_tab_switches)  # count within last 60 s
+
+        logger.debug(
+            "[M1.2] doom_scroll tracker: domain=%s rate=%.1f/min session=%.0fs",
+            domain, switch_rate_per_min, session_duration,
+        )
+
+        if (switch_rate_per_min >= _DOOM_SCROLL_SWITCH_RATE
+                and session_duration >= _DOOM_SCROLL_MIN_DURATION_S):
+            bp = await self._emit_breakpoint("doom_scrolling", confidence=0.85,
+                                             preceding_app=self._current_app)
+            if bp:
+                logger.info(
+                    "[M1.2] DOOM_SCROLLING detected: domain=%s rate=%.1f/min session=%.0fs",
+                    domain, switch_rate_per_min, session_duration,
+                )
+                # Reset after firing to avoid repeated triggers (cooldown already handles it,
+                # but reset session so a new 5-min window must elapse before next detection)
+                self._doom_session_start = None
+                self._doom_tab_switches.clear()
+            return bp
+
+        return None
+
+    def _is_entertainment_domain(self, domain: str) -> bool:
+        """Return True if domain belongs to entertainment set (default + user extras)."""
+        if not domain:
+            return False
+        for ed in self._entertainment_domains:
+            if ed in domain:
+                return True
+        return False
 
     async def _on_keystroke(self, payload: dict) -> dict | None:
         self._last_activity = time.monotonic()

@@ -377,15 +377,24 @@ async function emitTabSwitch(toUrl) {
   sendToHost(event);
 }
 
+let isNativeHostAvailable = true; // Cache native host availability to avoid timeout latency
+
 function sendToHost(event) {
+  if (!isNativeHostAvailable) {
+    postToHttpEndpoint(event);
+    return;
+  }
+
   // Try native messaging first
   chrome.runtime.sendNativeMessage('coos_native_host', { command: 'telemetry', event }, (response) => {
     if (chrome.runtime.lastError) {
-      // Fallback: send directly to FastAPI sidecar via HTTP fetch
+      console.warn('[M1.3.2] Native host coos_native_host failed, switching to HTTP fallback:', chrome.runtime.lastError.message);
+      isNativeHostAvailable = false;
       postToHttpEndpoint(event);
     }
   });
 }
+
 
 function postToHttpEndpoint(event) {
   fetch('http://127.0.0.1:8000/api/m1_1/event', {

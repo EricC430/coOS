@@ -24,6 +24,12 @@ target_metadata = None
 def _resolve_url() -> str:
     url = os.environ.get("SUPABASE_DB_URL", "")
     if not url:
+        try:
+            from config import get_settings
+            url = get_settings().supabase_db_url
+        except Exception:
+            pass
+    if not url:
         raise RuntimeError(
             "alembic_cloud requires SUPABASE_DB_URL env var. "
             "Set it in .env or export SUPABASE_DB_URL=postgresql://..."

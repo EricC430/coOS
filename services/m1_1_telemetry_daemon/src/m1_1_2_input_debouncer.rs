@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct InputDebouncer {
     wpm_calc: Arc<Mutex<WpmCalculator>>,
     key_count_window: Arc<Mutex<u32>>,
+    scroll_count_window: Arc<Mutex<u32>>,
     is_foreground_active: Arc<Mutex<bool>>,
 }
 
@@ -21,6 +22,7 @@ impl InputDebouncer {
         Self {
             wpm_calc: Arc::new(Mutex::new(WpmCalculator::new())),
             key_count_window: Arc::new(Mutex::new(0)),
+            scroll_count_window: Arc::new(Mutex::new(0)),
             is_foreground_active: Arc::new(Mutex::new(false)),
         }
     }
@@ -48,12 +50,28 @@ impl InputDebouncer {
         *self.key_count_window.lock().unwrap() += key_count;
     }
 
+    /// Called on each Raw Input mouse scroll event.
+    /// Only accumulates when foreground is active.
+    pub fn on_scroll_event(&self) {
+        if !*self.is_foreground_active.lock().unwrap() {
+            return;
+        }
+        *self.scroll_count_window.lock().unwrap() += 1;
+    }
+
     pub fn current_wpm(&self) -> f32 {
         self.wpm_calc.lock().unwrap().current_wpm()
     }
 
     pub fn drain_key_count(&self) -> u32 {
         let mut count = self.key_count_window.lock().unwrap();
+        let val = *count;
+        *count = 0;
+        val
+    }
+
+    pub fn drain_scroll_count(&self) -> u32 {
+        let mut count = self.scroll_count_window.lock().unwrap();
         let val = *count;
         *count = 0;
         val
@@ -80,6 +98,7 @@ pub fn spawn_raw_input_listener(debouncer: InputDebouncer) {
     use windows::Win32::UI::Input::{
         RAWINPUTDEVICE, RegisterRawInputDevices, RIDEV_INPUTSINK,
         GetRawInputData, HRAWINPUT, RAWINPUT, RAWINPUTHEADER, RID_INPUT, RIM_TYPEKEYBOARD,
+        RIM_TYPEMOUSE,
     };
 
     struct WindowState {
@@ -133,6 +152,11 @@ pub fn spawn_raw_input_listener(debouncer: InputDebouncer) {
                             if msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN {
                                 state.debouncer.on_key_event(1);
                             }
+                        } else if raw.header.dwType == RIM_TYPEMOUSE.0 {
+                            let mouse = &raw.data.mouse;
+                            if (mouse.Anonymous.Anonymous.usButtonFlags & 0x0400) != 0 { // 0x0400 is RI_MOUSE_WHEEL
+                                state.debouncer.on_scroll_event();
+                            }
                         }
                     }
                 }
@@ -183,20 +207,29 @@ pub fn spawn_raw_input_listener(debouncer: InputDebouncer) {
             }
         };
 
-        let device = RAWINPUTDEVICE {
-            usUsagePage: 1,
-            usUsage: 6,
-            dwFlags: RIDEV_INPUTSINK,
-            hwndTarget: hwnd,
-        };
+        // Register both Keyboard (Usage Page 1, Usage 6) and Mouse (Usage Page 1, Usage 2)
+        let devices = [
+            RAWINPUTDEVICE {
+                usUsagePage: 1,
+                usUsage: 6, // Keyboard
+                dwFlags: RIDEV_INPUTSINK,
+                hwndTarget: hwnd,
+            },
+            RAWINPUTDEVICE {
+                usUsagePage: 1,
+                usUsage: 2, // Mouse
+                dwFlags: RIDEV_INPUTSINK,
+                hwndTarget: hwnd,
+            },
+        ];
 
-        if let Err(e) = RegisterRawInputDevices(&[device], std::mem::size_of::<RAWINPUTDEVICE>() as u32) {
+        if let Err(e) = RegisterRawInputDevices(&devices, std::mem::size_of::<RAWINPUTDEVICE>() as u32) {
             eprintln!("[M1.1.2 ERROR] RegisterRawInputDevices failed: {:?}", e);
             let _ = Box::from_raw(state_ptr);
             return;
         }
 
-        eprintln!("[M1.1.2 INFO] Raw Input keyboard hook registered successfully");
+        eprintln!("[M1.1.2 INFO] Raw Input keyboard and mouse hooks registered successfully");
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, HWND::default(), 0, 0).0 != 0 {
@@ -207,6 +240,7 @@ pub fn spawn_raw_input_listener(debouncer: InputDebouncer) {
         let _ = Box::from_raw(state_ptr);
     });
 }
+
 
 #[cfg(not(windows))]
 pub fn spawn_raw_input_listener(_debouncer: InputDebouncer) {

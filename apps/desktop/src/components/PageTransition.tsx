@@ -8,6 +8,7 @@
 
 import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { EdgeNavigationTrigger } from "./EdgeNavigationTrigger";
 
 type Direction = "left" | "right" | "top" | "bottom";
 
@@ -41,6 +42,24 @@ function getExit(dir: Direction) {
 }
 
 export function PageTransition({ isOpen, direction, children, onBack }: Props) {
+  const backSide = (() => {
+    switch (direction) {
+      case "left": return "right";
+      case "right": return "left";
+      case "top": return "bottom";
+      case "bottom": return "top";
+    }
+  })();
+
+  const backArrow = (() => {
+    switch (direction) {
+      case "left": return "›";
+      case "right": return "‹";
+      case "top": return "▼";
+      case "bottom": return "▲";
+    }
+  })();
+
   return (
     <AnimatePresence mode="wait">
       {isOpen && (
@@ -57,34 +76,14 @@ export function PageTransition({ isOpen, direction, children, onBack }: Props) {
           }}
           data-testid={`page-transition-${direction}`}
         >
-          {/* Back button */}
+          {/* Edge back button trigger */}
           {onBack && (
-            <button
+            <EdgeNavigationTrigger
+              side={backSide}
+              label="返回主頁"
+              arrowIcon={backArrow}
               onClick={onBack}
-              data-testid="page-back-btn"
-              className="glass-card"
-              style={{
-                position: "absolute",
-                top: 16,
-                left: 16,
-                zIndex: 60,
-                width: 40,
-                height: 40,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                fontSize: 18,
-                color: "var(--gold-accent)",
-                border: "1px solid var(--glass-border)",
-                background: "var(--glass-bg)",
-                backdropFilter: "blur(8px)",
-                borderRadius: 12,
-              }}
-              title="返回主頁"
-            >
-              ←
-            </button>
+            />
           )}
           {children}
         </motion.div>
