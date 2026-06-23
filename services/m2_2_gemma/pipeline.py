@@ -35,9 +35,9 @@ class GemmaInferencePipeline:
 
     def __init__(
         self,
-        ai_local_host: str = "http://ai.local:11434",
+        ai_local_host: str = "http://192.168.0.79:11434",
         model: str = "gemma-4-e4b-it-4bit",
-        timeout: float = 15.0,  # revised: Ollama overhead on iPad M1 ~11-12s actual
+        timeout: float = 90.0,  # iPad M1 can take 15-60s for 200-300 tokens
     ) -> None:
         self._client = GemmaEdgeClient(ai_local_host, model, timeout)
         self.fallback = RuleBasedExtractor()

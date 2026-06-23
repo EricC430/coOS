@@ -485,7 +485,17 @@ def _build_local_prompt(sig: DaySignals, elicited: list, ctx: Any = None) -> str
     ]
     if sig.content_summaries:
         # [RISK-15] content_summary is L1 -- only sent to local LLM here. This is the SPINE.
-        joined = "\n".join(f"- {s}" for s in sig.content_summaries[:8])
+        # Cap to ~900 chars total to avoid Ollama near-timeout edge case with long prompts.
+        uniq = list(dict.fromkeys(sig.content_summaries))
+        selected: list[str] = []
+        budget = 900
+        for s in uniq[:8]:
+            entry = s[:150]  # hard cap per summary
+            if budget - len(entry) - 2 < 0:
+                break
+            selected.append(entry)
+            budget -= len(entry) + 2
+        joined = "\n".join(f"- {s}" for s in selected)
         lines.append("內容摘要（主要依據，請綜合歸納主題）：")
         lines.append(joined)
     if sig.state_label:
@@ -572,9 +582,10 @@ def _build_cloud_prompt(sig: DaySignals, elicited: list, ctx: Any = None) -> str
 
 async def _call_local_gemma_once(
     prompt: str, base_url: str, model: str, timeout: float = 90.0
-) -> tuple[str, str, str | None, int | None, int | None]:
-    """Single attempt. Returns (text, status, error_msg, completion_tokens, prompt_tokens)."""
+) -> tuple[str, str, str | None, int | None, int | None, int]:
+    """Single attempt. Returns (text, status, error_msg, completion_tokens, prompt_tokens, latency_ms)."""
     import httpx
+    import time as _t
     url = f"{base_url}/v1/chat/completions"
     payload = {
         "model": model,
@@ -583,30 +594,37 @@ async def _call_local_gemma_once(
         "temperature": 0.3,
         "stream": False,
     }
+    t0 = _t.monotonic()
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
             data = resp.json()
+        latency_ms = int((_t.monotonic() - t0) * 1000)
         text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
         usage = data.get("usage") or {}
         ct = usage.get("completion_tokens")
         pt = usage.get("prompt_tokens")
         if not text:
-            return "", "empty_response", None, ct, pt
-        return text, "success", None, ct, pt
+            return "", "empty_response", None, ct, pt, latency_ms
+        return text, "success", None, ct, pt, latency_ms
     except Exception as e:
-        return "", "failed", str(e), None, None
+        latency_ms = int((_t.monotonic() - t0) * 1000)
+        return "", "failed", str(e), None, None, latency_ms
 
 
 async def _call_local_gemma(prompt: str, ai_local_host: str, model: str = "gemma-4-e4b-it-4bit") -> str | None:
-    """Call local Gemma edge LLM (Ollama). Returns text or None on total failure.
+    """Call local Gemma via the shared InferencePriorityQueue (priority=3).
 
-    Retries once after 3 s when Ollama returns an empty response (VRAM pressure
-    fast-reject). Writes every attempt to llm_inference_logs for observability.
+    Routing through enqueue_inference ensures M4.4/gibbs and M2.2 telemetry never
+    hit Ollama simultaneously (which causes KV cache pressure → empty responses).
+
+    Retry policy:
+      - fast-reject (latency < 2 s, empty): cool down 3 s, retry once.
+      - near-timeout (latency > 15 s, empty): skip retry — another 90 s wasted.
+      - failed (network error): no retry.
     """
     import asyncio as _asyncio
-    import time as _time
 
     base = ai_local_host if ai_local_host.startswith("http") else f"http://{ai_local_host}"
     base = base.rstrip("/")
@@ -631,26 +649,43 @@ async def _call_local_gemma(prompt: str, ai_local_host: str, model: str = "gemma
         except Exception:
             pass
 
-    t0 = _time.monotonic()
-    text, status, err, ct, pt = await _call_local_gemma_once(prompt, base, model)
-    latency_ms = int((_time.monotonic() - t0) * 1000)
-    _emit_log(status, text, err, ct, pt, latency_ms)
+    from m2_2_gemma.queue import enqueue_inference
 
-    if status == "success":
-        return text
+    for attempt in range(2):
+        if attempt > 0:
+            await _asyncio.sleep(3.0)
 
-    # Retry once on empty_response (Ollama VRAM fast-reject): cool down 3 s
-    if status == "empty_response":
-        logger.info("[M4.4] Gemma empty_response (latency=%dms), retrying in 3s...", latency_ms)
-        await _asyncio.sleep(3.0)
-        t1 = _time.monotonic()
-        text2, status2, err2, ct2, pt2 = await _call_local_gemma_once(prompt, base, model)
-        lat2 = int((_time.monotonic() - t1) * 1000)
-        _emit_log(status2, text2, err2, ct2, pt2, lat2)
-        if status2 == "success":
-            return text2
+        # Capture by default arg to avoid closure-over-mutable-loop-var issues
+        async def _one_attempt(_p=prompt, _b=base, _m=model):
+            return await _call_local_gemma_once(_p, _b, _m)
 
-    logger.info("[M4.4] Local Gemma failed (%s, %s): %s", status, base, err or "empty")
+        try:
+            text, status, err, ct, pt, latency_ms = await enqueue_inference(
+                priority=3, fn=_one_attempt, tag="gibbs"
+            )
+        except Exception as exc:
+            logger.warning("[M4.4] enqueue_inference raised: %s", exc)
+            return None
+
+        _emit_log(status, text, err, ct, pt, latency_ms)
+
+        if status == "success":
+            return text
+
+        if status == "empty_response":
+            if latency_ms > 15_000:
+                # Near-timeout: Ollama generated nothing in 15+ seconds.
+                # Retrying would waste another ~90 s. Fall through to fallback.
+                logger.info("[M4.4] Near-timeout empty (%dms), skip retry", latency_ms)
+                break
+            if attempt == 0:
+                # Fast-reject (<2 s): Ollama VRAM/KV cache pressure. Cool down then retry.
+                logger.info("[M4.4] Fast-reject empty (%dms), retry in 3s...", latency_ms)
+                continue
+
+        logger.info("[M4.4] Gemma %s attempt %d (%dms): %s", status, attempt + 1, latency_ms, err or "empty")
+        break
+
     return None
 
 

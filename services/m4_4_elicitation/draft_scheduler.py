@@ -298,7 +298,9 @@ async def run_draft_cron(
             )
         except Exception as e:
             # SPEC SS7.5: single-role failure must not abort other roles
-            logger.warning("[M4.4] draft generation failed for role=%s: %s", role_id, e)
+            logger.warning(
+                "[M4.4] draft generation failed for role=%s: %s", role_id, e, exc_info=True
+            )
             continue
         if draft is not None:
             drafts.append(draft)
