@@ -128,17 +128,17 @@ class TestCompileToPrompt:
     """[R12][R13][R18] PersonaCard -> prompt compilation."""
 
     def test_knowledge_boundary_injection(self):
-        """ignorant_of domains should trigger 'don't know' directive in prompt."""
+        """ignorant_of domains should trigger knowledge boundary directive in prompt."""
         card = _make_valid_card()
         prompt = compile_to_prompt(card)
-        assert "honestly admit" in prompt.lower() or "don't know" in prompt.lower()
+        assert "不懂" in prompt or "不清楚" in prompt or "honestly admit" in prompt.lower()
         assert "medical diagnosis" in prompt
 
     def test_anti_sycophancy_stance_injection(self):
-        """Stances should be injected with 'do NOT abandon' directive."""
+        """Stances should be injected with anti-sycophancy directive."""
         card = _make_valid_card()
         prompt = compile_to_prompt(card)
-        assert "do NOT abandon" in prompt or "NOT abandon" in prompt
+        assert "不因" in prompt or "改口" in prompt or "NOT abandon" in prompt
         assert "TDD" in prompt or "test-driven" in prompt.lower()
 
     def test_identity_in_prompt(self):

@@ -91,11 +91,11 @@ def select_mi_technique(
         return MIDirective(
             technique=MITechnique.REFLECTIVE_LISTENING,
             instruction=(
-                "The user is defensive. Use reflective listening: "
-                "'It sounds like you feel...' Roll with resistance. "
-                "Do NOT give advice or suggestions this turn."
+                "對方現在有防衛心。用反射式傾聽回應：把他的感受說出來"
+                "（「聽起來你覺得…」「你的意思是…」）。"
+                "這一輪只傾聽，不給建議、不糾正、不推進議程。"
             ),
-            forbidden_actions=["giving advice", "suggesting solutions", "correcting"],
+            forbidden_actions=["給建議", "糾正對方", "推進議題"],
             sdt_target=SDTNeed.AUTONOMY,
         )
 
@@ -104,11 +104,11 @@ def select_mi_technique(
         return MIDirective(
             technique=MITechnique.CHANGE_TALK_REPLAY,
             instruction=(
-                "The user just expressed change intention. "
-                "Summarize and replay their own words: "
-                "'You just said you want to...' Reinforce their motivation."
+                "對方剛說出想改變的意圖。把他自己的話回放給他聽"
+                "（「你剛剛說想…」「你提到你打算…」），強化他的動機。"
+                "不要幫他加新目標，不要否定他的意圖。"
             ),
-            forbidden_actions=["dismissing their intention", "adding new goals"],
+            forbidden_actions=["否定對方意圖", "擅自加新目標"],
             sdt_target=SDTNeed.COMPETENCE,
         )
 
@@ -117,11 +117,12 @@ def select_mi_technique(
         return MIDirective(
             technique=MITechnique.AFFIRMATION,
             instruction=(
-                "The user is anxious. Affirm their efforts: "
-                "'You've already taken an important step by...' "
-                "Break tasks into small pieces. Stay calm and grounding."
+                "對方現在焦慮。先肯定他已經做到的事"
+                "（「你已經跨出第一步了」「光是來問就很不錯」）。"
+                "把大任務拆小，語氣平穩溫暖。"
+                "絕對不鏡像他的焦慮、不催促、不用急迫語氣。"
             ),
-            forbidden_actions=["mirroring anxiety", "using urgent language", "pressuring"],
+            forbidden_actions=["鏡像焦慮", "催促語氣", "施壓"],
             sdt_target=SDTNeed.COMPETENCE,
         )
 
@@ -130,11 +131,11 @@ def select_mi_technique(
         return MIDirective(
             technique=MITechnique.OPEN_QUESTION,
             instruction=(
-                "The user is avoiding. Use curious, open-ended questions: "
-                "'What would it look like if...' Evoke exploration. "
-                "Never use guilt or shame."
+                "對方在迴避。用好奇的開放式問題引導探索"
+                "（「如果…會怎樣？」「你理想中的狀態是什麼？」）。"
+                "絕對不用愧疚感或羞恥感推動對方。"
             ),
-            forbidden_actions=["guilt induction", "shame", "pressure", "blame"],
+            forbidden_actions=["引發罪惡感", "羞辱", "施壓", "指責"],
             sdt_target=SDTNeed.AUTONOMY,
         )
 
@@ -142,8 +143,8 @@ def select_mi_technique(
     return MIDirective(
         technique=MITechnique.STRUCTURED_ADVICE,
         instruction=(
-            "The user is stable. Provide clear, structured advice. "
-            "Summarize key points and offer concrete next steps."
+            "對方狀態穩定。可以正常給建議、分享觀點、推進討論。"
+            "語氣自然，像朋友之間聊正事。"
         ),
         forbidden_actions=[],
         sdt_target=SDTNeed.COMPETENCE,
