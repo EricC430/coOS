@@ -16,6 +16,8 @@ matching the established M4.x test style.
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,6 +55,8 @@ class FakeProject:
 @dataclass
 class FakeDB:
     projects: list = field(default_factory=list)
+    # [v2.0] topic_anchors table stand-in, kept separate from legacy role_projects
+    topics: list = field(default_factory=list)
 
     def add_project(self, role_id: str, name: str, inferred_by_ai: bool = True) -> FakeProject:
         p = FakeProject(role_id=role_id, name=name, inferred_by_ai=inferred_by_ai)
@@ -62,14 +66,36 @@ class FakeDB:
     def projects_for(self, role_id: str) -> list[FakeProject]:
         return [p for p in self.projects if p.role_id == role_id]
 
+    def topics_for(self, role_id: str) -> list[dict]:
+        return [t for t in self.topics if t["role_id"] == role_id]
+
     async def fetch_all(self, query: str, params: dict) -> list[dict]:
-        """Simulate SELECT name FROM role_projects WHERE role_id = :rid"""
         role_id = params.get("rid", "")
+        if "topic_anchors" in query:
+            return [
+                {"id": t["id"], "label": t["label"], "embedding": t.get("embedding"), "role_id": t["role_id"]}
+                for t in self.topics
+                if t["role_id"] == role_id and t.get("status", "active") == "active"
+            ]
+        # Simulate SELECT name FROM role_projects WHERE role_id = :rid
         return [{"name": p.name} for p in self.projects if p.role_id == role_id]
 
     async def execute(self, query: str, params: dict) -> None:
-        """Simulate INSERT INTO role_projects"""
-        if "INSERT" in query.upper():
+        qu = query.upper()
+        if "TOPIC_ANCHORS" in qu:
+            if "INSERT" in qu:
+                self.topics.append({
+                    "id": params.get("id", ""),
+                    "role_id": params.get("rid", ""),
+                    "label": params.get("label", ""),
+                    "status": "active",
+                })
+            # UPDATE (mention_count / last_seen) has no observable effect worth faking
+            return
+        if "CHAT_TRANSCRIPTS" in qu:
+            return
+        if "INSERT" in qu:
+            # Simulate INSERT INTO role_projects
             name = params.get("name", "")
             role_id = params.get("rid", "")
             if name and role_id:
@@ -104,6 +130,29 @@ class FakeSSE:
         self.events.append({"type": event_type, "data": data})
 
 
+class FakeGemma:
+    """Deterministic stand-in for the topic-anchor LLM extractor.
+
+    detect_topic_anchor() falls back to a *live* cloud LLM call whenever no
+    injected `gemma` produces a response (see m4_6_observer/topic_detector.py),
+    which violates this module's own "no live Gemma in tests" design note
+    (agent.py module docstring). Reuse the existing regex fast-path so tests
+    stay deterministic without a live API call.
+    """
+
+    async def generate_text(self, prompt: str) -> str:
+        m = re.search(r"使用者訊息：(.+)", prompt)
+        user_msg = m.group(1).strip() if m else ""
+        candidate = regex_extract_project(user_msg)
+        if not candidate:
+            return json.dumps({"none": True})
+        return json.dumps({
+            "new": f"{candidate}相關任務",
+            "intent": "推進進度",
+            "motivation": "測試",
+        })
+
+
 def _run(user_msg: str, role_id: str = ROLE_CSIE, **kw):
     """Synchronous helper around the async observer for terse test bodies."""
     db = kw.pop("db", FakeDB())
@@ -123,12 +172,17 @@ def _run(user_msg: str, role_id: str = ROLE_CSIE, **kw):
 
 class TestObserverExtraction:
     def test_project_detected_in_30_seconds(self):
-        """[決策] 對話含「我想做 X 專案」→ 30 秒內 role_projects 出現對應紀錄"""
-        result = _run("我想開始做微積分的期末專案", role_id=ROLE_CSIE)
+        """[決策] 對話含「我想做 X 專案」→ 30 秒內出現對應的 topic anchor
+
+        [v2.0] Topic Anchor 取代 role_projects 成為主要偵測路徑（見
+        services/alembic/versions/20260803_1000_m4_6_topic_anchors.py）。
+        """
+        result = _run("我想開始做微積分的期末專案", role_id=ROLE_CSIE, gemma=FakeGemma())
         assert result.elapsed_seconds <= 30
-        projects = result._db.projects_for(ROLE_CSIE)
-        assert any("微積分" in p.name for p in projects)
-        assert all(p.inferred_by_ai for p in projects if "微積分" in p.name)
+        assert result.topic_anchor is not None
+        assert "微積分" in result.topic_anchor.label
+        topics = result._db.topics_for(ROLE_CSIE)
+        assert any("微積分" in t["label"] for t in topics)
 
     def test_existing_project_matched_not_duplicated(self):
         """提及已存在的專案 → 匹配而非重複建立"""
@@ -218,9 +272,9 @@ class TestObserverResilience:
 
     def test_system_event_emitted_on_success(self):
         """萃取成功 → 發送 SSE System Event 至前端"""
-        result = _run("我想做機器學習專案")
-        # [測試回饋] 事件型別標準化為大寫 PROJECT_CREATED（與前端一致）
-        assert any(e["type"] == "PROJECT_CREATED" for e in result._sse.events)
+        result = _run("我想做機器學習專案", gemma=FakeGemma())
+        # [v2.0] 事件型別改為 TOPIC_CREATED（topic_anchor 取代 role_projects，見上）
+        assert any(e["type"] == "TOPIC_CREATED" for e in result._sse.events)
 
 
 # ---------------------------------------------------------------------------
