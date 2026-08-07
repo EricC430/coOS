@@ -6,6 +6,8 @@
 # 本地資料庫 (L1 明文資料，絕不上雲)
 data/*.db
 *.db
+*.db-shm
+*.db-wal
 
 # Python
 __pycache__/
