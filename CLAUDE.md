@@ -6,6 +6,54 @@
 
 你正在協助開發 **coOS**:一款結合多智能體 AI、遊戲化、薩提爾冰山心理模型與邊緣-雲端協同推論的個人目標管理系統。本專案融合心理學、認知科學、混合主動式人機互動與 2026 年最新端側 LLM 技術。
 
+## 常用指令
+
+```bash
+# 安裝依賴 (monorepo root, 前端 pnpm workspace)
+pnpm install
+
+# 開發
+pnpm dev              # 前端 + Tauri (Layer 1)
+pnpm dev:backend      # FastAPI sidecar @ localhost:8000 (Layer 3)
+pnpm dev:all          # 上面兩個一起跑 (concurrently)
+
+# 測試 (root, 前後端一次跑)
+pnpm test
+# 等同於 pnpm --filter @coos/desktop test && uv run --directory services pytest testing/ -v
+
+# 後端測試 (排除需要真實 sidecar / local LLM 的測試)
+cd services && .venv/Scripts/python.exe -m pytest ../testing/ \
+  --ignore=../testing/local_llm --ignore=../testing/m0_2 -q
+
+# 只跑單一模組測試, 例如 M4.2
+cd services && .venv/Scripts/python.exe -m pytest ../testing/m4_2 -v
+
+# 前端測試
+pnpm --filter @coos/desktop test          # vitest run (一次性)
+pnpm --filter @coos/desktop test:watch    # vitest watch
+
+# Lint (前端 eslint + 後端 ruff + ascii 檢查), commit 前務必先跑
+pnpm lint
+cd services && uv run ruff check . --fix   # 只修後端
+
+# 資料庫遷移 (Alembic) — 只產生檔案, 不可 --autogenerate 後直接 apply, 需先讓使用者審
+cd services && alembic -c alembic_local.ini revision -m "..."
+cd services && alembic -c alembic_local.ini upgrade head   # 本地 SQLite
+cd services && alembic -c alembic_cloud.ini upgrade head   # 雲端 PostgreSQL (需 SUPABASE_DB_URL)
+```
+
+## 架構速覽
+
+30 秒版本,完整版仍須照鐵則 #1 讀 `docs/02_architecture.md` 與 `docs/04_module_registry.md`:
+
+- **四層架構,資料單向淨化**:Tauri 前端 (L1, 明文) → iPad M1 邊緣推論 ai.local/Gemma (L2, 壓縮成意圖向量) → 本地 FastAPI sidecar + LangGraph (L3, 業務邏輯) → 雲端 Neo4j GraphRAG (L4, 薩提爾冰山圖譜)。資料只能由左向右流,L4 絕不能反查 L1 明文,見隱私三層原則。
+- **後端進入點是單一檔案**:`services/main.py` 是唯一的 FastAPI app,以 Tauri sidecar 形式跑在 `localhost:8000`。所有模組 (`services/mX_y_*/`) 的 router 都在這裡被 wire 進來。
+- **模組編號 = 目錄前綴,跨三處對齊**:`Mx.y` 同時對應 `services/mx_y_*/`(後端邏輯)、`testing/mx_y/`(測試)、`docs/04_module_registry.md` 的條目。要看一個功能的完整實作面,`grep -r "M4.2" docs/ services/ testing/` 一次到位。
+- **雙 Alembic 環境是兩條獨立遷移歷史**:`alembic_local.ini`(本地 SQLite,`services/alembic/`)與 `alembic_cloud.ini`(雲端 PostgreSQL,`services/alembic_cloud/`)不共用 revision 鏈,不要混用。
+- **設定只有一個來源**:`services/config.py` 的 `Settings`(Pydantic v2),讀取順序為環境變數 > `.env` > 預設值。雲端 credential (`SUPABASE_*`、`NEO4J_*`) 全部 optional——純本地開發應能完整啟動不報錯。
+- **前端是 pnpm workspace**:`apps/desktop` 是主要 Tauri + React app;`apps/browser-extension`、`apps/vscode-extension` 是輔助擷取端,負責把資料餵進 L1,不含自己的業務邏輯。
+- **測試路徑固定在根目錄 `testing/`,不是 `services/tests/`**:見 `pytest.ini` 的 `testpaths = testing`,以及 `testing/conftest.py` 對 `sys.path` 的處理(讓測試可以 `from services.xxx import ...`)。
+
 ## 開始任何任務前的鐵則
 
 ### 1. 必先閱讀 `docs/` 對應的設計文件
