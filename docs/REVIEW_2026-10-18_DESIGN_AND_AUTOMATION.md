@@ -199,3 +199,4 @@
 
 - 後端 `uv run pytest ../testing`：**480 passed / 0 failed / 17 skipped / 4 xfailed**（287 秒）。和第一輪基線 472 passed / 13 skipped 相比：+8 項新測試通過，+4 項新雲端測試 skip，4 項 xfail 即 B1–B4。
 - 前端未改動，未重跑。
+- **2026-10-19 合併後**：本分支已 merge 進 `claude/design-review-2026-10-18`（含 D1(a)、D6），無衝突。合併後全套後端：**504 passed / 0 failed / 17 skipped / 4 xfailed**（xfail 即 B1–B4）。
