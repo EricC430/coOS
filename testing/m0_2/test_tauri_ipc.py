@@ -7,11 +7,27 @@ NOTE: 這些測試需要 FastAPI sidecar 在 localhost:8000 運行。
       本地開發可先執行 `uv run --directory services uvicorn main:app --port 8000`
 """
 import asyncio
+import socket
 
 import httpx
 import pytest
 
 SIDECAR_URL = "http://127.0.0.1:8000"
+
+
+def _sidecar_reachable(host: str = "127.0.0.1", port: int = 8000) -> bool:
+    """探測 sidecar 是否在 127.0.0.1:8000 監聽 (CLAUDE.md 規則 8)。"""
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _sidecar_reachable(),
+    reason="sidecar not running",
+)
 
 
 # ---------------------------------------------------------------------------
