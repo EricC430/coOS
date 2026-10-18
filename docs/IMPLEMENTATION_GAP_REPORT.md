@@ -70,6 +70,7 @@
 ### GAP-C3 ⚠️ M4.4 套問缺 telemetry confidence 檢查（待修，Phase 5 收尾）
 
 SPEC §5「自信度 ≥ 0.7 不觸發套問」——main.py 注入路徑未讀 `TelemetrySegmentReport`。
+> 2026-10-18 核對：`main.py` 的 M4.4 注入區塊呼叫 `ec.can_elicit(...)` 時沒有傳入任何 confidence 值，檢查仍未生效（原本 import 了 `CONFIDENCE_THRESHOLD` 但從未使用，已被 ruff F401 移除）。資料來源（M1.1 遙測分段 vs. M2.2 意圖向量）需拍板，見 `REVIEW_2026-10-18_DESIGN_AND_AUTOMATION.md`。
 
 ### GAP-C4 ✅ 配對問候語不落地（已修 Session 2）
 
@@ -87,7 +88,9 @@ JSON 解析後新增：(1) `_FORBIDDEN_PHRASES` 禁用語檢查（含「我是AI
 
 改為 `ORDER BY created_at DESC LIMIT 12` 後 `reversed()`，確保取最近 12 條。
 
-### GAP-C8 ⚠️ Elicitation turn counter 語意不同步（待修，Phase 5 收尾）
+### GAP-C8 ✅ Elicitation turn counter 語意不同步（已修，2026-10-18 核對）
+
+> 2026-10-18 核對：`main.py` 改用 `app.state.conversation_turn_counter`，每次對話都 +1（不論是否套問），cooldown 以真實對話輪次計算。以下為原始描述。
 
 `app.state.elicitation_turn_counter` 是注入嘗試次數非對話 turn 數。DEVIATION-01 拍板後需修正單位，使 cooldown 以實際對話輪次計算。
 
@@ -129,6 +132,6 @@ JSON 解析後新增：(1) `_FORBIDDEN_PHRASES` 禁用語檢查（含「我是AI
 | GAP-C5 expert 品質無校驗 | ✅ 已修 | Session 3 |
 | GAP-C6 DRIFT async 迴歸 | ✅ 已修 | Session 2 |
 | GAP-C7 歷史方向錯誤 | ✅ 已修 | Session 2 |
-| GAP-C8 turn counter 語意 | ⚠️ 待修 | Phase 5 收尾 |
+| GAP-C8 turn counter 語意 | ✅ 已修 | 2026-10-18 核對 |
 
 **測試結果（Session 3 結尾）**：`407 passed / 0 failed / 7 skipped`
