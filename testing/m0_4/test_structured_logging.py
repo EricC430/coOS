@@ -180,11 +180,66 @@ class TestLogPrivacy:
                 payload={"raw_text": "user typed secret"},
             )
 
+    def test_l1_payload_blocked_from_cloud(self, tmp_path):
+        """AC-6: content_raw may sit in a local payload for the local LLM, but
+        raw_tracking_logs writes must stay in SQLite even when a cloud engine exists.
+
+        The cloud boundary is AsyncDBAdapter's local-table routing in main.py,
+        so this drives that adapter with a cloud engine that must not be touched.
+        """
+        import sqlite3
+        from unittest.mock import MagicMock
+
+        from services.m0_4_logging.schema import LogEvent
+
+        event = LogEvent(
+            module="M1.1",
+            action="content_capture",
+            level="INFO",
+            payload={"content_raw": "L1 plaintext code snippet"},
+        )
+        # Local payload is allowed to carry content_raw
+        assert event.payload["content_raw"] == "L1 plaintext code snippet"
+
+        from services.main import AsyncDBAdapter
+
+        db_path = tmp_path / "coos_local.db"
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE raw_tracking_logs (id TEXT PRIMARY KEY, module TEXT, "
+            "action TEXT, level TEXT, payload TEXT)"
+        )
+        conn.commit()
+
+        cloud_engine = MagicMock()
+        adapter = AsyncDBAdapter(conn, pg_engine=cloud_engine, sqlite_path=str(db_path))
+        asyncio.run(adapter.execute(
+            "INSERT INTO raw_tracking_logs (id, module, action, level, payload) "
+            "VALUES (:id, :module, :action, :level, :payload)",
+            {
+                "id": event.id,
+                "module": event.module,
+                "action": event.action,
+                "level": event.level,
+                "payload": json.dumps(event.payload),
+            },
+        ))
+        row = asyncio.run(adapter.fetch_one(
+            "SELECT payload FROM raw_tracking_logs WHERE id = :id", {"id": event.id}
+        ))
+        conn.close()
+
+        assert cloud_engine.connect.call_count == 0, "L1 log must never reach the cloud engine"
+        assert row is not None
+        assert json.loads(row["payload"])["content_raw"] == "L1 plaintext code snippet"
+
 
 class TestSeparatedLogging:
     def test_llm_inference_log_writes_to_sqlite(self, tmp_path):
         """Verify that LLM calls are written directly to llm_inference_logs table."""
         import sqlite3
+
         from services.m0_4_logging.writer import LogWriter
 
         db_path = tmp_path / "test_llm.db"
@@ -223,6 +278,7 @@ class TestSeparatedLogging:
     def test_system_execution_log_writes_to_sqlite(self, tmp_path):
         """Verify that system execution logs are written directly to system_execution_logs table."""
         import sqlite3
+
         from services.m0_4_logging.writer import LogWriter
 
         db_path = tmp_path / "test_exec.db"
@@ -257,6 +313,7 @@ class TestSeparatedLogging:
     def test_async_multi_table_batch_write(self, tmp_path):
         """Verify that AsyncLogWriter can write to all three tables concurrently and asynchronously."""
         import sqlite3
+
         from services.m0_4_logging.writer import AsyncLogWriter
 
         db_path = str(tmp_path / "async_multi.db")
