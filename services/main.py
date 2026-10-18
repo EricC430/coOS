@@ -11,10 +11,10 @@ coOS FastAPI Sidecar — 主入口
          docs/modules/M1_2_breakpoint_detection_SPEC.md v1.1
 """
 import asyncio
-import threading
 import json
 import logging
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -71,7 +71,8 @@ def get_safe_user_id(request: Request) -> UUID:
         return UUID("00000000-0000-0000-0000-000000000000")
 
 
-from dataclasses import dataclass, field as _dc_field
+from dataclasses import dataclass
+from dataclasses import field as _dc_field
 
 
 @dataclass
@@ -263,7 +264,6 @@ class AsyncDBAdapter:
               secondary_window_snapshot / tab_switch / privacy_assertion_*
         """
         import json
-        from datetime import timedelta
         from types import SimpleNamespace
 
         date_start = str(for_date)
@@ -323,7 +323,6 @@ class AsyncDBAdapter:
           - intent_logs.intent_label from 'telemetry' source is L2 -- cloud-safe
           - goals.progress (numeric) and promises count are L3 -- cloud-safe
         """
-        from datetime import timedelta
 
         date_end = str(for_date + timedelta(days=1))
 
@@ -499,14 +498,12 @@ class AsyncDBAdapter:
         end_time_str = "00:00"
         if end_timestamp_iso:
             try:
-                from datetime import timezone
-                import re as _re
                 # Normalise to UTC-aware datetime
                 _ts = end_timestamp_iso.rstrip("Z")
                 if "+" in _ts:
                     _ts = _ts[:_ts.index("+")]
                 from datetime import datetime as _dt
-                _end_dt = _dt.fromisoformat(_ts).replace(tzinfo=timezone.utc)
+                _end_dt = _dt.fromisoformat(_ts).replace(tzinfo=UTC)
                 end_time_str = _end_dt.strftime("%H:%M")
                 _dur_s = int(activity_minutes * 60)
                 from datetime import timedelta as _td
@@ -1217,8 +1214,9 @@ async def lifespan(app: FastAPI):
     # [M4.4.3 SPEC §9] Nightly Draft Cron — 每日 02:00 產出前一日反思草稿
     # [RISK-01] 草稿永遠 is_draft=True, is_reviewed=False，不自動核准
     async def draft_cron_loop():
-        from m4_4_elicitation.draft_scheduler import run_draft_cron
         import datetime as _dt
+
+        from m4_4_elicitation.draft_scheduler import run_draft_cron
 
         while True:
             try:
@@ -1327,6 +1325,7 @@ app = FastAPI(title="coOS Sidecar", version="0.1.0", lifespan=lifespan)
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     from fastapi.responses import JSONResponse
+
     from m0_4_logging.writer import get_logger as get_log_writer
     log_writer = get_log_writer()
     payload = {
@@ -1354,7 +1353,9 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     import traceback
+
     from fastapi.responses import JSONResponse
+
     from m0_4_logging.writer import get_logger as get_log_writer
     log_writer = get_log_writer()
     tb_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
@@ -1910,7 +1911,6 @@ async def update_settings_endpoint(role_id: str, payload: SettingsUpdate, reques
         {"uid": str(user_id)}
     )
     
-    from datetime import UTC, datetime
     now_str = datetime.now(tz=UTC).strftime('%Y-%m-%dT%H:%M:%fZ')
     
     consent_mappings = [
@@ -2184,7 +2184,7 @@ async def get_domain_settings(role_id: str, request: Request) -> dict[str, Any]:
     work_extras: list[str] = json.loads(row["work_domains_extra"] or "[]") if row else []
     ent_extras: list[str] = json.loads(row["entertainment_domains_extra"] or "[]") if row else []
 
-    from m1_2_breakpoint.breakpoint_engine import _WORK_DOMAINS, _ENTERTAINMENT_DOMAINS
+    from m1_2_breakpoint.breakpoint_engine import _ENTERTAINMENT_DOMAINS, _WORK_DOMAINS
     return {
         "work_domains_default": sorted(_WORK_DOMAINS),
         "work_domains_extra": work_extras,
@@ -2588,12 +2588,13 @@ async def m6_4_topic_groups(request: Request, date: str, role_id: str | None = N
         ai_local_host = settings.ai_local_host if settings else ""
         if ai_local_host and _gemma_pipeline:
             try:
-                from m4_4_elicitation.gibbs_template import _call_local_gemma
                 from config import settings as _cfg
+                from m4_4_elicitation.gibbs_template import _call_local_gemma
                 gemma_model = getattr(_cfg, "gemma_model", "gemma-4-e4b-it-4bit")
                 raw = await _call_local_gemma(prompt, ai_local_host, model=gemma_model)
                 if raw:
-                    import json as _json, re as _re
+                    import json as _json
+                    import re as _re
                     m = _re.search(r"\{.*\}", raw, _re.DOTALL)
                     if m:
                         data = _json.loads(m.group(0))
@@ -2795,8 +2796,9 @@ async def m4_4_trigger_draft_cron(request: Request, for_date: str | None = None)
     [RISK-01] 草稿永遠 is_draft=True, is_reviewed=False，不自動核准。
     for_date: 可選，格式 YYYY-MM-DD。若指定，則查詢該日而非昨日（僅限手動測試用途）。
     """
-    from m4_4_elicitation.draft_scheduler import run_draft_cron
     import datetime as _dt
+
+    from m4_4_elicitation.draft_scheduler import run_draft_cron
 
     user_id = get_safe_user_id(request)
     if not user_id or not _db_adapter:
@@ -3092,14 +3094,14 @@ async def _resolve_session_thread_id(
     last_created_at = row["created_at"]
 
     if create_if_new:
-        from datetime import datetime, timezone
+        from datetime import datetime
         try:
             clean_time = last_created_at.replace("Z", "+00:00")
             dt = datetime.fromisoformat(clean_time)
         except Exception:
             return last_thread_id, None
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         diff = (now - dt).total_seconds()
         if diff > 1800:
             import uuid
@@ -3298,7 +3300,7 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     # confidence >= 0.7 的時段不觸發（SPEC §8 「AI 裝傻」反模式）
     elicitation_messages: list[str] = []
     try:
-        from m4_4_elicitation.controller import ElicitationController, CONFIDENCE_THRESHOLD
+        from m4_4_elicitation.controller import ElicitationController
         if not hasattr(app.state, "elicitation_controller"):
             app.state.elicitation_controller = ElicitationController()
         # conversation_turn_counter 記錄真實對話 turn 數（非注入次數）
@@ -3410,8 +3412,16 @@ async def _ai_generate_expert(user_description: str, role_id: str) -> dict | Non
     [R03 §1] BDI 結構人設：belief (背景知識)、desire (助人目標)、intention (溝通風格)。
     [R05 §跨越恐怖谷] 副語言線索注入在 personality_prompt 中定義。
     """
-    from m4_1_router.routing_engine import PERSONA_MODEL, PERSONA_MODEL_FALLBACK, get_cloud_llm_client, RateLimitError, ServiceUnavailableError
-    import uuid, json
+    import json
+    import uuid
+
+    from m4_1_router.routing_engine import (
+        PERSONA_MODEL,
+        PERSONA_MODEL_FALLBACK,
+        RateLimitError,
+        ServiceUnavailableError,
+        get_cloud_llm_client,
+    )
 
     # [W2] PersonaCard v2 結構化生成 prompt
     prompt = f"""你是一個 AI 顧問角色生成器，專門設計具備真實感的 AI 專家夥伴。
@@ -3557,7 +3567,7 @@ async def _ai_generate_expert(user_description: str, role_id: str) -> dict | Non
     # [W2] PersonaCard v2: 嘗試校驗與編譯
     persona_card_json = None
     try:
-        from m4_2_persona.persona_card import persona_card_from_dict, compile_to_prompt, critic_check
+        from m4_2_persona.persona_card import compile_to_prompt, critic_check, persona_card_from_dict
         card = persona_card_from_dict(data)
         passed, issue_list = critic_check(card)
         if passed:
@@ -3670,8 +3680,9 @@ async def m4_1_match_persona(body: dict[str, Any]) -> dict[str, Any]:
         if auto_generated_expert:
             active_experts = [auto_generated_expert]
 
-    from m4_1_router.routing_engine import RouteDecision, route_with_confidence
     import uuid as _uuid
+
+    from m4_1_router.routing_engine import RouteDecision, route_with_confidence
 
     # 若只有剛自動生成的單一專家，直接配對（跳過 routing engine 避免 fallback 到 tool_ai）
     if auto_generated_expert and len(active_experts) == 1:

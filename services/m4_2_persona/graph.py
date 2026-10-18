@@ -141,7 +141,7 @@ async def persona_responder_node(state: PersonaState) -> PersonaState:
         try:
             import json
             card_data = json.loads(raw_card_str) if isinstance(raw_card_str, str) else raw_card_str
-            from .persona_card import persona_card_from_dict, compile_to_prompt
+            from .persona_card import compile_to_prompt, persona_card_from_dict
             card = persona_card_from_dict(card_data)
             compiled_prompt = compile_to_prompt(card)
             anti_sycophancy_stances = card_data.get("stances")

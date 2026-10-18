@@ -130,8 +130,8 @@ class DriftShield:
 
     async def _semantic_audit(self, text: str) -> bool:
         """[RISK-M2.3-C] Direct call to ai.local to check for instruction drift."""
-        import asyncio
         import time
+
         from m0_4_logging.writer import get_logger as get_log_writer
 
         log_writer = get_log_writer()
@@ -200,6 +200,6 @@ class DriftShield:
                 enqueue_inference(priority=1, fn=_run_request, tag="drift_audit"),
                 timeout=18.0
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("[M2.3] Semantic audit timed out in priority queue/execution (18s limit)")
             return False

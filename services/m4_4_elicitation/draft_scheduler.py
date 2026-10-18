@@ -20,10 +20,8 @@ from datetime import date, timedelta
 from typing import Any
 
 from .gibbs_template import (
-    DaySignals,
-    GibbsCard,
-    build_gibbs_cards,
     build_gibbs_analysis,
+    build_gibbs_cards,
     friendly_app_name,
 )
 from .role_inference import RoleCandidate, build_candidates, infer_role
@@ -226,8 +224,8 @@ async def _compress_undigested_threads(
     then calls ChatCompressor.compress_thread() for each.
     """
     try:
-        from m2_2_gemma.chat_compressor import ChatCompressor
         from config import settings as _cfg
+        from m2_2_gemma.chat_compressor import ChatCompressor
         model = getattr(_cfg, "gemma_model", "gemma-4-e4b-it-4bit")
     except Exception as e:
         logger.warning("[M4.4/M2.2.2] ChatCompressor import failed (non-fatal): %s", e)

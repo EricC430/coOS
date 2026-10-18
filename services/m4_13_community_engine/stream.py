@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 logger = logging.getLogger(__name__)
 

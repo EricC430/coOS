@@ -140,6 +140,7 @@ class _CloudLLMClient:
 
     async def complete(self, prompt: str, max_output_tokens: int = 100, temperature: float = 0.1) -> str:
         import os
+
         from config import get_settings
         settings = get_settings()
         api_key = settings.gemini_api_key or os.environ.get("GOOGLE_API_KEY")
@@ -199,7 +200,7 @@ class _CloudLLMClient:
                         completion_tokens=completion_tokens,
                     ))
                     return result_text
-            except (RateLimitError, asyncio.TimeoutError, httpx.TimeoutException) as e:
+            except (TimeoutError, RateLimitError, httpx.TimeoutException) as e:
                 last_err = e
                 wait = min(60.0, (self._BASE_BACKOFF ** attempt) + random.uniform(0, 1))
                 logger.warning("[M4.1.1] %s attempt %d failed (%s), retrying in %.1fs",

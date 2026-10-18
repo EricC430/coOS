@@ -6,12 +6,11 @@ SPEC: docs/modules/M3_7_community_ui_SPEC.md §7.4
 All data flows through M6.6 PostgreSQL (L3 cloud).
 Privacy: posts pass through Eguard (M2.3) before publishing.
 """
-import asyncio
 import logging
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from m6_2_postgresql.engine import cloud_session_ctx, get_cloud_session
@@ -20,30 +19,29 @@ from . import stream as sse_broker
 from .isolation_middleware import get_current_user_id
 from .schemas import (
     ChallengeApprove,
-    ChallengeRead,
     ChallengeCreate,
-    CommunityCodex,
+    ChallengeRead,
     CodexUpdate,
+    CommitmentsView,
+    CommunityCodex,
     CommunityCreate,
-    CommunityEvent,
     CommunityJoin,
     CommunityRead,
-    CommitmentsView,
+    CommunitySettingsUpdate,
     DraftResult,
+    JoinRequestAction,
+    JoinRequestRead,
     LikeResult,
+    MemberRead,
     PublishRequest,
     PublishResult,
+    RoleUpdateRequest,
     SocialPostDraft,
     SocialPostRead,
     StakeCreate,
     StakeRead,
     ValidationCreate,
     ValidationResult,
-    MemberRead,
-    RoleUpdateRequest,
-    JoinRequestRead,
-    JoinRequestAction,
-    CommunitySettingsUpdate,
 )
 from .stake_engine import can_stake_on_task
 
@@ -637,8 +635,9 @@ async def create_stake_endpoint(body: StakeCreate, request: Request):
         }
 
     with cloud_session_ctx() as session:
-        from m6_6_community.repository import create_stake
         from datetime import datetime as dt
+
+        from m6_6_community.repository import create_stake
 
         deadline = None
         if body.deadline:
@@ -854,8 +853,9 @@ async def generate_ai_challenge_endpoint(
 
     if _is_cloud():
         with cloud_session_ctx() as session:
+            from sqlalchemy import func, select
+
             from m6_6_community.models import Community, CommunityMember, SocialPost, Stake
-            from sqlalchemy import select, func
 
             comm = session.get(Community, uuid.UUID(community_id))
             if not comm:
@@ -913,7 +913,7 @@ async def generate_ai_challenge_endpoint(
             description = f"挑戰每天專注學習 2 小時，並在社群分享你的精要筆記！本群目前累積了 {active_commitments_count} 個公開承諾，快來加入學習潮流！"
         elif theme == "career":
             title = "本週挑戰：模擬面試與技能演練"
-            description = f"尋找夥伴進行一次 30 分鐘的模擬面試，或向社群分享你的一項核心技能展示。讓我們一起拿到 Offer！"
+            description = "尋找夥伴進行一次 30 分鐘的模擬面試，或向社群分享你的一項核心技能展示。讓我們一起拿到 Offer！"
         elif theme == "cooking":
             title = "本週挑戰：解鎖全新料理"
             description = "這週嘗試烹飪一道你從未做過的料理，並與社群分享精美的食物照片或食譜心得！"

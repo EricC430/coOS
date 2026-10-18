@@ -15,7 +15,7 @@ import math
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ def _iso_to_ts(iso_str: str) -> float:
 
 def _ts_to_iso(ts: float) -> str:
     """Convert unix timestamp to ISO string."""
-    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.fromtimestamp(ts, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class PersonaMemoryStore:

@@ -18,14 +18,11 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from dataclasses import dataclass
 from typing import Any
 
 from .topic_dedup import (
     TopicAnchor,
-    generate_topic_id,
-    normalize_topic_text,
     resolve_topic,
 )
 
@@ -136,8 +133,6 @@ async def detect_topic_anchor(
         try:
             from m4_1_router.routing_engine import (
                 PERSONA_MODEL_FALLBACK,
-                RateLimitError,
-                ServiceUnavailableError,
                 get_cloud_llm_client,
             )
             client = get_cloud_llm_client(PERSONA_MODEL_FALLBACK)
@@ -232,8 +227,8 @@ async def detect_topic_anchor(
                     "INSERT INTO topic_anchors "
                     "(id, role_id, label, intent, motivation, status, "
                     "mention_count, first_seen, last_seen, created_at, updated_at) "
-                    f"VALUES (:id, :rid, :label, :intent, :motivation, 'active', "
-                    f"1, datetime('now'), datetime('now'), datetime('now'), datetime('now'))",
+                    "VALUES (:id, :rid, :label, :intent, :motivation, 'active', "
+                    "1, datetime('now'), datetime('now'), datetime('now'), datetime('now'))",
                     {
                         "id": topic_id,
                         "rid": role_id,

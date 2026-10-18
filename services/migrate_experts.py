@@ -9,12 +9,12 @@ M4.2 Persona - 舊專家資料批次遷移工具 (Legacy Expert Migration Tool)
 - 透過 critic_check() 校驗，通過後編譯為結構化提示詞，並寫回資料庫。
 """
 
-import sys
-import os
-import json
-import sqlite3
 import asyncio
+import json
 import logging
+import os
+import sqlite3
+import sys
 
 # 設定日誌
 logging.basicConfig(
@@ -29,8 +29,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from config import get_settings
-    from m4_1_router.routing_engine import get_cloud_llm_client, PERSONA_MODEL, PERSONA_MODEL_FALLBACK
-    from m4_2_persona.persona_card import persona_card_from_dict, compile_to_prompt, critic_check
+    from m4_1_router.routing_engine import PERSONA_MODEL, PERSONA_MODEL_FALLBACK, get_cloud_llm_client
+    from m4_2_persona.persona_card import compile_to_prompt, critic_check, persona_card_from_dict
 except ImportError as e:
     logger.error("無法載入必要的模組，請確保在 services 目錄中執行此腳本。錯誤：%s", e)
     sys.exit(1)
