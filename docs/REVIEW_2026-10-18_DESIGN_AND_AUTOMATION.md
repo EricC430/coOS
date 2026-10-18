@@ -186,6 +186,13 @@
 | B4 | 🟡 | M4.4 | **RISK-15：送雲用的 `ai_description_generalized` 原文帶出 content_summary**。template 卡片（以及本地 Gemma 卡片）會在描述中引用 content_summary，而 `_eguard_generalize` 只呼叫 `EguardFilter.mask_pii`，只遮 PII 樣式、不做主題泛化，所以 generalized 欄位與本地欄位完全相同。目前沒有任何程式把這個欄位同步上雲，屬於潛在洩漏 | `services/m4_4_elicitation/draft_scheduler.py:36-46`、`gibbs_template.py:746-775`；`testing/m4_4/...::test_draft_uses_generalized_content` |
 | B3 | 🟡 | M6.4 | **本地 `daily_reflection_segments` 沒有 `mood_score` 欄位**，1–10 範圍只在 Pydantic 層與雲端 migration。`PATCH /api/m6_4/reflections/{id}` 若帶 `mood_score`，SQLite UPDATE 會失敗，而 `AsyncDBAdapter.execute` 只記 warning 不往上拋，所以整筆更新（含 `is_reviewed`）會靜默遺失，API 仍回 `updated`（閱讀程式碼確認）。前端目前不送 `mood_score`，屬於潛在問題 | `services/main.py:900-924`、`:2683-2721`、`:198-238`；`testing/m6_4/test_local_store.py::test_mood_score_range` |
 
+**2026-10-19 進度：B1、B2 已修正**（分支 `claude/youthful-pascal-576f12`，commit `4c32796`，已審查並 merge）。
+- `XPGatekeeper` 的四個 XP 寫入方法都在同一把 process-wide 鎖下執行。
+- `LiveXPStore` 改為同步，寫入先緩衝，再由 `commit()` 以單一 SQLite transaction 寫出。claim 用 `UPDATE ... WHERE xp_settled = 0 AND is_draft = 0 AND is_reviewed = 1`，搶輸就整筆 rollback 並回 `GATEKEEPER_002`。
+- XP 以相對增量寫入 `current_xp` 與 `lifetime_xp`；扣點時加了餘額不可為負的條件。
+- `/api/m6_5/grant_badge` 改走 gatekeeper；`/api/m6_5/draw_card` 的扣點原本沒有寫回 DB，也一併修正。
+- 審查備註：本地 `daily_reflections` 沒有 `is_draft` / `is_reviewed` / `xp_settled` 欄位，預設值會把整份反思視為草稿，所以 `settle_earned_xp` 走本地整份反思一律拒絕。這符合 RISK-01 fail closed；核准流程走的是 segment，不受影響。
+
 ### 7.3 其他觀察
 
 - **既有 RISK-15 測試是空轉的**：`testing/m4_4` 的 `test_draft_generalized_field_excludes_content` 與 `TestRisk15DualField::test_draft_stores_generalized_field` 把 `content_summary` 放在 `focus_session_ended` 的 payload，但 `group_signals` 只從 `content_capture` 事件讀 content_summary，所以這兩項沒有測到內文路徑。新測試已改用 `content_capture`。
@@ -200,3 +207,4 @@
 - 後端 `uv run pytest ../testing`：**480 passed / 0 failed / 17 skipped / 4 xfailed**（287 秒）。和第一輪基線 472 passed / 13 skipped 相比：+8 項新測試通過，+4 項新雲端測試 skip，4 項 xfail 即 B1–B4。
 - 前端未改動，未重跑。
 - **2026-10-19 合併後**：本分支已 merge 進 `claude/design-review-2026-10-18`（含 D1(a)、D6），無衝突。合併後全套後端：**504 passed / 0 failed / 17 skipped / 4 xfailed**（xfail 即 B1–B4）。
+- **2026-10-19 合併 B1/B2 修正後**：全套後端 **514 passed / 0 failed / 17 skipped / 2 xfailed**（剩 B3、B4）。
