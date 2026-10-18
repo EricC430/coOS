@@ -170,7 +170,7 @@ arq==0.25.*    # 排程
    | `gemini-2.5-flash` | 5 | 250,000 | 20 |
    | `gemini-2.5-pro` | 0 | 0 | 0 |
    | `Gemma 4 26B` | 15 | unlimited | 1500 |
-   | `Gemma 4 26B` | 31 | unlimited | 1500 |
+   | `Gemma 4 31B` | 31 | unlimited | 1500 |
 
 ### 5.1 任務難度分層與 LLM 路由策略 (LLM Tiering & Fallback)
 
