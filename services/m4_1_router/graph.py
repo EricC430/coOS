@@ -43,17 +43,34 @@ async def _tool_ai_reply_gemini(
     user_msg: str,
     active_experts: list,
     history: list[dict] | None = None,
+    role_id: str = "",
 ) -> tuple[str, bool]:
     """
     工具型 AI 以 Gemini 生成真實對話（帶歷史），並偵測是否建議配對專家。
     返回 (reply_text, suggest_match)。
     """
+    from m2_3_eguard import cloud_gate
+
     from .routing_engine import (
         PERSONA_MODEL,
         PERSONA_MODEL_FALLBACK,
         RateLimitError,
         ServiceUnavailableError,
         get_cloud_llm_client,
+    )
+
+    # [R07: POST §4.3][DEVIATION-09 D1a] 上雲前遮蔽 PII；遮蔽失敗即不上雲（fail closed）
+    try:
+        masked_msg = cloud_gate.mask_text_for_cloud(user_msg, role_id=role_id)
+        history, history_entities = cloud_gate.mask_history_for_cloud(
+            (history or [])[-12:], role_id=role_id
+        )
+    except Exception as e:
+        logger.error("[M4.1] PII mask failed, cloud call blocked: %s", e)
+        return _tool_ai_fallback(user_msg), False
+    user_msg = masked_msg.sanitized_text
+    await cloud_gate.emit_cloud_mask_log(
+        "M4.1", role_id, masked_msg.masked_entities + history_entities
     )
 
     expert_domains = []
@@ -193,7 +210,9 @@ async def invoke_persona_node(state: RouterState) -> RouterState:
     is_tool_ai = not persona_id or persona_id == "tool_ai_default" or persona_id.startswith("tool_ai_")
     if is_tool_ai:
         history = state.get("chat_history") or []
-        reply, suggest_match = await _tool_ai_reply_gemini(user_msg, active_experts, history)
+        reply, suggest_match = await _tool_ai_reply_gemini(
+            user_msg, active_experts, history, role_id=state.get("role_id", "")
+        )
         return {**state, "persona_response": reply, "suggest_match": suggest_match}
 
     # [Persona path] M4.2 狀態機

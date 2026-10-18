@@ -5,10 +5,10 @@ SPEC: docs/modules/M3_7_community_ui_SPEC.md §4 (M4.13.3)
 All queries must carry community_id + member-check.
 This module wraps the isolation logic as a FastAPI dependency.
 """
-import uuid
 import logging
+import uuid
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import HTTPException, Request
 
 from m6_2_postgresql.engine import get_cloud_session
 

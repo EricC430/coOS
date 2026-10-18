@@ -75,7 +75,54 @@ class TestTableCreation:
         assert cursor.fetchone() is not None
 
 
+    def test_raw_content_stores_table_exists(self, local_db):
+        """AC-4.1: raw_content_stores table exists (SPEC ss7.5)."""
+        cursor = local_db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='raw_content_stores'"
+        )
+        assert cursor.fetchone() is not None
+
+    def test_role_router_rules_table_exists(self, local_db):
+        """AC-4.2: role_router_rules table exists (M4.1.5)."""
+        cursor = local_db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='role_router_rules'"
+        )
+        assert cursor.fetchone() is not None
+
+    def test_routing_samples_table_exists(self, local_db):
+        """AC-4.3: routing_samples table exists (M4.1.1)."""
+        cursor = local_db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='routing_samples'"
+        )
+        assert cursor.fetchone() is not None
+
+    def test_routing_samples_no_raw_msg_column(self, local_db):
+        """[RISK-13] routing_samples must not have a raw-message column."""
+        cursor = local_db.execute("PRAGMA table_info(routing_samples)")
+        columns = {row[1] for row in cursor.fetchall()}
+        forbidden = {"user_msg", "raw_message", "content", "message_text"}
+        assert columns.isdisjoint(forbidden), f"forbidden columns: {columns & forbidden}"
+
+    def test_role_router_rules_scoped_by_role(self, local_db):
+        """[RISK-06] role_router_rules rows are only returned for their own role_id."""
+        local_db.execute(
+            "INSERT INTO role_router_rules (role_id, persona_id, pattern, target_domain) "
+            "VALUES ('role_csie', 'persona_math', '微積分', 'math_tutor')"
+        )
+        local_db.commit()
+        cursor = local_db.execute(
+            "SELECT * FROM role_router_rules WHERE role_id='role_family'"
+        )
+        assert cursor.fetchone() is None
+
+
 class TestSchemaConstraints:
+    def test_raw_content_stores_has_required_columns(self, local_db):
+        """AC-5.1: raw_content_stores has id, content_raw, created_at."""
+        cursor = local_db.execute("PRAGMA table_info(raw_content_stores)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert {"id", "content_raw", "created_at"}.issubset(columns)
+
     def test_raw_tracking_logs_has_required_columns(self, local_db):
         """AC-5: raw_tracking_logs has all required columns."""
         cursor = local_db.execute("PRAGMA table_info(raw_tracking_logs)")

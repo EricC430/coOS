@@ -6,11 +6,7 @@ Request/response models for the community API.
 """
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
-
 from pydantic import BaseModel, Field
-
 
 # ---------------------------------------------------------------------------
 # Community

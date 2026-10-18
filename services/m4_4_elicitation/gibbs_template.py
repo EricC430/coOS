@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -278,7 +279,7 @@ def _app_family(app_name: str) -> str:
     return _APP_FAMILY.get(app_name.strip().lower(), "")
 
 
-def _summary_tokens(sig: "DaySignals") -> set[str]:
+def _summary_tokens(sig: DaySignals) -> set[str]:
     from m4_4_elicitation.role_inference import _tokenize
     toks: set[str] = set()
     for s in sig.content_summaries:
@@ -290,16 +291,16 @@ def _parse_iso(ts: str):
     if not ts:
         return None
     try:
-        from datetime import datetime, timezone
+        from datetime import datetime
         t = ts.rstrip("Z")
         if "+" in t:
             t = t[:t.index("+")]
-        return datetime.fromisoformat(t).replace(tzinfo=timezone.utc)
+        return datetime.fromisoformat(t).replace(tzinfo=UTC)
     except Exception:
         return None
 
 
-def _should_merge(prev: "DaySignals", cur: "DaySignals") -> bool:
+def _should_merge(prev: DaySignals, cur: DaySignals) -> bool:
     """Merge cur into prev if same program with small gap, or topic overlap is high."""
     same_app = bool(prev.app_name) and prev.app_name == cur.app_name
     # Time gap between prev end and cur end (we only store end timestamps; use end-to-end
@@ -325,7 +326,7 @@ def _should_merge(prev: "DaySignals", cur: "DaySignals") -> bool:
     return False
 
 
-def _merge_pair(prev: "DaySignals", cur: "DaySignals") -> None:
+def _merge_pair(prev: DaySignals, cur: DaySignals) -> None:
     """Fold cur into prev in place. prev keeps the earlier identity, accumulates signals."""
     prev.duration_s += cur.duration_s
     # Keep the latest end timestamp as the block end
@@ -351,7 +352,7 @@ def _merge_pair(prev: "DaySignals", cur: "DaySignals") -> None:
     prev.breakpoint_confidences.extend(cur.breakpoint_confidences)
 
 
-def _session_gap_ok(prev: "DaySignals", cur: "DaySignals") -> bool:
+def _session_gap_ok(prev: DaySignals, cur: DaySignals) -> bool:
     """True if cur starts within _SESSION_GAP_S of prev's end and block stays under cap."""
     if prev.duration_s + cur.duration_s > _MAX_BLOCK_S:
         return False
@@ -362,7 +363,7 @@ def _session_gap_ok(prev: "DaySignals", cur: "DaySignals") -> bool:
     return (cur_start - pe.timestamp()) <= _SESSION_GAP_S
 
 
-def merge_into_blocks(signals: list["DaySignals"]) -> list["DaySignals"]:
+def merge_into_blocks(signals: list[DaySignals]) -> list[DaySignals]:
     """
     Collapse fragmented focus sessions into coherent activity blocks via two passes:
 
@@ -584,8 +585,9 @@ async def _call_local_gemma_once(
     prompt: str, base_url: str, model: str, timeout: float = 90.0
 ) -> tuple[str, str, str | None, int | None, int | None, int]:
     """Single attempt. Returns (text, status, error_msg, completion_tokens, prompt_tokens, latency_ms)."""
-    import httpx
     import time as _t
+
+    import httpx
     url = f"{base_url}/v1/chat/completions"
     payload = {
         "model": model,

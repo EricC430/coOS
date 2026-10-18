@@ -215,6 +215,33 @@ class TestEarnedXPSettlement:
         gk.settle_earned_xp(reviewed_reflection.id, user.id, 50)
         assert user.current_xp == 150  # 100 + 50, not overwritten to 50
 
+    def test_concurrent_settlement_safe(self, store, user, reviewed_reflection):
+        """AC-4: concurrent settlement of one reflection must succeed only once."""
+        import asyncio
+        import time
+
+        class SlowUsers(dict):
+            # Widens the window between the xp_settled check and the write,
+            # standing in for DB latency on the users row lookup.
+            def get(self, key, default=None):
+                time.sleep(0.05)
+                return super().get(key, default)
+
+        store.users = SlowUsers(store.users)
+        gk = make_gatekeeper(store)
+
+        async def run_both():
+            return await asyncio.gather(
+                asyncio.to_thread(gk.settle_earned_xp, reviewed_reflection.id, user.id, 50),
+                asyncio.to_thread(gk.settle_earned_xp, reviewed_reflection.id, user.id, 50),
+            )
+
+        results = asyncio.run(run_both())
+        successes = [r for r in results if r.success]
+        assert len(successes) == 1
+        assert user.current_xp == 50
+        assert len([e for e in store.ledger if e.xp_type == "earned"]) == 1
+
 
 # ---------------------------------------------------------------------------
 # XP staking tests
@@ -271,6 +298,30 @@ class TestGachaTransaction:
         assert result.success is False
         assert result.error_code == "GATEKEEPER_005"
         assert rich_user.current_xp == 200  # rolled back
+
+    def test_gacha_atomic_deduct_and_reward(self, store, rich_user):
+        """AC-8: deduction, reward and ledger entry are produced together."""
+        gk = make_gatekeeper(store)
+        result = gk.deduct_xp_for_gacha(user_id=rich_user.id, cost_xp=30)
+        assert result.success is True
+        assert rich_user.current_xp == 170
+        assert result.reward is not None
+        # The ledger row must reference the reward drawn in the same transaction
+        gacha_entries = [e for e in store.ledger if e.xp_type == "gacha"]
+        assert len(gacha_entries) == 1
+        assert gacha_entries[0].amount == -30
+        assert gacha_entries[0].source_module == "M3.11"
+        assert result.reward["id"] in gacha_entries[0].reason
+
+    def test_gacha_rollback_leaves_no_ledger_entry(self, store, rich_user):
+        """AC-9b: a failed draw must not leave a half-written ledger row."""
+        gk = make_gatekeeper(store)
+        result = gk.deduct_xp_for_gacha(
+            user_id=rich_user.id, cost_xp=30, force_reward_failure=True
+        )
+        assert result.success is False
+        assert result.reward is None
+        assert store.ledger == []
 
     def test_gacha_insufficient_xp(self, store, user):
         """AC: gacha rejects when XP insufficient."""

@@ -101,6 +101,34 @@ class TestPrivacyBoundaryStatic:
             "ai_experts.personality_prompt 4096 char limit not found in migration"
         )
 
+    def test_users_has_uuid_primary_key_in_migration(self):
+        """AC-4 (offline): the cloud migration declares users.id as a UUID primary key.
+
+        Runs the migration's upgrade() against a recording `op`, so the check reads
+        the real Column objects instead of grepping text.
+        """
+        import importlib.util
+        from unittest.mock import MagicMock
+
+        import sqlalchemy as sa
+
+        path = CLOUD_MIGRATION_DIR / "20260530_1300_m6_2_postgresql_schemas.py"
+        spec = importlib.util.spec_from_file_location("_m6_2_cloud_migration", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.op = MagicMock()
+        module.upgrade()
+
+        users_calls = [
+            c for c in module.op.create_table.call_args_list if c.args and c.args[0] == "users"
+        ]
+        assert len(users_calls) == 1
+        items = users_calls[0].args[1:]
+        id_col = next(i for i in items if isinstance(i, sa.Column) and i.name == "id")
+        assert isinstance(id_col.type, sa.UUID)
+        pk = next(i for i in items if isinstance(i, sa.PrimaryKeyConstraint))
+        assert [str(c) for c in pk._pending_colargs] == ["id"]
+
 
 class TestEngineModule:
     def test_get_cloud_engine_returns_none_without_url(self, monkeypatch):
@@ -197,3 +225,36 @@ class TestCloudTableCreation:
         assert l1_tables.isdisjoint(table_names), (
             f"L1 tables found in cloud DB: {l1_tables & table_names}"
         )
+
+    # AC-4..6 read the live schema instead of inserting rows as the SPEC example
+    # does: SUPABASE_DB_URL may point at the real project, so these stay read-only.
+
+    def test_users_has_uuid_primary_key(self, cloud_db):
+        """AC-4: users.id is a UUID column."""
+        from sqlalchemy import text
+        result = cloud_db.execute(text(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_name = 'users' AND column_name = 'id'"
+        ))
+        assert result.fetchone()[0] == "uuid"
+
+    def test_ai_experts_personality_prompt_max_length(self, cloud_db):
+        """AC-5: ai_experts.personality_prompt is capped at 4096 characters (4KB)."""
+        from sqlalchemy import text
+        result = cloud_db.execute(text(
+            "SELECT character_maximum_length FROM information_schema.columns "
+            "WHERE table_name = 'ai_experts' AND column_name = 'personality_prompt'"
+        ))
+        max_len = result.fetchone()[0]
+        assert max_len is not None and max_len <= 4096
+
+    def test_xp_ledger_amount_must_be_nonzero(self, cloud_db):
+        """AC-6: xp_ledger carries a CHECK constraint rejecting amount = 0."""
+        from sqlalchemy import text
+        result = cloud_db.execute(text(
+            "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+            "JOIN pg_class t ON t.oid = c.conrelid "
+            "WHERE t.relname = 'xp_ledger' AND c.contype = 'c'"
+        ))
+        definitions = [row[0] for row in result.fetchall()]
+        assert any("amount" in d and "<> 0" in d for d in definitions), definitions

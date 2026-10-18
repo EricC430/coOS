@@ -57,6 +57,7 @@ class GemmaEdgeClient:
         """
         import asyncio
         import time
+
         from m0_4_logging.writer import get_logger as get_log_writer
 
         log_writer = get_log_writer()

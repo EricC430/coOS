@@ -278,6 +278,38 @@ class TestCloudRoleContextTables:
         ))
         assert r.fetchone()[0] is True
 
+    def test_role_delete_cascades_projects(self, cloud_conn):
+        """AC-5: deleting a role deletes its projects (ON DELETE CASCADE).
+
+        Runs inside a transaction that is always rolled back, because
+        SUPABASE_DB_URL may point at the real project.
+        """
+        from sqlalchemy import text
+        user_id, role_id = str(uuid.uuid4()), str(uuid.uuid4())
+        trans = cloud_conn.begin()
+        try:
+            cloud_conn.execute(
+                text("INSERT INTO users (id, display_name) VALUES (:uid, 'm6_3 test')"),
+                {"uid": user_id},
+            )
+            cloud_conn.execute(
+                text("INSERT INTO roles (id, user_id, slug, display_name) "
+                     "VALUES (:rid, :uid, 'm6-3-test', 'M6.3 test')"),
+                {"rid": role_id, "uid": user_id},
+            )
+            cloud_conn.execute(
+                text("INSERT INTO role_projects (id, role_id, name) "
+                     "VALUES (gen_random_uuid(), :rid, 'to be deleted')"),
+                {"rid": role_id},
+            )
+            cloud_conn.execute(text("DELETE FROM roles WHERE id = :rid"), {"rid": role_id})
+            orphans = cloud_conn.execute(
+                text("SELECT id FROM role_projects WHERE role_id = :rid"), {"rid": role_id}
+            ).fetchall()
+            assert orphans == []
+        finally:
+            trans.rollback()
+
 
 # ---------------------------------------------------------------------------
 # Helpers

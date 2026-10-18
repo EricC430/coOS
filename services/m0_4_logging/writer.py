@@ -14,7 +14,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from .schema import LogEvent, LLMInferenceLog, SystemExecutionLog
+from .schema import LLMInferenceLog, LogEvent, SystemExecutionLog
 
 # Default DB path (relative to project root); callers may override.
 _DEFAULT_DB = (

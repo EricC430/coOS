@@ -18,8 +18,10 @@
 `services/` 無任何 `m4_7_*`。`docs/modules/M4_7_obsidian_sync_SPEC.md` 存在但零程式碼。
 **處置選項**：補實作，或在 `04_module_registry.md` / `06_implementation_phases.md` 將其移出 Phase 4（需使用者拍板，屬職責邊界調整）。
 
-### GAP-A2 ❌ 前端 vitest 驗收測試（M3.1–M3.6 全部）
-`apps/desktop/src` 下 **0 個** `*.test.*` 檔案。各 M3 SPEC 的 Acceptance Criteria 皆以 vitest 撰寫（如 M3.4「未配對 Persona 不可點」「語音按鈕走 VoiceTranscriptionRouter」），違反 CLAUDE.md 鐵則 3「先寫測試」。
+### GAP-A2 ✅ 前端 vitest 驗收測試（已補，2026-10-18 核對）
+> 2026-10-18 核對：測試位於 `apps/desktop/tests/m3_1`–`m3_7`（不在 `src/`），`pnpm test` 為 7 files / 40 tests 全過。各 M3 SPEC §6 的測試名稱尚未逐條對上，見 `REVIEW_2026-10-18_DESIGN_AND_AUTOMATION.md`。以下為原始描述。
+
+原描述：`apps/desktop/src` 下 **0 個** `*.test.*` 檔案。各 M3 SPEC 的 Acceptance Criteria 皆以 vitest 撰寫（如 M3.4「未配對 Persona 不可點」「語音按鈕走 VoiceTranscriptionRouter」），違反 CLAUDE.md 鐵則 3「先寫測試」。
 
 ### GAP-A3 ✅ `drift_rules.yaml` 缺檔（已修 Session 2）
 `services/m2_3_eguard/drift_rules.yaml` 已建立，77 條關鍵字（英/中）。
@@ -70,6 +72,7 @@
 ### GAP-C3 ⚠️ M4.4 套問缺 telemetry confidence 檢查（待修，Phase 5 收尾）
 
 SPEC §5「自信度 ≥ 0.7 不觸發套問」——main.py 注入路徑未讀 `TelemetrySegmentReport`。
+> 2026-10-18 核對：`main.py` 的 M4.4 注入區塊呼叫 `ec.can_elicit(...)` 時沒有傳入任何 confidence 值，檢查仍未生效（原本 import 了 `CONFIDENCE_THRESHOLD` 但從未使用，已被 ruff F401 移除）。資料來源（M1.1 遙測分段 vs. M2.2 意圖向量）需拍板，見 `REVIEW_2026-10-18_DESIGN_AND_AUTOMATION.md`。
 
 ### GAP-C4 ✅ 配對問候語不落地（已修 Session 2）
 
@@ -87,7 +90,9 @@ JSON 解析後新增：(1) `_FORBIDDEN_PHRASES` 禁用語檢查（含「我是AI
 
 改為 `ORDER BY created_at DESC LIMIT 12` 後 `reversed()`，確保取最近 12 條。
 
-### GAP-C8 ⚠️ Elicitation turn counter 語意不同步（待修，Phase 5 收尾）
+### GAP-C8 ✅ Elicitation turn counter 語意不同步（已修，2026-10-18 核對）
+
+> 2026-10-18 核對：`main.py` 改用 `app.state.conversation_turn_counter`，每次對話都 +1（不論是否套問），cooldown 以真實對話輪次計算。以下為原始描述。
 
 `app.state.elicitation_turn_counter` 是注入嘗試次數非對話 turn 數。DEVIATION-01 拍板後需修正單位，使 cooldown 以實際對話輪次計算。
 
@@ -114,7 +119,7 @@ JSON 解析後新增：(1) `_FORBIDDEN_PHRASES` 禁用語檢查（含「我是AI
 | 項目 | 狀態 | Session |
 |------|------|---------|
 | GAP-A1 M4.7 Obsidian | ➡️ 移至 Phase 6 | 拍板 |
-| GAP-A2 前端 vitest 測試 | ❌ 未實作 | Phase 6 前補齊 |
+| GAP-A2 前端 vitest 測試 | ✅ 已補（7 files / 40 tests） | 2026-10-18 核對 |
 | GAP-A3 drift_rules.yaml | ✅ 已修 | Session 2 |
 | GAP-A4 最後專家刪除守門員 | ✅ 已修 | Session 3 |
 | GAP-B1 草稿排程器 | ✅ 已修 | Session 2 |
@@ -129,6 +134,6 @@ JSON 解析後新增：(1) `_FORBIDDEN_PHRASES` 禁用語檢查（含「我是AI
 | GAP-C5 expert 品質無校驗 | ✅ 已修 | Session 3 |
 | GAP-C6 DRIFT async 迴歸 | ✅ 已修 | Session 2 |
 | GAP-C7 歷史方向錯誤 | ✅ 已修 | Session 2 |
-| GAP-C8 turn counter 語意 | ⚠️ 待修 | Phase 5 收尾 |
+| GAP-C8 turn counter 語意 | ✅ 已修 | 2026-10-18 核對 |
 
 **測試結果（Session 3 結尾）**：`407 passed / 0 failed / 7 skipped`

@@ -37,6 +37,21 @@ def _load_eguardignore_paths() -> list[str]:
         return []
 
 
+def _luhn_valid(candidate: str) -> bool:
+    """Luhn checksum over the digits of a card-number candidate (separators ignored)."""
+    digits = [int(c) for c in candidate if c.isdigit()]
+    if not 13 <= len(digits) <= 16:
+        return False
+    total = 0
+    for i, d in enumerate(reversed(digits)):
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
+
 def _is_ignored(source_path: str | None, ignore_patterns: list[str]) -> bool:
     if not source_path:
         return False
@@ -73,9 +88,19 @@ class EguardFilter:
                 if LOCALHOST_PATTERN.search(masked):
                     continue  # do not mask 127.0.0.1 in code
 
-            if pattern.search(masked):
-                replacement = _REPLACEMENT_MAP.get(name, f"[REDACTED_{name}]")
-                masked = pattern.sub(replacement, masked)
+            replacement = _REPLACEMENT_MAP.get(name, f"[REDACTED_{name}]")
+            if name == "CREDIT_CARD":
+                # [D6] only Luhn-valid candidates are cards; timestamps / order numbers stay
+                def _card_repl(m, _r=replacement):
+                    return _r if _luhn_valid(m.group(0)) else m.group(0)
+
+                new_masked = pattern.sub(_card_repl, masked)
+                hit = new_masked != masked
+            else:
+                new_masked, count = pattern.subn(replacement, masked)
+                hit = count > 0
+            if hit:
+                masked = new_masked
                 masked_entities.append(name)
                 flagged = True
 

@@ -37,14 +37,12 @@ from m4_4_elicitation.draft_scheduler import generate_draft, run_draft_cron  # n
 from m4_4_elicitation.gibbs_template import (  # noqa: E402
     build_gibbs_analysis,
     build_gibbs_cards,
-    build_gibbs_description,
     friendly_app_name,
     group_signals,
     merge_into_blocks,
 )
 from m4_4_elicitation.ner_parser import extract_and_store, extract_duration  # noqa: E402
 from m4_4_elicitation.role_inference import (  # noqa: E402
-    RoleCandidate,
     build_candidates,
     infer_role,
 )
@@ -84,6 +82,13 @@ def _make_db(
     db.create_draft_reflection = AsyncMock(side_effect=lambda **kw: SimpleNamespace(**kw))
     db.task_slots = {}
     return db
+
+
+def _no_llm(monkeypatch) -> None:
+    """Point both LLM paths at nothing so draft cards use the template fallback."""
+    import m4_4_elicitation.draft_scheduler as ds
+    monkeypatch.setattr(ds, "_get_ai_local_host", lambda: "http://127.0.0.1:9")
+    monkeypatch.setattr(ds, "_get_gemini_key", lambda: "")
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +289,64 @@ class TestM4_4_3_DraftScheduler:
         drafts = await run_draft_cron(USER_ID, db=db, today=date(2026, 6, 3))
         assert len(drafts) == 0
 
+    @pytest.mark.asyncio
+    async def test_daily_draft_generated_at_0200(self, monkeypatch):
+        """每日 02:00 自動產出前一日草稿
+
+        main.py's draft_cron_loop sleeps until 02:00 and then calls
+        run_draft_cron(user_id, db=...) WITHOUT a `today` argument, so the date
+        comes from the wall clock. This pins the wall clock to 2026-06-03 02:00
+        and checks that call shape. The 02:00 wait itself lives inside the
+        lifespan closure in main.py and is not reachable from a unit test.
+        """
+        import m4_4_elicitation.draft_scheduler as ds
+
+        class _At0200(date):
+            @classmethod
+            def today(cls):
+                return date(2026, 6, 3)
+
+        monkeypatch.setattr(ds, "date", _At0200)
+        _no_llm(monkeypatch)
+        db = _make_db(logs=[_log({"app_bucket": "coding", "duration_minutes": 90})])
+        drafts = await run_draft_cron(USER_ID, db=db)
+        assert len(drafts) >= 1
+        assert all(d.reflection_date == date(2026, 6, 2) for d in drafts)
+        # [RISK-01] cron output is still a draft
+        assert all(d.is_draft is True and d.is_reviewed is False for d in drafts)
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "BUG [RISK-15]: when a content_capture log carries content_summary, the "
+            "template card (and the local Gemma card) quote it in the description, "
+            "and _eguard_generalize only runs EguardFilter.mask_pii, which masks PII "
+            "patterns but not topic text. ai_description_generalized, the field "
+            "meant for cloud sync, ends up identical to the local ai_description. "
+            "Latent today: nothing syncs this field to the cloud yet."
+        ),
+    )
+    @pytest.mark.asyncio
+    async def test_draft_uses_generalized_content(self, monkeypatch):
+        """[RISK-15] the cloud-bound description must not quote content_summary"""
+        _no_llm(monkeypatch)
+        db = _make_db(logs=[
+            _log({"app_bucket": "writing", "app_name": "WINWORD.EXE", "duration_s": 5400}),
+            # content_summary only reaches the draft via content_capture events
+            _log(
+                {"app_name": "WINWORD.EXE", "content_summary": "編輯畢業論文第五章結論"},
+                action="content_capture",
+                timestamp="2026-06-02T10:00:01Z",
+            ),
+        ])
+        await generate_draft(USER_ID, ROLE_CSIE, date(2026, 6, 2), db=db)
+        kw = db.create_draft_reflection.call_args.kwargs
+        # Guard against a vacuous pass: the summary must have reached the local card.
+        assert "畢業論文" in kw["ai_description"]
+        for field_name in ("ai_description_generalized", "title_generalized"):
+            assert "畢業論文" not in kw[field_name]
+            assert "第五章" not in kw[field_name]
+
 
 # ---------------------------------------------------------------------------
 # Gibbs template unit
@@ -295,7 +358,7 @@ class TestGibbsTemplate:
         """[RISK-15] The CLOUD prompt must never contain content_summary text.
         (Local description MAY contain it -- it is stored locally and generalized before sync.)
         """
-        from m4_4_elicitation.gibbs_template import group_signals, _build_cloud_prompt
+        from m4_4_elicitation.gibbs_template import _build_cloud_prompt, group_signals
         logs = [_log({"app_bucket": "coding", "duration_s": 5400,
                       "content_summary": "畢業論文第五章"})]
         sig = group_signals(logs)[0]

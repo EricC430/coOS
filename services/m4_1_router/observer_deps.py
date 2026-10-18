@@ -125,9 +125,11 @@ def _resolve_gemma(role_id: str) -> Any | None:
                 self._p = p
 
             async def generate_json(self, prompt: str):
-                import httpx
                 import json
                 import time
+
+                import httpx
+
                 from m0_4_logging.writer import get_logger as get_log_writer
 
                 log_writer = get_log_writer()
@@ -181,8 +183,10 @@ def _resolve_gemma(role_id: str) -> Any | None:
                 return await enqueue_inference(priority=2, fn=_run_request, tag="observer_generate_json")
 
             async def generate_text(self, prompt: str) -> str:
-                import httpx
                 import time
+
+                import httpx
+
                 from m0_4_logging.writer import get_logger as get_log_writer
 
                 log_writer = get_log_writer()

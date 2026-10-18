@@ -111,14 +111,14 @@
 
 | 編號 | 等級 | 決議 (擇一) | 狀態 |
 |------|------|-------------|------|
-| DEVIATION-01 | 🔴 | 每個 context 類型各 1 次、總量 ≤ 3、cooldown 維持 ≥ 3 turn、補 confidence 檢查」並同步改 SPEC + 測試 | ■ 已拍板 |
+| DEVIATION-01 | 🔴 | 每個 context 類型各 1 次、總量 ≤ 3、cooldown 維持 ≥ 3 turn、補 confidence 檢查」並同步改 SPEC + 測試 | ■ 已拍板；2026-10-18 核對：`controller.py` 已是 `MAX_PER_THREAD = 3`、`COOLDOWN_TURNS = 3`，confidence 檢查仍未接（見 GAP-C3） |
 | DEVIATION-02 | 🟡 | 更新 SPEC | ■ |
 | DEVIATION-03 | 🟡 | 更新 SPEC | ■ |
 | DEVIATION-04 | 🟡 | 更新 SPEC + 測試 | ■ |
 | DEVIATION-05 | 🟡 | persona 化問候 + 落地 transcripts + 仍要保留舊的系統配對的預覽確認(因為它其實是系統要跟使用者確認，是否要跟這個專家配對) | ■ |
 | DEVIATION-06 | 🟡 | 更新 SPEC + 修測試 | ■ |
-| DEVIATION-07 | 🔴 | 移出豁免清單 | ■ |
+| DEVIATION-07 | 🔴 | 移出豁免清單 | ✅ 已完成（2026-10-18 核對：`m4_3_role_isolation/middleware.py` 的 EXEMPT_PATHS 已不含 `/api/m4_1/history`、`/threads`、`/match_persona`） |
 | DEVIATION-08 | 🟡 | 拍板 trust 起始值 | ■ |
-| DEVIATION-09 | 🔴 | 隱私條款拍板 + 補 mask_pii + 不同意隱私條款的回退手段:使用意圖向量在CloudLLM收集可能的資訊再綜合對話完整內容與資訊在LocalLLM生成回應以及其他人設語氣等後處理(要調查最佳實踐、可行性與否) | ■ |
+| DEVIATION-09 | 🔴 | 隱私條款拍板 + 補 mask_pii + 不同意隱私條款的回退手段:使用意圖向量在CloudLLM收集可能的資訊再綜合對話完整內容與資訊在LocalLLM生成回應以及其他人設語氣等後處理(要調查最佳實踐、可行性與否) | ◐ 部分完成（2026-10-18：`mask_pii` 已接上 M4.2/M4.1 上雲路徑，見 `m2_3_eguard/cloud_gate.py`；隱私條款文字與本地回退路徑未做；中文相鄰 PII 漏遮見 REVIEW D6） |
 | DEVIATION-10/11 | 🟢 | 補文件即可 | ■ |
-| DEVIATION-12 | 🟡 | 修配額表 | ■ |
+| DEVIATION-12 | 🟡 | 修配額表 | ✅ 已修（2026-10-18：第二列改為 `Gemma 4 31B`；RPM 數值未對照官方頁面驗證） |

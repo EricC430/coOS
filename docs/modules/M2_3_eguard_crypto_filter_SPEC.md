@@ -1,8 +1,10 @@
 # M2.3 — Eguard 密碼學過濾器 (Eguard Cryptographic Filter)
 
 **標籤**: `[MVP]`
-**版本**: `1.1`
-**最後更新**: 2026-06-01
+**版本**: `1.2`
+**最後更新**: 2026-10-19
+
+**v1.2 變動**（REVIEW 2026-10-18 D6）：PII 規則改用英數字邊界 lookaround 取代 ``（Python 把中文字視為 `\w`，`` 在中文與英數字之間不成立，`身分證A123456789` 原本不會被遮蔽）；信用卡候選需通過 Luhn 檢查才遮蔽，降低中文句子裡長數字串（時間戳、訂單號）誤判。新增 `services/m2_3_eguard/cloud_gate.py` 作為 M4.2 / M4.1 上雲前的統一遮蔽點（DEVIATION-09 D1a）。
 
 ## 1. Purpose (目的)
 
@@ -202,13 +204,20 @@ class TestDriftPromptInjectionShield:
 
 import re
 
+# [v1.2] 英數字邊界：中文字與英數字相鄰時仍能命中
+_L = r"(?<![A-Za-z0-9])"
+_R = r"(?![A-Za-z0-9])"
+
 PII_PATTERNS = {
     "EMAIL": re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"),
     "IPV4": re.compile(
-        r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"
+        _L + r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)" + _R
     ),
-    "API_KEY": re.compile(r"\bAIzaSy[A-Za-z0-9_-]{33}\b"),
-    "CREDIT_CARD": re.compile(r"\b(?:\d[ -]*?){13,16}\b"),
+    "API_KEY_GOOGLE": re.compile(r"(?<![A-Za-z0-9_-])AIzaSy[A-Za-z0-9_-]{33}(?![A-Za-z0-9_-])"),
+    # 候選 13-16 位數字（允許單一空白/連字號分隔）；filter.py 只遮蔽通過 Luhn 檢查者
+    "CREDIT_CARD": re.compile(_L + r"\d(?:[ -]?\d){12,15}" + _R),
+    "TAIWAN_ID": re.compile(_L + r"[A-Z][12]\d{8}" + _R),
+    "GENERIC_SECRET": re.compile(r"(?i)(?:secret|token|password|passwd|api[_-]?key)\s*[=:]\s*\S+"),
 }
 ```
 

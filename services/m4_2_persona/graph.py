@@ -141,7 +141,7 @@ async def persona_responder_node(state: PersonaState) -> PersonaState:
         try:
             import json
             card_data = json.loads(raw_card_str) if isinstance(raw_card_str, str) else raw_card_str
-            from .persona_card import persona_card_from_dict, compile_to_prompt
+            from .persona_card import compile_to_prompt, persona_card_from_dict
             card = persona_card_from_dict(card_data)
             compiled_prompt = compile_to_prompt(card)
             anti_sycophancy_stances = card_data.get("stances")
@@ -190,14 +190,24 @@ async def persona_responder_node(state: PersonaState) -> PersonaState:
         mem_store = get_memory_store()
         top_memories = mem_store.retrieve_top_k(role_id, persona_id, query=state.get("user_message", ""), k=5)
         if top_memories:
-            episodic_memories_for_prompt = [
-                {"content": m.content} for m in top_memories
-            ]
+            # [DEVIATION-09 D1a] 記憶以原文存在本地，注入雲端 prompt 前先遮蔽
+            episodic_memories_for_prompt, memory_entities = _sanitize_memories_for_cloud(
+                [{"content": m.content} for m in top_memories], role_id=role_id
+            )
             # 取最近的 reflection 作為上次對話摘要
             reflections = [m for m in top_memories if m.kind == "reflection"]
             if reflections:
-                last_session_summary = reflections[0].content
+                summary, summary_entities = _sanitize_memories_for_cloud(
+                    [{"content": reflections[0].content}], role_id=role_id
+                )
+                last_session_summary = summary[0]["content"]
+                memory_entities += summary_entities
+            from m2_3_eguard import cloud_gate
+            await cloud_gate.emit_cloud_mask_log("M4.2", role_id, memory_entities)
     except Exception as e:
+        # 遮蔽或讀取失敗 → 不注入記憶（寧缺勿洩）
+        episodic_memories_for_prompt = None
+        last_session_summary = None
         logger.debug("[M4.2] Episodic memory retrieval skipped: %s", e)
 
     system_prompt = build_system_prompt(
@@ -231,7 +241,9 @@ async def persona_responder_node(state: PersonaState) -> PersonaState:
     # 呼叫 Gemini API
     user_message = state.get("user_message", "")
     chat_history = state.get("chat_history") or []
-    response = await _call_gemini(system_prompt, user_message, config.tone_default, chat_history)
+    response = await _call_gemini(
+        system_prompt, user_message, config.tone_default, chat_history, role_id=role_id
+    )
 
     # [R11] 寫入本輪觀察記憶（非阻塞，失敗不影響回應）
     if response and user_message:
@@ -398,6 +410,21 @@ def build_persona_graph() -> StateGraph:
     return graph.compile()
 
 
+def _sanitize_memories_for_cloud(
+    memories: list[dict], role_id: str = ""
+) -> tuple[list[dict], list[str]]:
+    """[R07: POST §4.3] 回傳遮蔽後的記憶副本與被遮蔽的實體名稱；不修改原始 list。"""
+    from m2_3_eguard import cloud_gate
+
+    masked: list[dict] = []
+    entities: list[str] = []
+    for mem in memories:
+        result = cloud_gate.mask_text_for_cloud(mem.get("content", ""), role_id=role_id)
+        masked.append({**mem, "content": result.sanitized_text})
+        entities.extend(result.masked_entities)
+    return masked, entities
+
+
 # ---------------------------------------------------------------------------
 # LLM 呼叫 (與 M4.1 共用 Gemini client)
 # ---------------------------------------------------------------------------
@@ -407,8 +434,10 @@ async def _call_gemini(
     user_message: str,
     tone: str,
     chat_history: list[dict] | None = None,
+    role_id: str = "",
 ) -> str | None:
     """呼叫 Gemini API 生成 Persona 回應。使用 M4.1 共用 client（含 rate limiting + backoff）。"""
+    from m2_3_eguard import cloud_gate
     from m4_1_router.routing_engine import (
         PERSONA_MODEL,
         PERSONA_MODEL_FALLBACK,
@@ -417,10 +446,25 @@ async def _call_gemini(
         get_cloud_llm_client,
     )
 
+    # [R07: POST §4.3][DEVIATION-09 D1a] 上雲前遮蔽 user_message 與歷史中的 PII；
+    # 本地 L1 副本不動。遮蔽失敗即不上雲（fail closed）。
+    try:
+        masked_msg = cloud_gate.mask_text_for_cloud(user_message, role_id=role_id)
+        masked_history, history_entities = cloud_gate.mask_history_for_cloud(
+            (chat_history or [])[-16:], role_id=role_id
+        )
+    except Exception as e:
+        logger.error("[M4.2] PII mask failed, cloud call blocked: %s", e)
+        return None
+    user_message = masked_msg.sanitized_text
+    await cloud_gate.emit_cloud_mask_log(
+        "M4.2", role_id, masked_msg.masked_entities + history_entities
+    )
+
     # 組裝近期對話歷史（最多 8 輪 = 16 條）
     history_block = ""
-    if chat_history:
-        recent = chat_history[-16:]
+    if masked_history:
+        recent = masked_history
         lines = []
         for h in recent:
             role_label = "使用者" if h.get("role") == "user" else "你"

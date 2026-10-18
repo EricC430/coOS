@@ -17,7 +17,6 @@ import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
@@ -56,7 +55,7 @@ def generate_topic_id(role_id: str, normalized_label: str) -> str:
 
     [RISK-06] role_id is part of the hash input, ensuring cross-role isolation.
     """
-    sig = f"{role_id}:{normalized_label}".encode("utf-8")
+    sig = f"{role_id}:{normalized_label}".encode()
     digest = hashlib.sha256(sig).hexdigest()[:TOPIC_ID_HASH_LENGTH]
     return f"{TOPIC_ID_PREFIX}{digest}"
 

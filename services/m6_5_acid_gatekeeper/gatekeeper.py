@@ -22,6 +22,8 @@ tested in-memory (FakeStore) and also wired to a real SQLAlchemy session
 (M4.5 will wire the live session). The gatekeeper does NOT hold DB connection
 logic -- that is M0.3 / M6.2's responsibility.
 """
+import functools
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -55,6 +57,27 @@ class TransactionResult:
 
 
 # ---------------------------------------------------------------------------
+# Settlement lock
+# ---------------------------------------------------------------------------
+
+# [SPEC §9 anti-pattern 2] A bare Python if cannot stop two requests from both
+# reading xp_settled = False. Every check-then-write below runs under one
+# process-wide lock (endpoints build a fresh XPGatekeeper per request, so an
+# instance lock would not help). Across processes, the live store adds a
+# conditional UPDATE ... AND xp_settled = 0 in commit() (services/main.py
+# LiveXPStore).
+_SETTLEMENT_LOCK = threading.RLock()
+
+
+def _serialized(method):
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with _SETTLEMENT_LOCK:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
+# ---------------------------------------------------------------------------
 # Gatekeeper
 # ---------------------------------------------------------------------------
 
@@ -71,17 +94,24 @@ class XPGatekeeper:
       store.ledger: list[FakeLedgerEntry]
       store.tasks: dict[UUID, task]
 
-    In production this will be replaced by an async SQLAlchemy session wrapper
-    with SELECT FOR UPDATE locking.
+    A store may also define commit() -> bool. It is called inside the
+    settlement lock after the in-memory changes, to persist them atomically;
+    False means the DB-level guard rejected the write (nothing was written).
+    In-memory stores omit it: their objects are the storage.
     """
 
     def __init__(self, store: Any) -> None:
         self._store = store
 
+    def _commit(self) -> bool:
+        commit = getattr(self._store, "commit", None)
+        return commit() if commit is not None else True
+
     # ------------------------------------------------------------------
     # Segment-level XP settlement (v1.1 primary API)
     # ------------------------------------------------------------------
 
+    @_serialized
     def settle_segment_xp(
         self,
         segment_id: uuid.UUID,
@@ -140,12 +170,15 @@ class XPGatekeeper:
         segment.xp_settled_at = datetime.now(UTC)
         segment.earned_xp = amount
 
+        if not self._commit():
+            return TransactionResult(False, "GATEKEEPER_002", "already_settled")
         return TransactionResult(True)
 
     # ------------------------------------------------------------------
     # Earned XP settlement (v1.0 API -- backward compat, delegates to segment)
     # ------------------------------------------------------------------
 
+    @_serialized
     def settle_earned_xp(
         self,
         reflection_id: uuid.UUID,
@@ -203,12 +236,15 @@ class XPGatekeeper:
         reflection.xp_settled_at = datetime.now(UTC)
         reflection.earned_xp = amount
 
+        if not self._commit():
+            return TransactionResult(False, "GATEKEEPER_002", "already_settled")
         return TransactionResult(True)
 
     # ------------------------------------------------------------------
     # XP staking (MVP: interface ready, frontend not yet triggered)
     # ------------------------------------------------------------------
 
+    @_serialized
     def stake_xp(
         self,
         user_id: uuid.UUID,
@@ -245,12 +281,15 @@ class XPGatekeeper:
             source_module="M4.13",
         ))
 
+        if not self._commit():
+            return TransactionResult(False, "GATEKEEPER_004", "insufficient_xp")
         return TransactionResult(True, staked_amount=amount)
 
     # ------------------------------------------------------------------
     # Gacha deduction (MVP: interface ready, frontend not yet triggered)
     # ------------------------------------------------------------------
 
+    @_serialized
     def deduct_xp_for_gacha(
         self,
         user_id: uuid.UUID,
@@ -287,6 +326,8 @@ class XPGatekeeper:
             source_module="M3.11",
         ))
 
+        if not self._commit():
+            return TransactionResult(False, "GATEKEEPER_004", "insufficient_xp")
         return TransactionResult(True, reward=reward)
 
 

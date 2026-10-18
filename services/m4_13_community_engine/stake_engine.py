@@ -6,7 +6,6 @@ RISK-07: Dual gating — zpd_zone != 'edge' AND success_rate >= 0.70
 Delegates actual XP hold/settle/forfeit to M6.5 ACID Gatekeeper.
 """
 import logging
-import uuid
 from dataclasses import dataclass
 from typing import Any
 

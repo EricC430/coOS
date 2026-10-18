@@ -24,14 +24,13 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Table,
     Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
-
-from sqlalchemy import Table
 
 class Base(DeclarativeBase):
     pass

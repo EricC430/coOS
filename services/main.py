@@ -11,14 +11,15 @@ coOS FastAPI Sidecar — 主入口
          docs/modules/M1_2_breakpoint_detection_SPEC.md v1.1
 """
 import asyncio
-import threading
 import json
 import logging
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -71,7 +72,8 @@ def get_safe_user_id(request: Request) -> UUID:
         return UUID("00000000-0000-0000-0000-000000000000")
 
 
-from dataclasses import dataclass, field as _dc_field
+from dataclasses import dataclass
+from dataclasses import field as _dc_field
 
 
 @dataclass
@@ -244,6 +246,36 @@ class AsyncDBAdapter:
                     logger.warning("[AsyncDBAdapter] PG execute failed: %s", e)
         await asyncio.to_thread(_sync)
 
+    async def execute_atomic(self, statements: list[tuple[str, dict, bool]]) -> bool:
+        """[M6.5] Run several local SQLite writes in one transaction.
+
+        Each item is (query, params, must_match_one_row). If a flagged statement
+        does not affect exactly one row (e.g. a conditional UPDATE ... AND
+        xp_settled = 0 lost a race), everything is rolled back and False is
+        returned. Unlike execute(), SQL errors are raised, not swallowed, so a
+        failed XP write never reports success. Only local tables (users,
+        xp_ledger, daily_reflection*) go through here.
+        """
+        def _sync():
+            import sqlite3 as _sqlite3
+            with _sqlite_lock:
+                _wconn = _sqlite3.connect(self._sqlite_path, check_same_thread=False, timeout=30.0)
+                try:
+                    cur = _wconn.cursor()
+                    for query, params, must_match in statements:
+                        cur.execute(query, params)
+                        if must_match and cur.rowcount != 1:
+                            _wconn.rollback()
+                            return False
+                    _wconn.commit()
+                    return True
+                except Exception:
+                    _wconn.rollback()
+                    raise
+                finally:
+                    _wconn.close()
+        return await asyncio.to_thread(_sync)
+
     # ------------------------------------------------------------------
     # M4.4.3 Draft Scheduler 專用 DB 方法
     # ------------------------------------------------------------------
@@ -263,7 +295,6 @@ class AsyncDBAdapter:
               secondary_window_snapshot / tab_switch / privacy_assertion_*
         """
         import json
-        from datetime import timedelta
         from types import SimpleNamespace
 
         date_start = str(for_date)
@@ -323,7 +354,6 @@ class AsyncDBAdapter:
           - intent_logs.intent_label from 'telemetry' source is L2 -- cloud-safe
           - goals.progress (numeric) and promises count are L3 -- cloud-safe
         """
-        from datetime import timedelta
 
         date_end = str(for_date + timedelta(days=1))
 
@@ -499,14 +529,12 @@ class AsyncDBAdapter:
         end_time_str = "00:00"
         if end_timestamp_iso:
             try:
-                from datetime import timezone
-                import re as _re
                 # Normalise to UTC-aware datetime
                 _ts = end_timestamp_iso.rstrip("Z")
                 if "+" in _ts:
                     _ts = _ts[:_ts.index("+")]
                 from datetime import datetime as _dt
-                _end_dt = _dt.fromisoformat(_ts).replace(tzinfo=timezone.utc)
+                _end_dt = _dt.fromisoformat(_ts).replace(tzinfo=UTC)
                 end_time_str = _end_dt.strftime("%H:%M")
                 _dur_s = int(activity_minutes * 60)
                 from datetime import timedelta as _td
@@ -1217,8 +1245,9 @@ async def lifespan(app: FastAPI):
     # [M4.4.3 SPEC §9] Nightly Draft Cron — 每日 02:00 產出前一日反思草稿
     # [RISK-01] 草稿永遠 is_draft=True, is_reviewed=False，不自動核准
     async def draft_cron_loop():
-        from m4_4_elicitation.draft_scheduler import run_draft_cron
         import datetime as _dt
+
+        from m4_4_elicitation.draft_scheduler import run_draft_cron
 
         while True:
             try:
@@ -1327,6 +1356,7 @@ app = FastAPI(title="coOS Sidecar", version="0.1.0", lifespan=lifespan)
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     from fastapi.responses import JSONResponse
+
     from m0_4_logging.writer import get_logger as get_log_writer
     log_writer = get_log_writer()
     payload = {
@@ -1354,7 +1384,9 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     import traceback
+
     from fastapi.responses import JSONResponse
+
     from m0_4_logging.writer import get_logger as get_log_writer
     log_writer = get_log_writer()
     tb_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
@@ -1910,7 +1942,6 @@ async def update_settings_endpoint(role_id: str, payload: SettingsUpdate, reques
         {"uid": str(user_id)}
     )
     
-    from datetime import UTC, datetime
     now_str = datetime.now(tz=UTC).strftime('%Y-%m-%dT%H:%M:%fZ')
     
     consent_mappings = [
@@ -2184,7 +2215,7 @@ async def get_domain_settings(role_id: str, request: Request) -> dict[str, Any]:
     work_extras: list[str] = json.loads(row["work_domains_extra"] or "[]") if row else []
     ent_extras: list[str] = json.loads(row["entertainment_domains_extra"] or "[]") if row else []
 
-    from m1_2_breakpoint.breakpoint_engine import _WORK_DOMAINS, _ENTERTAINMENT_DOMAINS
+    from m1_2_breakpoint.breakpoint_engine import _ENTERTAINMENT_DOMAINS, _WORK_DOMAINS
     return {
         "work_domains_default": sorted(_WORK_DOMAINS),
         "work_domains_extra": work_extras,
@@ -2588,12 +2619,13 @@ async def m6_4_topic_groups(request: Request, date: str, role_id: str | None = N
         ai_local_host = settings.ai_local_host if settings else ""
         if ai_local_host and _gemma_pipeline:
             try:
-                from m4_4_elicitation.gibbs_template import _call_local_gemma
                 from config import settings as _cfg
+                from m4_4_elicitation.gibbs_template import _call_local_gemma
                 gemma_model = getattr(_cfg, "gemma_model", "gemma-4-e4b-it-4bit")
                 raw = await _call_local_gemma(prompt, ai_local_host, model=gemma_model)
                 if raw:
-                    import json as _json, re as _re
+                    import json as _json
+                    import re as _re
                     m = _re.search(r"\{.*\}", raw, _re.DOTALL)
                     if m:
                         data = _json.loads(m.group(0))
@@ -2731,34 +2763,30 @@ async def m4_5_grant_xp(request: Request, body: dict[str, Any]) -> dict[str, Any
     
     user_id = get_safe_user_id(request)
     
+    from m4_5_xp_settlement.engine import compute_earned_xp
+
+    # LiveXPStore is synchronous (it backs XPGatekeeper), so every call into it
+    # runs in a worker thread. The gatekeeper persists the settlement itself.
     store = LiveXPStore(_db_adapter)
     gatekeeper = XPGatekeeper(store)
-    
+
     refl_uuid = UUID(refl_id)
-    
+
     # Check segment first
-    segment = await store.segments.get(refl_uuid)
+    segment = await asyncio.to_thread(store.segments.get, refl_uuid)
     if segment:
-        from m4_5_xp_settlement.engine import compute_earned_xp
         amount = compute_earned_xp(segment)
         result = await asyncio.to_thread(gatekeeper.settle_segment_xp, refl_uuid, user_id, amount)
         if result.success:
-            await segment.save(_db_adapter)
-            user_obj = await store.users.get(user_id)
-            await user_obj.save(_db_adapter)
             return {"granted": True, "amount": amount}
         return {"granted": False, "reason": result.error_reason}
-    
+
     # Check full reflection
-    reflection = await store.reflections.get(refl_uuid)
+    reflection = await asyncio.to_thread(store.reflections.get, refl_uuid)
     if reflection:
-        from m4_5_xp_settlement.engine import compute_earned_xp
         amount = compute_earned_xp(reflection)
         result = await asyncio.to_thread(gatekeeper.settle_earned_xp, refl_uuid, user_id, amount)
         if result.success:
-            await reflection.save(_db_adapter)
-            user_obj = await store.users.get(user_id)
-            await user_obj.save(_db_adapter)
             return {"granted": True, "amount": amount}
         return {"granted": False, "reason": result.error_reason}
                 
@@ -2795,8 +2823,9 @@ async def m4_4_trigger_draft_cron(request: Request, for_date: str | None = None)
     [RISK-01] 草稿永遠 is_draft=True, is_reviewed=False，不自動核准。
     for_date: 可選，格式 YYYY-MM-DD。若指定，則查詢該日而非昨日（僅限手動測試用途）。
     """
-    from m4_4_elicitation.draft_scheduler import run_draft_cron
     import datetime as _dt
+
+    from m4_4_elicitation.draft_scheduler import run_draft_cron
 
     user_id = get_safe_user_id(request)
     if not user_id or not _db_adapter:
@@ -2848,88 +2877,135 @@ async def m1_1_telemetry_estimate(task_id: str):
 
 # --- M6.5 Live Store for XPGatekeeper ---
 
+def _opt_str(value: Any) -> str | None:
+    return str(value) if value is not None else None
+
+
 class LiveXPStore:
-    """Wrapper around AsyncDBAdapter to satisfy XPGatekeeper's store interface."""
+    """Synchronous XPGatekeeper store backed by AsyncDBAdapter.
+
+    XPGatekeeper is synchronous and runs in asyncio.to_thread, so every proxy
+    here is sync and drives the adapter's coroutines with asyncio.run in that
+    worker thread (a private loop, so it never waits on the main loop's thread
+    pool). Reads hit the DB on every get(). Writes are buffered and flushed by
+    commit(), which XPGatekeeper calls while holding its settlement lock.
+
+    [SPEC §9 anti-pattern 2] commit() claims the segment with a conditional
+    UPDATE (... AND xp_settled = 0 AND is_draft = 0 AND is_reviewed = 1) in the
+    same SQLite transaction as the XP and ledger writes, so a second settlement
+    that slipped past the Python check writes nothing.
+    [SPEC §9 anti-pattern 4, RISK-14] XP is written as a relative delta on both
+    current_xp and lifetime_xp, never as an absolute value.
+    """
+
+    # Guard fields default to "not approved" when a table lacks the column
+    # (e.g. local daily_reflections), so RISK-01 fails closed.
+    _GATE_DEFAULTS = {
+        "is_draft": 1,
+        "is_reviewed": 0,
+        "user_feeling": None,
+        "xp_settled": 0,
+        "xp_settled_at": None,
+        "earned_xp": 0,
+    }
+
     def __init__(self, db: AsyncDBAdapter):
         self.db = db
-        self.users = self._UserProxy(db)
-        self.reflections = self._ReflectionProxy(db)
-        self.segments = self._SegmentProxy(db)
-        self.ledger = self._LedgerProxy(db)
+        self._loaded_users: list[Any] = []
+        self._loaded_claimables: list[Any] = []
+        self._pending_ledger: list[Any] = []
+        self.users = self._UserProxy(self)
+        self.reflections = self._ClaimableProxy(self, "daily_reflections")
+        self.segments = self._ClaimableProxy(self, "daily_reflection_segments")
+        self.ledger = self._LedgerProxy(self)
+
+    def _run(self, coro):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        coro.close()
+        raise RuntimeError("LiveXPStore is synchronous; call it via asyncio.to_thread")
 
     class _UserProxy:
-        def __init__(self, db):
-            self.db = db
+        def __init__(self, store):
+            self._store = store
 
-        async def get(self, uid):
-            row = await self.db.fetch_one("SELECT * FROM users WHERE id = :uid", {"uid": str(uid)})
+        def get(self, uid):
+            row = self._store._run(self._store.db.fetch_one(
+                "SELECT * FROM users WHERE id = :uid", {"uid": str(uid)}
+            ))
             if not row:
                 return None
-            # Return a simple object that supports += current_xp and lifetime_xp
-            class UserObj:
-                def __init__(self, r):
-                    self.id = r["id"]
-                    self.current_xp = r["current_xp"]
-                    self.lifetime_xp = r["lifetime_xp"]
-
-                async def save(self, db):
-                    await db.execute(
-                        "UPDATE users SET current_xp = :cxp, lifetime_xp = :lxp, "
-                        "updated_at = CURRENT_TIMESTAMP WHERE id = :uid",
-                        {"cxp": self.current_xp, "lxp": self.lifetime_xp, "uid": str(self.id)}
-                    )
-            return UserObj(row)
-
-    class _ReflectionProxy:
-        def __init__(self, db):
-            self.db = db
-
-        async def get(self, rid):
-            row = await self.db.fetch_one("SELECT * FROM daily_reflections WHERE id = :rid", {"rid": str(rid)})
-            if not row:
-                return None
-            class ReflectionObj:
-                def __init__(self, r):
-                    self.__dict__.update(dict(r))
-
-                async def save(self, db):
-                    await db.execute(
-                        "UPDATE daily_reflections SET xp_settled = :s, xp_settled_at = :at, "
-                        "earned_xp = :xp WHERE id = :rid",
-                        {"s": self.xp_settled, "at": self.xp_settled_at, "xp": self.earned_xp, "rid": str(self.id)}
-                    )
-            return ReflectionObj(row)
-
-    class _SegmentProxy:
-        def __init__(self, db):
-            self.db = db
-
-        async def get(self, sid):
-            row = await self.db.fetch_one(
-                "SELECT * FROM daily_reflection_segments WHERE id = :sid",
-                {"sid": str(sid)}
+            user = SimpleNamespace(
+                id=row["id"],
+                current_xp=row.get("current_xp") or 0,
+                lifetime_xp=row.get("lifetime_xp") or 0,
             )
+            user._orig = (user.current_xp, user.lifetime_xp)
+            self._store._loaded_users.append(user)
+            return user
+
+    class _ClaimableProxy:
+        """daily_reflections / daily_reflection_segments rows the gatekeeper can settle."""
+
+        def __init__(self, store, table):
+            self._store = store
+            self._table = table
+
+        def get(self, rid):
+            if rid is None:
+                return None
+            key = "sid" if self._table == "daily_reflection_segments" else "rid"
+            row = self._store._run(self._store.db.fetch_one(
+                f"SELECT * FROM {self._table} WHERE id = :{key}", {key: str(rid)}
+            ))
             if not row:
                 return None
-            class SegmentObj:
-                def __init__(self, r):
-                    self.__dict__.update(dict(r))
-                    self.is_active = True # Segments are always active in MVP
-
-                async def save(self, db):
-                    await db.execute(
-                        "UPDATE daily_reflection_segments SET xp_settled = :s, xp_settled_at = :at, "
-                        "earned_xp = :xp WHERE id = :sid",
-                        {"s": self.xp_settled, "at": self.xp_settled_at, "xp": self.earned_xp, "sid": str(self.id)}
-                    )
-            return SegmentObj(row)
+            obj = SimpleNamespace(**{**LiveXPStore._GATE_DEFAULTS, **dict(row)})
+            obj.is_active = True  # MVP: segments have no soft-delete column yet
+            obj._table = self._table
+            obj._orig_settled = bool(obj.xp_settled)
+            self._store._loaded_claimables.append(obj)
+            return obj
 
     class _LedgerProxy:
-        def __init__(self, db):
-            self.db = db
+        def __init__(self, store):
+            self._store = store
 
-        async def append(self, entry):
-            await self.db.execute(
+        def append(self, entry):
+            self._store._pending_ledger.append(entry)
+
+    def commit(self) -> bool:
+        """Flush buffered writes in one transaction. False = claim lost, nothing written."""
+        statements: list[tuple[str, dict, bool]] = []
+
+        for obj in self._loaded_claimables:
+            if obj.xp_settled and not obj._orig_settled:
+                statements.append((
+                    f"UPDATE {obj._table} SET xp_settled = 1 "
+                    "WHERE id = :rid AND xp_settled = 0 AND is_draft = 0 AND is_reviewed = 1",
+                    {"rid": str(obj.id)},
+                    True,
+                ))
+
+        for user in self._loaded_users:
+            d_cur = user.current_xp - user._orig[0]
+            d_life = user.lifetime_xp - user._orig[1]
+            if not d_cur and not d_life:
+                continue
+            # A spend must not take the balance below zero, even if another
+            # process spent first.
+            balance_guard = " AND current_xp + :dc >= 0" if d_cur < 0 else ""
+            statements.append((
+                "UPDATE users SET current_xp = current_xp + :dc, "
+                "lifetime_xp = lifetime_xp + :dl WHERE id = :uid" + balance_guard,
+                {"dc": d_cur, "dl": d_life, "uid": str(user.id)},
+                True,
+            ))
+
+        for entry in self._pending_ledger:
+            statements.append((
                 "INSERT INTO xp_ledger (id, user_id, amount, xp_type, reason, "
                 "source_module, reflection_id, segment_id, role_id) "
                 "VALUES (:id, :uid, :amt, :xtype, :reason, :src, :rid, :sid, :role_id)",
@@ -2940,19 +3016,32 @@ class LiveXPStore:
                     "xtype": entry.xp_type,
                     "reason": entry.reason,
                     "src": entry.source_module,
-                    "rid": str(getattr(entry, "reflection_id", None)) if hasattr(entry, "reflection_id") else None,
-                    "sid": str(getattr(entry, "segment_id", None)) if hasattr(entry, "segment_id") else None,
-                    "role_id": str(getattr(entry, "role_id", None)) if hasattr(entry, "role_id") else None,
-                }
-            )
+                    "rid": _opt_str(getattr(entry, "reflection_id", None)),
+                    "sid": _opt_str(getattr(entry, "segment_id", None)),
+                    "role_id": _opt_str(getattr(entry, "role_id", None)),
+                },
+                False,
+            ))
+
+        self._loaded_users.clear()
+        self._loaded_claimables.clear()
+        self._pending_ledger.clear()
+        if not statements:
+            return True
+        return self._run(self.db.execute_atomic(statements))
 
 # --- End M6.5 Live Store ---
 
 @app.post("/api/m6_5/grant_badge")
 async def m6_5_grant_badge(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     """[M6.5] XP settlement after user approves a reflection segment.
-    [RISK-01] Guards: is_reviewed=True, user_feeling non-empty, xp_settled=False.
+    [RISK-01] Guards: is_draft=False, is_reviewed=True, user_feeling non-empty, xp_settled=False.
     [RISK-14] Increments both current_xp and lifetime_xp atomically.
+
+    [SPEC §9 anti-patterns 1-2] Goes through XPGatekeeper, so it shares the
+    settlement lock with /api/m4_5/grant_xp and claims the segment with a
+    conditional UPDATE (AND xp_settled = 0) in the same transaction as the XP
+    and ledger writes. Concurrent calls award XP once.
     """
     refl_id = body.get("reflection_id")
     amount = body.get("amount", 20)
@@ -2960,61 +3049,21 @@ async def m6_5_grant_badge(request: Request, body: dict[str, Any]) -> dict[str, 
 
     if not refl_id or not user_id or not _db_adapter:
         return {"granted": False, "reason": "missing_params"}
-
-    # Pre-fetch segment (daily_reflection_segments is always local SQLite)
-    seg_row = await _db_adapter.fetch_one(
-        "SELECT * FROM daily_reflection_segments WHERE id = :sid",
-        {"sid": str(refl_id)}
-    )
-    if not seg_row:
+    try:
+        seg_uuid = UUID(str(refl_id))
+    except ValueError:
         return {"granted": False, "reason": "segment_not_found"}
 
-    # [RISK-01] Gatekeeper checks
-    if seg_row.get("is_draft", 1):
-        return {"granted": False, "reason": "GATEKEEPER_001: still_draft"}
-    if not seg_row.get("is_reviewed", 0):
-        return {"granted": False, "reason": "GATEKEEPER_001: not_reviewed"}
-    if not (seg_row.get("user_feeling") or "").strip():
-        return {"granted": False, "reason": "GATEKEEPER_001: missing_user_feeling"}
-    if seg_row.get("xp_settled", 0):
-        return {"granted": False, "reason": "GATEKEEPER_002: already_settled"}
-
-    # Mark segment settled
-    await _db_adapter.execute(
-        "UPDATE daily_reflection_segments SET xp_settled = 1 WHERE id = :sid",
-        {"sid": str(refl_id)}
+    store = LiveXPStore(_db_adapter)
+    result = await asyncio.to_thread(
+        XPGatekeeper(store).settle_segment_xp, seg_uuid, user_id, amount
     )
+    if not result.success:
+        return {"granted": False, "reason": f"{result.error_code}: {result.error_reason}"}
 
-    # [RISK-14] Increment user XP
-    user_row = await _db_adapter.fetch_one(
-        "SELECT id, current_xp, lifetime_xp FROM users WHERE id = :uid",
-        {"uid": str(user_id)}
-    )
-    if user_row:
-        new_current = (user_row.get("current_xp") or 0) + amount
-        new_lifetime = (user_row.get("lifetime_xp") or 0) + amount
-        await _db_adapter.execute(
-            "UPDATE users SET current_xp = :cxp, lifetime_xp = :lxp WHERE id = :uid",
-            {"cxp": new_current, "lxp": new_lifetime, "uid": str(user_id)}
-        )
-
-    # Write ledger entry
-    await _db_adapter.execute(
-        "INSERT INTO xp_ledger (id, user_id, amount, xp_type, reason, source_module, segment_id) "
-        "VALUES (:id, :uid, :amt, :xtype, :reason, :src, :sid)",
-        {
-            "id": str(uuid.uuid4()),
-            "uid": str(user_id),
-            "amt": amount,
-            "xtype": "earned",
-            "reason": f"segment_reflection_approved_{refl_id}",
-            "src": "M4.5",
-            "sid": str(refl_id),
-        }
-    )
-
+    user_obj = await asyncio.to_thread(store.users.get, user_id)
     logger.info("[M6.5] XP granted: user=%s segment=%s amount=%d", user_id, refl_id, amount)
-    return {"granted": True, "amount": amount, "new_xp": new_current if user_row else None}
+    return {"granted": True, "amount": amount, "new_xp": user_obj.current_xp if user_obj else None}
 
 
 @app.post("/api/m6_5/draw_card")
@@ -3026,11 +3075,9 @@ async def m6_5_draw_card(request: Request, body: dict[str, Any]) -> dict[str, An
     store = LiveXPStore(_db_adapter)
     gatekeeper = XPGatekeeper(store)
     
+    # The gatekeeper persists the deduction and ledger row itself (LiveXPStore.commit).
     result = await asyncio.to_thread(gatekeeper.deduct_xp_for_gacha, user_id, cost_xp)
     if result.success:
-        user_obj = await store.users.get(user_id)
-        await user_obj.save(_db_adapter)
-        
         # Persistent the reward to user_collections
         reward = result.reward
         item_id = reward["id"]
@@ -3092,14 +3139,14 @@ async def _resolve_session_thread_id(
     last_created_at = row["created_at"]
 
     if create_if_new:
-        from datetime import datetime, timezone
+        from datetime import datetime
         try:
             clean_time = last_created_at.replace("Z", "+00:00")
             dt = datetime.fromisoformat(clean_time)
         except Exception:
             return last_thread_id, None
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         diff = (now - dt).total_seconds()
         if diff > 1800:
             import uuid
@@ -3298,7 +3345,7 @@ async def m4_1_chat(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     # confidence >= 0.7 的時段不觸發（SPEC §8 「AI 裝傻」反模式）
     elicitation_messages: list[str] = []
     try:
-        from m4_4_elicitation.controller import ElicitationController, CONFIDENCE_THRESHOLD
+        from m4_4_elicitation.controller import ElicitationController
         if not hasattr(app.state, "elicitation_controller"):
             app.state.elicitation_controller = ElicitationController()
         # conversation_turn_counter 記錄真實對話 turn 數（非注入次數）
@@ -3410,8 +3457,16 @@ async def _ai_generate_expert(user_description: str, role_id: str) -> dict | Non
     [R03 §1] BDI 結構人設：belief (背景知識)、desire (助人目標)、intention (溝通風格)。
     [R05 §跨越恐怖谷] 副語言線索注入在 personality_prompt 中定義。
     """
-    from m4_1_router.routing_engine import PERSONA_MODEL, PERSONA_MODEL_FALLBACK, get_cloud_llm_client, RateLimitError, ServiceUnavailableError
-    import uuid, json
+    import json
+    import uuid
+
+    from m4_1_router.routing_engine import (
+        PERSONA_MODEL,
+        PERSONA_MODEL_FALLBACK,
+        RateLimitError,
+        ServiceUnavailableError,
+        get_cloud_llm_client,
+    )
 
     # [W2] PersonaCard v2 結構化生成 prompt
     prompt = f"""你是一個 AI 顧問角色生成器，專門設計具備真實感的 AI 專家夥伴。
@@ -3557,7 +3612,7 @@ async def _ai_generate_expert(user_description: str, role_id: str) -> dict | Non
     # [W2] PersonaCard v2: 嘗試校驗與編譯
     persona_card_json = None
     try:
-        from m4_2_persona.persona_card import persona_card_from_dict, compile_to_prompt, critic_check
+        from m4_2_persona.persona_card import compile_to_prompt, critic_check, persona_card_from_dict
         card = persona_card_from_dict(data)
         passed, issue_list = critic_check(card)
         if passed:
@@ -3670,8 +3725,9 @@ async def m4_1_match_persona(body: dict[str, Any]) -> dict[str, Any]:
         if auto_generated_expert:
             active_experts = [auto_generated_expert]
 
-    from m4_1_router.routing_engine import RouteDecision, route_with_confidence
     import uuid as _uuid
+
+    from m4_1_router.routing_engine import RouteDecision, route_with_confidence
 
     # 若只有剛自動生成的單一專家，直接配對（跳過 routing engine 避免 fallback 到 tool_ai）
     if auto_generated_expert and len(active_experts) == 1:
