@@ -102,6 +102,13 @@
 - 已用 strict xfail 測試記錄（`TestKnownEguardGaps`）。修好後該測試會變成 XPASS 而報錯，提醒拿掉 xfail。
 - 選項：(a) 把 `\b` 改成 `(?<![A-Za-z0-9])` / `(?![A-Za-z0-9])`，只看英數字邊界。可能讓中文裡的長數字串（時間戳、訂單號）被誤判為卡號，需要補 Luhn 檢查降低誤判；(b) 維持現狀，在文件註明限制。
 - 建議：(a) 加 Luhn。這會改變 M2.3 的遮蔽行為，所以需要拍板。
+- **2026-10-19 進度：已依 (a) 修正**（使用者拍板）。
+  - `patterns.py`：TAIWAN_ID、CREDIT_CARD、IPV4、API_KEY_GOOGLE 與 LOCALHOST_PATTERN 改用英數字邊界 lookaround。
+  - `filter.py`：卡號候選須通過 Luhn 才遮蔽。
+  - M2.3 SPEC 升為 v1.2。
+  - 測試：`testing/m2_3/test_eguard_cjk_boundaries.py` 新增 15 項；`test_mask_pii_before_cloud.py` 的 xfail 已轉為正式測試。
+  - 保留原有行為：`XA123456789`、`v1.2.3.4` 仍不遮蔽；code context 的 `127.0.0.1` 仍略過。
+  - 已知取捨：Luhn 隨機通過率約 10%，所以中文句子裡的 13–16 位數字串仍有少量誤判；遮蔽寧多勿少，可以接受。
 
 **D2 🔴 MVP 閉環與 `[進階]` 硬依賴**
 - 選項：(a) 現在產出 `MVP_CLOSURE_REPORT.md`，正式開放進階模組；(b) 先把 `m4_13` 路由改成可選載入（import 失敗或旗標關閉時略過），讓 MVP 能在移除進階模組後獨立啟動，再寫閉環報告。
@@ -130,7 +137,7 @@
 
 ## 6. 建議下一步
 
-1. ~~拍板 D1 的 (a)，由 AI 補 `mask_pii` 與測試。~~ 已完成（見 D1 進度）。接著拍板 D6，否則中文寫法的身分證和卡號仍會上雲。
+1. ~~拍板 D1 的 (a)，由 AI 補 `mask_pii` 與測試。~~ 已完成（見 D1 進度）。D6 也已修正（2026-10-19）。
 2. 拍板 D2，若選 (b)，由 AI 把進階路由改為可選載入。
 3. 補 §2 中純 Python、不需外部服務的缺漏驗收測試（M6.5、M6.4、M4.4 優先，跟 RISK-01 和 R08 草稿核准機制有關）。
 4. 新 migration `20261018_1000` 接在 `20260803_1100` 之後。若 `feat/m4-2-...` 之後又加了 migration，合併時要檢查是否出現多個 Alembic head。
