@@ -88,6 +88,20 @@
 - (a) 在 `02_architecture.md` 隱私表新增「使用者主動送出的對話訊息屬知情同意通道」豁免條款，並在送雲前對 `user_message` 與 history 都過一次 `EguardFilter.mask_pii()`。成本低，可以馬上做。
 - (b) 不同意上雲時走回退路徑：雲端只看意圖向量 [R07: POST §4.3]，完整對話留在本地 LLM 生成回覆。需要先調查可行性與延遲。
 - 建議：先做 (a) 的 `mask_pii`（不論最後選哪個都需要），(b) 列入研究項目。
+- **2026-10-18 進度：(a) 的 `mask_pii` 部分已實作**（使用者拍板）。
+  - 新增 `services/m2_3_eguard/cloud_gate.py`，作為上雲前的統一遮蔽點。
+  - 已接上 M4.2 `_call_gemini`（user_message + 16 條歷史）、M4.2 情節記憶與上次對話摘要（注入 system prompt 前），以及 M4.1 `_tool_ai_reply_gemini`（user_msg + 12 條歷史）。
+  - 本地 L1 副本不動。遮蔽失敗即不上雲（fail closed）：persona 回 `None`，tool AI 回罐頭回覆，記憶改為不注入。
+  - 有遮蔽時寫入 `raw_tracking_logs`（`M2.3` / `pii_masked_before_cloud`），payload 只記實體名稱與次數，不記內容。
+  - 測試：`testing/m4_2/test_mask_pii_before_cloud.py`，8 passed + 1 xfail（見 D6）。
+  - **尚未做**：`02_architecture.md` 的知情同意豁免條款文字。這是研究約束的鬆綁，要由使用者寫或確認措辭。
+
+**D6 🔴 新發現：M2.3 PII 規則碰到中文就失效**
+- `services/m2_3_eguard/patterns.py` 的 `TAIWAN_ID`、`CREDIT_CARD`、`IPV4`、`API_KEY_GOOGLE` 都用 `\b`。Python 把中文字視為 `\w`，所以中文字和英數字之間沒有 word boundary。
+- 結果：`身分證A123456789`、`卡號4111111111111111` 這種中文使用者最常見的寫法**不會被遮蔽**，只有前面有空格或標點時才會。EMAIL 和 GENERIC_SECRET 不受影響。
+- 已用 strict xfail 測試記錄（`TestKnownEguardGaps`）。修好後該測試會變成 XPASS 而報錯，提醒拿掉 xfail。
+- 選項：(a) 把 `\b` 改成 `(?<![A-Za-z0-9])` / `(?![A-Za-z0-9])`，只看英數字邊界。可能讓中文裡的長數字串（時間戳、訂單號）被誤判為卡號，需要補 Luhn 檢查降低誤判；(b) 維持現狀，在文件註明限制。
+- 建議：(a) 加 Luhn。這會改變 M2.3 的遮蔽行為，所以需要拍板。
 
 **D2 🔴 MVP 閉環與 `[進階]` 硬依賴**
 - 選項：(a) 現在產出 `MVP_CLOSURE_REPORT.md`，正式開放進階模組；(b) 先把 `m4_13` 路由改成可選載入（import 失敗或旗標關閉時略過），讓 MVP 能在移除進階模組後獨立啟動，再寫閉環報告。
@@ -116,7 +130,7 @@
 
 ## 6. 建議下一步
 
-1. 拍板 D1 的 (a)，由 AI 補 `mask_pii` 與測試。
+1. ~~拍板 D1 的 (a)，由 AI 補 `mask_pii` 與測試。~~ 已完成（見 D1 進度）。接著拍板 D6，否則中文寫法的身分證和卡號仍會上雲。
 2. 拍板 D2，若選 (b)，由 AI 把進階路由改為可選載入。
 3. 補 §2 中純 Python、不需外部服務的缺漏驗收測試（M6.5、M6.4、M4.4 優先，跟 RISK-01 和 R08 草稿核准機制有關）。
 4. 新 migration `20261018_1000` 接在 `20260803_1100` 之後。若 `feat/m4-2-...` 之後又加了 migration，合併時要檢查是否出現多個 Alembic head。
