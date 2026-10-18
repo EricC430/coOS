@@ -215,15 +215,6 @@ class TestEarnedXPSettlement:
         gk.settle_earned_xp(reviewed_reflection.id, user.id, 50)
         assert user.current_xp == 150  # 100 + 50, not overwritten to 50
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG: XPGatekeeper has no lock between the xp_settled check and the "
-            "write (SPEC §9 anti-pattern 2: a pure-Python if cannot stop concurrent "
-            "requests). Two requests settled via asyncio.to_thread, as main.py "
-            "/api/m4_5/grant_xp does, both succeed and award XP twice."
-        ),
-    )
     def test_concurrent_settlement_safe(self, store, user, reviewed_reflection):
         """AC-4: concurrent settlement of one reflection must succeed only once."""
         import asyncio
