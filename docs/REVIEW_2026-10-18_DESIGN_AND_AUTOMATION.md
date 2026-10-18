@@ -120,3 +120,61 @@
 2. 拍板 D2，若選 (b)，由 AI 把進階路由改為可選載入。
 3. 補 §2 中純 Python、不需外部服務的缺漏驗收測試（M6.5、M6.4、M4.4 優先，跟 RISK-01 和 R08 草稿核准機制有關）。
 4. 新 migration `20261018_1000` 接在 `20260803_1100` 之後。若 `feat/m4-2-...` 之後又加了 migration，合併時要檢查是否出現多個 Alembic head。
+
+---
+
+## 7. 測試補齊（2026-10-18，第二輪）
+
+**範圍**：§2 表中純 Python、不需外部服務的 MVP 模組。分支 `claude/wonderful-pare-7fa9d4`，以 fast-forward 接在 `claude/design-review-2026-10-18` 之後，每個模組一個 commit，未 push。
+
+**做法**：逐一比對 SPEC §6 的 `def test_*` 與 `testing/`。名稱不同但行為已測到的不重複補；行為沒測到的才補。需要 sidecar、本地 LLM、Gemini key、Neo4j、Postgres 的測試一律 skip，不假裝通過。測到真 bug 就標 `xfail(strict=True)` 並寫明原因，不改設計；之後修好時 strict 會讓測試轉紅，提醒移除標記。
+
+### 7.1 新增測試
+
+| 模組 | SPEC 缺項 | 新增 | 結果 | commit |
+|------|-----------|------|------|--------|
+| M6.5 | `test_concurrent_settlement_safe` | 同名，用 `asyncio.to_thread` 並發結算（與 `main.py` 呼叫方式相同） | ❌ xfail（B1） | `test(m6.5)` |
+| M6.5 | `test_gacha_atomic_deduct_and_reward` | 同名：扣費、開獎、ledger 三者一起產生且 ledger 指向該次獎勵；另補 `test_gacha_rollback_leaves_no_ledger_entry` | ✅ | `test(m6.5)` |
+| M6.5 | （AC-2 的正式路徑） | `test_live_store_settles_approved_segment`：用 `main.py` 的 `LiveXPStore` 跑 AC-2 | ❌ xfail（B2） | `test(m6.5)` |
+| M6.4 | `test_new_reflection_is_draft` | 同名：跑正式的 `AsyncDBAdapter.create_draft_reflection`，表結構取自 `main.py` 本身的 DDL | ✅ | `test(m6.4)` |
+| M6.4 | `test_mood_score_range` | 同名：檢查本地 segments 表的 mood_score 範圍（Pydantic 層已有測試） | ❌ xfail（B3） | `test(m6.4)` |
+| M4.4 | `test_daily_draft_generated_at_0200` | 同名：不注入 `today`，模擬 02:00 的系統時鐘（與 `draft_cron_loop` 的呼叫方式相同） | ✅ | `test(m4.4)` |
+| M4.4 | `test_draft_uses_generalized_content` | 同名：用 `content_capture` 事件帶入 content_summary，檢查送雲用的 `*_generalized` 欄位 | ❌ xfail（B4） | `test(m4.4)` |
+| M0.4 | `test_l1_payload_blocked_from_cloud` | 同名：`content_raw` 可留在本地 payload；`AsyncDBAdapter` 寫 `raw_tracking_logs` 時不碰雲端 engine | ✅ | `test(m0.4)` |
+| M6.2 | `test_users_has_uuid_primary_key` | 離線版 `..._in_migration`：以紀錄用的 `op` 執行 cloud migration 的 `upgrade()`，檢查真正的 Column 物件；另有同名雲端版 | ✅ / ⏭ | `test(m6.2)` |
+| M6.2 | `test_ai_experts_personality_prompt_max_length`、`test_xp_ledger_amount_must_be_nonzero` | 同名，雲端版。改用唯讀的 schema 查詢，不照 SPEC 範例 INSERT，因為 `SUPABASE_DB_URL` 可能指向正式專案 | ⏭ skip | `test(m6.2)` |
+| M6.3 | `test_project_belongs_to_role`、`test_project_not_visible_across_roles` | 同名：透過 M4.3 `build_role_context` 讀取 `main.py` 本地 `role_projects`，附正向對照，避免空結果誤判通過 | ✅ | `test(m6.3)` |
+| M6.3 | `test_role_delete_cascades_projects` | 同名，雲端版；整段包在一定會 rollback 的 transaction 裡 | ⏭ skip | `test(m6.3)` |
+
+**名稱不同、行為已測到（不補）**
+
+- M2.3 `test_injection_exception_carries_payload_hash_not_plaintext` → 已由 `testing/m2_3/test_eguard_filter.py::test_injection_exception_no_plaintext` 涵蓋（payload_hash 長度 64、例外字串不含明文）。
+- M6.3 `test_implicit_state_scoped_by_role` → 已由 `test_implicit_state_scoped_by_user_and_role`（本地 SQLite）涵蓋。
+- M6.5 其餘、M6.4 其餘：§2 的「缺」中，`test_acid_gatekeeper`、`test_ledger`、`test_daily_reflections` 等是 SPEC 檔名或註解裡的字串，不是測試名稱。
+
+**刻意不補**
+
+- M0.3 `test_missing_required_env_raises`：SPEC 要求缺 `GEMINI_API_KEY` 時拋 ValidationError，但 `services/config.py` 已定案「雲端 credential 全部 optional」，既有的 `test_settings_works_without_cloud_keys` 驗證的正是相反行為。這是 SPEC §6 過期，建議改 SPEC，不新增測試。
+
+### 7.2 發現的 bug（全部 `xfail(strict=True)`，未改程式）
+
+| # | 嚴重度 | 模組 | 問題 | 證據 |
+|---|--------|------|------|------|
+| B2 | 🔴 | M6.5 / M4.5 / `main.py` | **核准後的 XP 結算正式路徑會直接拋例外**。`LiveXPStore` 的 proxy 是 async（`get()`、`append()`），但 `XPGatekeeper` 同步呼叫它們，`settle_segment_xp()` 拿到的是 coroutine，在 `segment.is_active` 拋 `AttributeError`。`/api/m4_5/grant_xp` 因此回 500，XP 不會入帳。前端核准流程 `apps/desktop/src/components/m3_3_daily_report/DraftApproveModal/useApprovalGuard.ts:44` 呼叫的就是這支 | `services/main.py:2726-2763`、`:2853-2951`；`testing/m6_5/test_live_store_wiring.py` |
+| B1 | 🔴 | M6.5 | **並發結算會重複發 XP**。`XPGatekeeper` 檢查 `xp_settled` 與寫入之間沒有鎖（SPEC §9 反模式第 2 條）。兩個 `asyncio.to_thread` 請求同時結算同一份反思，兩個都成功，XP 發兩次、ledger 兩筆。`/api/m6_5/grant_badge` 也是「先讀再寫」且 UPDATE 沒帶 `AND xp_settled = 0`，同樣有競態（閱讀程式碼確認，未另寫測試） | `services/m6_5_acid_gatekeeper/gatekeeper.py:85-147`；`services/main.py:2953-3020`；`testing/m6_5/test_acid_gatekeeper.py::test_concurrent_settlement_safe` |
+| B4 | 🟡 | M4.4 | **RISK-15：送雲用的 `ai_description_generalized` 原文帶出 content_summary**。template 卡片（以及本地 Gemma 卡片）會在描述中引用 content_summary，而 `_eguard_generalize` 只呼叫 `EguardFilter.mask_pii`，只遮 PII 樣式、不做主題泛化，所以 generalized 欄位與本地欄位完全相同。目前沒有任何程式把這個欄位同步上雲，屬於潛在洩漏 | `services/m4_4_elicitation/draft_scheduler.py:36-46`、`gibbs_template.py:746-775`；`testing/m4_4/...::test_draft_uses_generalized_content` |
+| B3 | 🟡 | M6.4 | **本地 `daily_reflection_segments` 沒有 `mood_score` 欄位**，1–10 範圍只在 Pydantic 層與雲端 migration。`PATCH /api/m6_4/reflections/{id}` 若帶 `mood_score`，SQLite UPDATE 會失敗，而 `AsyncDBAdapter.execute` 只記 warning 不往上拋，所以整筆更新（含 `is_reviewed`）會靜默遺失，API 仍回 `updated`（閱讀程式碼確認）。前端目前不送 `mood_score`，屬於潛在問題 | `services/main.py:900-924`、`:2683-2721`、`:198-238`；`testing/m6_4/test_local_store.py::test_mood_score_range` |
+
+### 7.3 其他觀察
+
+- **既有 RISK-15 測試是空轉的**：`testing/m4_4` 的 `test_draft_generalized_field_excludes_content` 與 `TestRisk15DualField::test_draft_stores_generalized_field` 把 `content_summary` 放在 `focus_session_ended` 的 payload，但 `group_signals` 只從 `content_capture` 事件讀 content_summary，所以這兩項沒有測到內文路徑。新測試已改用 `content_capture`。
+- **M4.4 測試檔要跑約 170 秒**：既有的草稿測試沒有替換 LLM 主機，會等 `192.168.0.79` 與 Gemini 連線逾時。新測試用 `_no_llm()` 指向本機關閉的 port，每項約 2 秒。建議套用到其餘草稿測試。
+- **02:00 排程本身測不到**：等待 02:00 的邏輯寫在 `main.py` lifespan 的閉包 `draft_cron_loop` 裡。新測試只涵蓋它的呼叫方式（不注入日期）。若要測時間計算，需要把「距下一個 02:00 的秒數」抽成函式。
+- **M6.2 的約束只在雲端**：UUID 主鍵、`personality_prompt` 4096、`amount != 0` 都只寫在 cloud migration。`main.py` 實際寫入的本地 `users`、`ai_experts`、`xp_ledger` 表（TEXT id、無 CHECK）一項都沒有。是否需要在本地補 CHECK，取決於這些 L3 表是否長期以本地為主，留給人類判斷。
+- **雲端測試未實際執行**：本機沒有 `SUPABASE_DB_URL`，新增的 4 項雲端測試（M6.2 ×3、M6.3 ×1）只確認會正確 skip，SQL 本身未在 Postgres 上驗證過。
+- **ruff**：`services/` 執行 `uv run ruff check . --fix` 後沒有可自動修的項目，仍是 §1 #12 的 74 項。新增的測試檔都通過 `ruff check`。對 `testing/m4_4` 跑 `--fix` 時，順手移除了該檔兩個原本就未使用的 import；該檔另有 2 項舊問題（E501、F841）沒動。整個 `testing/` 還有 70 項可自動修的舊問題，分散在其他模組的測試檔，不在本次範圍。
+
+### 7.4 測試結果
+
+- 後端 `uv run pytest ../testing`：**480 passed / 0 failed / 17 skipped / 4 xfailed**（287 秒）。和第一輪基線 472 passed / 13 skipped 相比：+8 項新測試通過，+4 項新雲端測試 skip，4 項 xfail 即 B1–B4。
+- 前端未改動，未重跑。
