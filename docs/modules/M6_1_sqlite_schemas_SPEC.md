@@ -156,8 +156,8 @@ class TestTableCreation:
     def test_role_router_rules_scoped_by_role(self, local_db):
         """[RISK-06] role_router_rules 查詢必須以 role_id 為條件才回傳結果"""
         local_db.execute(
-            "INSERT INTO role_router_rules (role_id, pattern, target_domain) "
-            "VALUES ('role_csie', '微積分', 'math_tutor')"
+            "INSERT INTO role_router_rules (role_id, persona_id, pattern, target_domain) "
+            "VALUES ('role_csie', 'persona_math', '微積分', 'math_tutor')"  # [v1.2] persona_id NOT NULL
         )
         local_db.commit()
         cursor = local_db.execute(
