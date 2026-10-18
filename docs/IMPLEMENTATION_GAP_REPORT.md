@@ -18,8 +18,10 @@
 `services/` 無任何 `m4_7_*`。`docs/modules/M4_7_obsidian_sync_SPEC.md` 存在但零程式碼。
 **處置選項**：補實作，或在 `04_module_registry.md` / `06_implementation_phases.md` 將其移出 Phase 4（需使用者拍板，屬職責邊界調整）。
 
-### GAP-A2 ❌ 前端 vitest 驗收測試（M3.1–M3.6 全部）
-`apps/desktop/src` 下 **0 個** `*.test.*` 檔案。各 M3 SPEC 的 Acceptance Criteria 皆以 vitest 撰寫（如 M3.4「未配對 Persona 不可點」「語音按鈕走 VoiceTranscriptionRouter」），違反 CLAUDE.md 鐵則 3「先寫測試」。
+### GAP-A2 ✅ 前端 vitest 驗收測試（已補，2026-10-18 核對）
+> 2026-10-18 核對：測試位於 `apps/desktop/tests/m3_1`–`m3_7`（不在 `src/`），`pnpm test` 為 7 files / 40 tests 全過。各 M3 SPEC §6 的測試名稱尚未逐條對上，見 `REVIEW_2026-10-18_DESIGN_AND_AUTOMATION.md`。以下為原始描述。
+
+原描述：`apps/desktop/src` 下 **0 個** `*.test.*` 檔案。各 M3 SPEC 的 Acceptance Criteria 皆以 vitest 撰寫（如 M3.4「未配對 Persona 不可點」「語音按鈕走 VoiceTranscriptionRouter」），違反 CLAUDE.md 鐵則 3「先寫測試」。
 
 ### GAP-A3 ✅ `drift_rules.yaml` 缺檔（已修 Session 2）
 `services/m2_3_eguard/drift_rules.yaml` 已建立，77 條關鍵字（英/中）。
@@ -117,7 +119,7 @@ JSON 解析後新增：(1) `_FORBIDDEN_PHRASES` 禁用語檢查（含「我是AI
 | 項目 | 狀態 | Session |
 |------|------|---------|
 | GAP-A1 M4.7 Obsidian | ➡️ 移至 Phase 6 | 拍板 |
-| GAP-A2 前端 vitest 測試 | ❌ 未實作 | Phase 6 前補齊 |
+| GAP-A2 前端 vitest 測試 | ✅ 已補（7 files / 40 tests） | 2026-10-18 核對 |
 | GAP-A3 drift_rules.yaml | ✅ 已修 | Session 2 |
 | GAP-A4 最後專家刪除守門員 | ✅ 已修 | Session 3 |
 | GAP-B1 草稿排程器 | ✅ 已修 | Session 2 |
