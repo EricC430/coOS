@@ -149,14 +149,9 @@ class TestMaskObservability:
         assert [e for e in captured_logs if e.get("action") == "pii_masked_before_cloud"] == []
 
 
-class TestKnownEguardGaps:
-    @pytest.mark.xfail(
-        reason="M2.3 patterns use \\b, which does not fire between a CJK character and "
-        "a letter/digit, so an ID written right after Chinese text is not masked. "
-        "Fix needs a pattern change in m2_3_eguard/patterns.py (user decision).",
-        strict=True,
-    )
+class TestCJKAdjacentPII:
     def test_taiwan_id_adjacent_to_cjk_is_masked(self):
+        """[D6] fixed: patterns use alphanumeric lookarounds instead of \\b."""
         from m2_3_eguard.cloud_gate import mask_text_for_cloud
 
         result = mask_text_for_cloud(f"身分證{TW_ID}", role_id="r")
