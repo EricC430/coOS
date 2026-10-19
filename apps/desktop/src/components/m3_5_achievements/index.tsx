@@ -24,7 +24,11 @@ async function fetchDictionary(): Promise<BadgeItem[]> {
   return res.json();
 }
 
-export function AchievementDisplay() {
+export interface AchievementDisplayProps {
+  onOpenGachaStudio?: (defaultTab?: "gacha" | "studio" | "bg_gen" | "obj_gen") => void;
+}
+
+export function AchievementDisplay({ onOpenGachaStudio }: AchievementDisplayProps = {}) {
   const xpBalance = useCoOSStore((s) => s.xpBalance);
   const { data: collections = [] } = useQuery({ queryKey: ["user_collections"], queryFn: fetchCollections });
   const { data: dictionary = [] } = useQuery({ queryKey: ["items_dictionary"], queryFn: fetchDictionary });
@@ -36,20 +40,28 @@ export function AchievementDisplay() {
         <h2 className="font-semibold">Collection</h2>
         <div className="flex items-center gap-3">
           <span className="font-bold text-indigo-600">XP {xpBalance}</span>
-          {/* [RISK-09] Gacha buttons disabled placeholder -- unlocked in M3.11 */}
+          {/* [M3.11] Gacha & Visual Studio unlocked */}
           <button
-            disabled
-            title="解鎖進階功能後開放"
-            className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-300 cursor-not-allowed"
+            onClick={() => onOpenGachaStudio?.("bg_gen")}
+            title="開啟背景生成與抽卡"
+            className="px-2.5 py-1 text-xs rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
           >
             抽背景
           </button>
           <button
-            disabled
-            title="解鎖進階功能後開放"
-            className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-300 cursor-not-allowed"
+            onClick={() => onOpenGachaStudio?.("obj_gen")}
+            title="開啟物件生成與抽卡"
+            className="px-2.5 py-1 text-xs rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
           >
             抽物件
+          </button>
+          <button
+            onClick={() => onOpenGachaStudio?.("studio")}
+            title="開啟視覺抽卡工坊"
+            className="px-3 py-1 text-xs font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm transition-colors flex items-center gap-1"
+          >
+            <span>🎨</span>
+            <span>視覺工坊</span>
           </button>
         </div>
       </div>

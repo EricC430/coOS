@@ -53,6 +53,7 @@ export interface CommunityRead {
   codex?: string;
   rules: string[];
   quotes: string[];
+  challenge_mode?: string;
 }
 
 export interface CommunityCodex {

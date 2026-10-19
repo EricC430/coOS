@@ -6,6 +6,7 @@ interface PieMenuProps {
   y: number;
   onClose: () => void;
   onOpenSettings: () => void;
+  onOpenStudio?: () => void;
   dark: boolean;
   toggleTheme: () => void;
 }
@@ -15,6 +16,7 @@ export function PieMenu({
   y,
   onClose,
   onOpenSettings,
+  onOpenStudio,
   dark,
   toggleTheme,
 }: PieMenuProps) {
@@ -69,6 +71,25 @@ export function PieMenu({
         >
           ⚙️
         </motion.button>
+
+        {/* Visual Studio & Gacha button */}
+        {onOpenStudio && (
+          <motion.button
+            className="pie-menu-item"
+            title="視覺抽卡工坊"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenStudio();
+              onClose();
+            }}
+            initial={{ x: 0, y: 0, scale: 0, opacity: 0 }}
+            animate={{ x: 0, y: -50, scale: 1, opacity: 1 }}
+            exit={{ x: 0, y: 0, scale: 0, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 400, damping: 22 }}
+          >
+            🎨
+          </motion.button>
+        )}
 
         {/* Theme toggle button */}
         <motion.button
