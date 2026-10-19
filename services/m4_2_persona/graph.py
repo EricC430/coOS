@@ -182,6 +182,24 @@ async def persona_responder_node(state: PersonaState) -> PersonaState:
     except Exception as e:
         logger.warning("[M4.2] MI selector failed: %s", e)
 
+    # [R11][R15] 從 SQLite 讀取情節記憶注入記憶區塊
+    episodic_memories_for_prompt = None
+    last_session_summary = None
+    try:
+        from .persona_memory import get_memory_store
+        mem_store = get_memory_store()
+        top_memories = mem_store.retrieve_top_k(role_id, persona_id, query=state.get("user_message", ""), k=5)
+        if top_memories:
+            episodic_memories_for_prompt = [
+                {"content": m.content} for m in top_memories
+            ]
+            # 取最近的 reflection 作為上次對話摘要
+            reflections = [m for m in top_memories if m.kind == "reflection"]
+            if reflections:
+                last_session_summary = reflections[0].content
+    except Exception as e:
+        logger.debug("[M4.2] Episodic memory retrieval skipped: %s", e)
+
     system_prompt = build_system_prompt(
         config,
         role_id=role_id,
@@ -189,6 +207,8 @@ async def persona_responder_node(state: PersonaState) -> PersonaState:
         persona_id=persona_id,
         active_goals=state.get("active_goals") or [],
         upcoming_promises=state.get("upcoming_promises") or [],
+        episodic_memories=episodic_memories_for_prompt,
+        last_session_summary=last_session_summary,
         mi_directive=mi_directive_str,
         anti_sycophancy_stances=anti_sycophancy_stances,
     )
@@ -213,6 +233,20 @@ async def persona_responder_node(state: PersonaState) -> PersonaState:
     chat_history = state.get("chat_history") or []
     response = await _call_gemini(system_prompt, user_message, config.tone_default, chat_history)
 
+    # [R11] 寫入本輪觀察記憶（非阻塞，失敗不影響回應）
+    if response and user_message:
+        try:
+            from .persona_memory import get_memory_store
+            mem_store = get_memory_store()
+            mem_store.write_observation(
+                role_id=role_id,
+                persona_id=persona_id,
+                content=f"使用者說：{user_message[:100]}",
+                importance=0.4,
+            )
+        except Exception as e:
+            logger.debug("[M4.2] Memory write skipped: %s", e)
+
     return {**state, "raw_response": response}
 
 
@@ -225,8 +259,20 @@ async def paralinguistic_node(state: PersonaState) -> PersonaState:
     if not raw:
         return {**state, "final_response": "（系統暫時無法回應，請稍後再試）"}
 
-    trust_level = (state.get("persona_config") or {}).get("trust_level", 0.5)
-    final = await inject_paralinguistic(raw, trust_level=trust_level)
+    config_dict = state.get("persona_config") or {}
+    trust_level = config_dict.get("trust_level", 0.5)
+
+    # [R05] 從 PersonaCard.speech_profile.fillers 讀取個人化語助詞
+    persona_fillers = None
+    raw_card = config_dict.get("persona_card")
+    if raw_card:
+        import json
+        card_data = json.loads(raw_card) if isinstance(raw_card, str) else raw_card
+        persona_fillers = (card_data.get("speech_profile") or {}).get("fillers")
+
+    final = await inject_paralinguistic(
+        raw, trust_level=trust_level, persona_fillers=persona_fillers,
+    )
     return {**state, "final_response": final}
 
 
@@ -383,18 +429,22 @@ async def _call_gemini(
 
     # [R05 §治療同盟][R03 §4.2 State Inversion] 真人聊天節奏 + 共情骨架
     output_rules = (
-        "\n【回應格式規則 — 像真人傳訊息，不要像 AI 助理】\n"
-        "- 繁體中文，口語自然。預設很短：一次最多 3 句，每句都短。\n"
-        "- 一則回覆只問「一個」問題；禁止把多個問題塞進同一則回覆。\n"
-        "- 初次見面只簡短自我介紹一句 + 一個輕鬆的問題，不要一次交代完整學經歷背景"
-        "（背景在後續對話自然帶出即可）。\n"
-        "- [R03 §4.2] 若使用者焦慮、卡關或挫折：先共情安撫，再回應。"
-        "嚴禁催促語氣（如「既然你…就直接…」「別浪費時間」「我們就直接切入」）。\n"
-        "- 不譴責使用者（例如稱呼、用詞），那類小事不必在回覆中糾正。\n"
-        "- 形容詞節制，不要堆砌華麗詞藻；像朋友講話那樣。\n"
-        "- 禁止使用條列式。禁止每次都用問句結尾——連續問過就改用陳述句或給具體一小步建議。\n"
-        "- 只有在情緒濃厚或需要解釋複雜概念時，才允許稍長（最多 5~20 句）。\n"
-        "- 保持你的個人語氣和過往經歷，不要說「我是AI」。\n"
+        "\n【你的說話方式 — 像在 LINE 上跟朋友傳訊息】\n"
+        "你就是這個人，不是在扮演。用繁體中文，像真人打字那樣回。\n\n"
+        "節奏感：\n"
+        "- 預設超短。一則回覆 1~3 句，每句盡量 15 字以內。\n"
+        "- 可以只回「嗯」「哈哈」「有道理」就結束一輪，不需要每次都有實質內容。\n"
+        "- 問句不要每則都出現。問過了就換成陳述句、一小步建議、或單純附和。\n"
+        "- 只有在對方明確求助解釋、或情緒很重需要陪伴時，才允許稍長（5~10 句）。\n\n"
+        "語氣感：\n"
+        "- 像朋友不像老師。不說教、不總結、不條列。\n"
+        "- 對方焦慮時先接住情緒（「聽起來壓力很大」「嗯，很煩吧」），不急著給建議。\n"
+        "- 不糾正對方用詞、不催促、不評價對方行為（除非你的立場要求）。\n"
+        "- 偶爾可以分享自己的小故事，讓對話有來有往，不要永遠是「問→答」結構。\n\n"
+        "初次見面：\n"
+        "- 最多一句自我介紹 + 一個輕鬆問題。背景之後再慢慢帶出來。\n"
+        "- 錯誤示範：「我是嚴鋒，在矽谷十年，看過太多專案…」（太長、太表演）\n"
+        "- 正確示範：「嘿，我嚴鋒。你在做什麼專案？」\n"
     )
 
     full_prompt = (

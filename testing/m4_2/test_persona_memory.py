@@ -4,7 +4,9 @@ P2 Persona Memory -- test suite
 Research: [R11] Park et al. [R15] MemGPT [R19] sqlite-vec
 Risk: RISK-06, RISK-12
 """
+import sqlite3
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -20,6 +22,38 @@ from m4_2_persona.persona_memory import (
     _cosine_similarity,
 )
 from m4_2_persona.reflection_job import summarize_observations
+
+
+_CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS persona_episodic_memories (
+    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    role_id TEXT NOT NULL,
+    persona_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'observation',
+    content TEXT NOT NULL,
+    importance REAL NOT NULL DEFAULT 0.5,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    last_accessed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+"""
+
+
+@pytest.fixture(autouse=True)
+def _isolated_db(tmp_path, monkeypatch):
+    """Each test gets a fresh SQLite DB with the memory table."""
+    db_file = str(tmp_path / "test_memory.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute(_CREATE_TABLE_SQL)
+    conn.commit()
+    conn.close()
+
+    # Monkeypatch PersonaMemoryStore to use test DB
+    original_init = PersonaMemoryStore.__init__
+
+    def patched_init(self, db_path=None):
+        original_init(self, db_path=db_file)
+
+    monkeypatch.setattr(PersonaMemoryStore, "__init__", patched_init)
 
 
 class TestMemoryWriteAndRetrieve:

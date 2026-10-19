@@ -30,20 +30,21 @@ class TestMISelector:
         """Reactance > 0.7 -> reflective listening."""
         result = select_mi_technique(reactance_score=0.8)
         assert result.technique == MITechnique.REFLECTIVE_LISTENING
-        assert "advice" in " ".join(result.forbidden_actions).lower()
+        assert "建議" in " ".join(result.forbidden_actions) or \
+               "advice" in " ".join(result.forbidden_actions).lower()
 
     def test_anxiety_selects_affirmation_no_mirror(self):
         """[RISK-03] Anxiety -> affirmation, not mirroring."""
         result = select_mi_technique(reactance_score=0.3, implicit_state="anxiety")
         assert result.technique == MITechnique.AFFIRMATION
-        assert "mirroring" in " ".join(result.forbidden_actions).lower() or \
+        assert "鏡像" in " ".join(result.forbidden_actions) or \
                "mirror" in " ".join(result.forbidden_actions).lower()
 
     def test_avoidance_no_guilt(self):
         """[RISK-03] Avoidance -> open question, no guilt."""
         result = select_mi_technique(reactance_score=0.3, implicit_state="avoidance")
         assert result.technique == MITechnique.OPEN_QUESTION
-        assert any("guilt" in f.lower() for f in result.forbidden_actions)
+        assert any("罪惡" in f or "guilt" in f.lower() for f in result.forbidden_actions)
 
     def test_flow_selects_structured_advice(self):
         """Flow/stable -> structured advice."""

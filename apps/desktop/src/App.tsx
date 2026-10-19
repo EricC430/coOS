@@ -28,6 +28,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { OnboardingScreen } from "./components/OnboardingScreen";
 import { AnimatePresence } from "framer-motion";
 import { PieMenu } from "./components/PieMenu";
+import { GachaStudioHub, HiddenAchievementListener } from "./components/m3_11_gacha";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,15 +36,49 @@ const queryClient = new QueryClient({
   },
 });
 
-type ActiveView = "home" | "report" | "achievements" | "community" | "chat";
+type ActiveView = "home" | "report" | "achievements" | "community" | "chat" | "studio";
 
 function AppContent() {
   const [activeView, setActiveView] = useState<ActiveView>("home");
+  const [studioTab, setStudioTab] = useState<"gacha" | "studio" | "bg_gen" | "obj_gen" | "achievements">("gacha");
   const [workflowOpen, setWorkflowOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [_chatRoleId, setChatRoleId] = useState<string | null>(null);
   const { currentRole, seedRoleCache, roleCache } = useCoOSStore();
   const [loading, setLoading] = useState(true);
+
+  // Custom Desktop Wallpaper / Theme Scene from M3.11 Visual Studio
+  const [desktopThemeBg, setDesktopThemeBg] = useState<string | null>(() => {
+    try {
+      const saved = localStorage.getItem("coos_active_desktop_theme");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.final_image_url || null;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const scene = (e as CustomEvent).detail;
+      if (scene?.final_image_url) {
+        setDesktopThemeBg(scene.final_image_url);
+      }
+    };
+    window.addEventListener("coos:theme-scene-applied", handler);
+    return () => window.removeEventListener("coos:theme-scene-applied", handler);
+  }, []);
+
+  const handleOpenStudio = useCallback(
+    (tab: "gacha" | "studio" | "bg_gen" | "obj_gen" | "achievements" = "gacha") => {
+      setStudioTab(tab);
+      setActiveView("studio");
+    },
+    []
+  );
 
   // isOnboarding = true while there are no roles at all
   const hasRoles = Object.keys(roleCache).length > 0;
@@ -145,12 +180,14 @@ function AppContent() {
         if (e.key === "ArrowLeft") { e.preventDefault(); setActiveView("report"); }
         else if (e.key === "ArrowRight") { e.preventDefault(); setActiveView("community"); }
         else if (e.key === "ArrowUp") { e.preventDefault(); setActiveView("achievements"); }
+        else if (e.key === "ArrowDown") { e.preventDefault(); handleOpenStudio("gacha"); }
       } else {
         if (e.key === "Escape") { e.preventDefault(); goHome(); }
         else if (activeView === "report" && e.key === "ArrowRight") { e.preventDefault(); goHome(); }
         else if (activeView === "community" && e.key === "ArrowLeft") { e.preventDefault(); goHome(); }
         else if (activeView === "achievements" && e.key === "ArrowDown") { e.preventDefault(); goHome(); }
         else if (activeView === "chat" && e.key === "ArrowUp") { e.preventDefault(); goHome(); }
+        else if (activeView === "studio" && e.key === "ArrowUp") { e.preventDefault(); goHome(); }
       }
     };
     window.addEventListener("keydown", handler);
@@ -174,6 +211,26 @@ function AppContent() {
 
   return (
     <div style={{ width: "100vw", height: "100vh", position: "relative", overflow: "hidden" }}>
+      {/* Global Hidden Achievement Listener (M3.11) */}
+      <HiddenAchievementListener />
+
+      {/* Custom Theme Background Wallpaper Layer (M3.11) */}
+      {desktopThemeBg && (
+        <div
+          data-testid="desktop-custom-wallpaper"
+          style={{
+            position: "absolute",
+            inset: 0,
+            backgroundImage: `url(${desktopThemeBg})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            opacity: 0.35,
+            pointerEvents: "none",
+            zIndex: 0,
+          }}
+        />
+      )}
+
       {/* Radial Menu on Double Click */}
       <AnimatePresence>
         {pieMenuOpen && (
@@ -185,6 +242,10 @@ function AppContent() {
               setSettingsOpen(true);
               setPieMenuOpen(false);
             }}
+            onOpenStudio={() => {
+              handleOpenStudio("studio");
+              setPieMenuOpen(false);
+            }}
             dark={dark}
             toggleTheme={toggleTheme}
           />
@@ -192,7 +253,7 @@ function AppContent() {
       </AnimatePresence>
 
       {/* Main content */}
-      <main style={{ width: "100%", height: "100%", position: "relative" }}>
+      <main style={{ width: "100%", height: "100%", position: "relative", zIndex: 1 }}>
         <RoleDashboard
           onEnterChat={handleEnterChat}
           onFirstRoleCreated={refreshRoles}
@@ -205,6 +266,7 @@ function AppContent() {
           <EdgeNavigationTrigger side="left" label="日報" arrowIcon="‹" onClick={() => setActiveView("report")} />
           <EdgeNavigationTrigger side="right" label="社群" arrowIcon="›" onClick={() => setActiveView("community")} />
           <EdgeNavigationTrigger side="top" label="成就" arrowIcon="▲" onClick={() => setActiveView("achievements")} />
+          <EdgeNavigationTrigger side="bottom" label="工坊" arrowIcon="▼" onClick={() => handleOpenStudio("gacha")} />
         </>
       )}
 
@@ -218,11 +280,24 @@ function AppContent() {
       </PageTransition>
 
       <PageTransition isOpen={activeView === "achievements"} direction="top" onBack={goHome}>
-        <AchievementDisplay />
+        <AchievementDisplay onOpenGachaStudio={handleOpenStudio} />
       </PageTransition>
 
       <PageTransition isOpen={activeView === "chat"} direction="bottom" onBack={goHome}>
         <MultiAgentHelper onWorkflowOpen={() => setWorkflowOpen(true)} />
+      </PageTransition>
+
+      {/* Visual Studio & Gacha Hub (M3.11) */}
+      <PageTransition isOpen={activeView === "studio"} direction="bottom" onBack={goHome}>
+        <GachaStudioHub
+          defaultTab={studioTab}
+          onClose={goHome}
+          onApplyTheme={(scene) => {
+            if (scene.final_image_url) {
+              setDesktopThemeBg(scene.final_image_url);
+            }
+          }}
+        />
       </PageTransition>
 
       <WorkflowModal open={workflowOpen} onClose={() => setWorkflowOpen(false)} />

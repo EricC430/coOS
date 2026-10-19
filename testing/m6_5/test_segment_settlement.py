@@ -99,7 +99,7 @@ def approved_segment(store, reflection):
     s = FakeSegment(
         reflection_id=reflection.id,
         is_draft=False, is_reviewed=True,
-        user_feeling="Great session", is_active=True,
+        user_feeling="Great session", user_action_plan="Keep going", is_active=True,
     )
     store.add_segment(s)
     return s
@@ -145,6 +145,26 @@ class TestSegmentXPSettlement:
         assert user.current_xp == 0
         assert user.lifetime_xp == 0
 
+    @pytest.mark.parametrize("plan", [None, "", "   "])
+    def test_feeling_only_segment_gets_no_xp(self, store, user, reflection, plan):
+        """[R08: 微摩擦力 §四.2] [RISK-01] user_feeling alone is not an approval:
+        a segment without user_action_plan must not earn XP (LOOP-03)."""
+        seg = FakeSegment(
+            reflection_id=reflection.id,
+            is_draft=False, is_reviewed=True,
+            user_feeling="Tired but OK", user_action_plan=plan, is_active=True,
+        )
+        store.add_segment(seg)
+        gk = make_gk(store)
+        result = gk.settle_segment_xp(seg.id, user.id, 50)
+        assert result.success is False
+        assert result.error_code == "GATEKEEPER_001"
+        assert result.error_reason == "missing_user_action_plan"
+        assert user.current_xp == 0
+        assert user.lifetime_xp == 0
+        assert store.ledger == []
+        assert seg.xp_settled is False
+
     def test_xp_granted_for_approved_segment(self, store, user, approved_segment):
         """[RISK-01] approved segment grants XP."""
         gk = make_gk(store)
@@ -181,7 +201,7 @@ class TestSegmentXPSettlement:
         soft_seg = FakeSegment(
             reflection_id=reflection.id,
             is_draft=False, is_reviewed=True,
-            user_feeling="OK", is_active=False,
+            user_feeling="OK", user_action_plan="OK", is_active=False,
         )
         store.add_segment(soft_seg)
         gk = make_gk(store)
@@ -237,7 +257,7 @@ class TestLifetimeXPInvariant:
         seg = FakeSegment(
             reflection_id=reflection.id,
             is_draft=False, is_reviewed=True,
-            user_feeling="Focused", is_active=True,
+            user_feeling="Focused", user_action_plan="Repeat tomorrow", is_active=True,
         )
         store.add_segment(seg)
         gk = make_gk(store)

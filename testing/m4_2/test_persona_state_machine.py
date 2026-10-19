@@ -23,7 +23,7 @@ from m4_2_persona.echo_mode import (
 from m4_2_persona.reactance import ReactanceScore, rule_based_reactance
 from m4_2_persona.bdi import BDIInput, reconcile_bdi
 from m4_2_persona.paralinguistic import (
-    FILLER_WORDS,
+    DEFAULT_FILLER_WORDS as FILLER_WORDS,
     inject_paralinguistic,
     inject_paralinguistic_sync,
 )

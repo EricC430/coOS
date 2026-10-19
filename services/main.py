@@ -47,6 +47,7 @@ from m4_3_role_isolation.context import build_role_context
 # M4 / M6 integration imports
 from m4_3_role_isolation.middleware import RoleIsolationMiddleware
 from m4_13_community_engine.routes import router as m6_6_community_router
+from m4_11_zpd_pipeline.router import router as m4_11_router
 from m6_2_postgresql.engine import get_cloud_engine, is_cloud_available
 from m6_5_acid_gatekeeper.gatekeeper import XPGatekeeper
 
@@ -1400,6 +1401,9 @@ app.include_router(m1_4_oauth_router)
 # M4.13 / M6.6 community engine
 app.include_router(m6_6_community_router)
 
+# M4.11 ZPD Gacha Pipeline
+app.include_router(m4_11_router)
+
 
 # ---------------------------------------------------------------------------
 # M1.1 — OS 遙測守護行程事件接收端點
@@ -2730,22 +2734,38 @@ async def m4_5_grant_xp(request: Request, body: dict[str, Any]) -> dict[str, Any
         raise HTTPException(status_code=422, detail="reflection_id is required")
     
     user_id = get_safe_user_id(request)
-    
+
     store = LiveXPStore(_db_adapter)
     gatekeeper = XPGatekeeper(store)
-    
+
     refl_uuid = UUID(refl_id)
-    
+
     # Check segment first
     segment = await store.segments.get(refl_uuid)
     if segment:
+        from types import SimpleNamespace
+
         from m4_5_xp_settlement.engine import compute_earned_xp
         amount = compute_earned_xp(segment)
-        result = await asyncio.to_thread(gatekeeper.settle_segment_xp, refl_uuid, user_id, amount)
+        user_obj = await store.users.get(user_id)
+        # XPGatekeeper is synchronous; LiveXPStore proxies are async. Pre-fetch
+        # into a plain snapshot so the gatekeeper sees real objects instead of
+        # un-awaited coroutines (previously every call raised AttributeError).
+        # [RISK-01] [R08: 微摩擦力 §四.2] all guards -- is_reviewed, user_feeling,
+        # user_action_plan, xp_settled -- are enforced inside settle_segment_xp.
+        snapshot = SimpleNamespace(
+            segments={refl_uuid: segment},
+            reflections={},
+            users={user_id: user_obj} if user_obj else {},
+            ledger=[],
+        )
+        result = XPGatekeeper(snapshot).settle_segment_xp(refl_uuid, user_id, amount)
         if result.success:
+            # [RISK-14] persist segment flag, user totals and ledger together
             await segment.save(_db_adapter)
-            user_obj = await store.users.get(user_id)
             await user_obj.save(_db_adapter)
+            for entry in snapshot.ledger:
+                await store.ledger.append(entry)
             return {"granted": True, "amount": amount}
         return {"granted": False, "reason": result.error_reason}
     
@@ -2873,9 +2893,10 @@ class LiveXPStore:
                     self.lifetime_xp = r["lifetime_xp"]
 
                 async def save(self, db):
+                    # Local users table has no updated_at column (see lifespan DDL);
+                    # including it made the UPDATE fail silently and XP never persisted.
                     await db.execute(
-                        "UPDATE users SET current_xp = :cxp, lifetime_xp = :lxp, "
-                        "updated_at = CURRENT_TIMESTAMP WHERE id = :uid",
+                        "UPDATE users SET current_xp = :cxp, lifetime_xp = :lxp WHERE id = :uid",
                         {"cxp": self.current_xp, "lxp": self.lifetime_xp, "uid": str(self.id)}
                     )
             return UserObj(row)
@@ -2917,10 +2938,12 @@ class LiveXPStore:
                     self.is_active = True # Segments are always active in MVP
 
                 async def save(self, db):
+                    # daily_reflection_segments has no xp_settled_at / earned_xp
+                    # columns; writing them made the UPDATE fail silently and left
+                    # xp_settled=0, allowing a second grant. The amount is in xp_ledger.
                     await db.execute(
-                        "UPDATE daily_reflection_segments SET xp_settled = :s, xp_settled_at = :at, "
-                        "earned_xp = :xp WHERE id = :sid",
-                        {"s": self.xp_settled, "at": self.xp_settled_at, "xp": self.earned_xp, "sid": str(self.id)}
+                        "UPDATE daily_reflection_segments SET xp_settled = :s WHERE id = :sid",
+                        {"s": 1 if self.xp_settled else 0, "sid": str(self.id)}
                     )
             return SegmentObj(row)
 
@@ -2951,7 +2974,7 @@ class LiveXPStore:
 @app.post("/api/m6_5/grant_badge")
 async def m6_5_grant_badge(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     """[M6.5] XP settlement after user approves a reflection segment.
-    [RISK-01] Guards: is_reviewed=True, user_feeling non-empty, xp_settled=False.
+    [RISK-01] Guards: is_reviewed=True, user_feeling + user_action_plan non-empty, xp_settled=False.
     [RISK-14] Increments both current_xp and lifetime_xp atomically.
     """
     refl_id = body.get("reflection_id")
@@ -2976,6 +2999,9 @@ async def m6_5_grant_badge(request: Request, body: dict[str, Any]) -> dict[str, 
         return {"granted": False, "reason": "GATEKEEPER_001: not_reviewed"}
     if not (seg_row.get("user_feeling") or "").strip():
         return {"granted": False, "reason": "GATEKEEPER_001: missing_user_feeling"}
+    # [R08: 微摩擦力 §四.2] [RISK-01] both subjective fields are mandatory (LOOP-03)
+    if not (seg_row.get("user_action_plan") or "").strip():
+        return {"granted": False, "reason": "GATEKEEPER_001: missing_user_action_plan"}
     if seg_row.get("xp_settled", 0):
         return {"granted": False, "reason": "GATEKEEPER_002: already_settled"}
 

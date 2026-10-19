@@ -99,7 +99,7 @@ JSON 解析後新增：(1) `_FORBIDDEN_PHRASES` 禁用語檢查（含「我是AI
 |------|------|------|
 | Google OAuth 全套 | `main.py` `/api/auth/google/*`（`stub: true`）、Onboarding `oauthStub` UI | ✅ 合規 stub（L3 多裝置同步為 Phase 6+；CI 已豁免） |
 | M3.7 社群 UI | `m3_7_community/index.tsx` `stubMode=true` | ✅ 合規 stub（Phase 6b；SPEC 明定不可移除） |
-| M3.5 Gacha 按鈕 | `m3_5_achievements` disabled placeholder | ✅ 合規（RISK-09，M3.11 解鎖） |
+| M3.5 Gacha 按鈕 | `m3_5_achievements` | ✅ 已解鎖（M3.11 抽卡與視覺工坊完整接線，可直接開啟 GachaStudioHub） |
 | 語音輸入 | `useVoiceInput.ts`「Stubs -- real implementations connect to local Whisper sidecar」 | ⏳ 待換真品（Whisper sidecar 未建） |
 | M1.2.2 Tauri IPC bridge | `main.py:2613`「Mock Tauri IPC command bridge」 | ⏳ 待換真品（通知靜音需 Rust 端） |
 | AsyncDBAdapter mock fallback | `main.py::_get_mock_fallback`（PG 失敗回空清單） | ⏳ 可接受的降級，但需在 raw_tracking_logs 記 fallback 事件（目前只有 logger.warning） |
@@ -132,3 +132,24 @@ JSON 解析後新增：(1) `_FORBIDDEN_PHRASES` 禁用語檢查（含「我是AI
 | GAP-C8 turn counter 語意 | ⚠️ 待修 | Phase 5 收尾 |
 
 **測試結果（Session 3 結尾）**：`407 passed / 0 failed / 7 skipped`
+
+---
+
+## 修復狀態追加（2026-10-19 排程執行，MVP_CLOSURE_REPORT §9）
+
+| 項目 | 狀態 | 說明 |
+|------|------|------|
+| GAP-A1 M4.7 Obsidian | ➡️ 移至 Phase 6（registry 已同步） | `04_module_registry.md` M4.7 標籤改 `[進階]`；D-3：M4.7a 唯讀版排在 M5 之前 |
+| GAP-A2 前端 vitest 測試 | ✅ 已存在 | 測試在 `apps/desktop/tests/`（7 檔 40 測試），見結案報告 §2.2 / §6.1 |
+| GAP-C2 Gemma generate_json | ✅ 已修 | 結案報告 §6.1 |
+| GAP-C3 telemetry confidence | ✅ 已修 | 結案報告 §6.1 |
+| GAP-C8 turn counter 語意 | ✅ 已修 | 結案報告 §6.1 |
+| TEST-01 M4.13 缺 skip marker | ✅ 已修 | `requires_cloud`，14 failed → skipped |
+| LOOP-01 無閉環整合測試 | ✅ 已修 | `testing/m4_5/test_mvp_closed_loop.py` |
+| LOOP-03 後端未強制 `user_action_plan` | ✅ 已修 | M6.5 守門員 + `grant_badge` |
+| `/api/m4_5/grant_xp` 同步/非同步錯接（必 500） | ✅ 已修 | 結案報告 §9.2 #1 |
+| XP / `xp_settled` 寫入無聲失敗 | ✅ 已修 | 結案報告 §9.2 #2 |
+| 02:00 對話壓縮 import 錯誤（`chat_digest` 恆為 0） | ✅ 已修 | 結案報告 §9.2 #3 |
+| LOOP-05 ~ LOOP-09、TEST-02 | ⚠️ 待決定 / 待修 | 結案報告 §9.3 |
+
+**測試結果（2026-10-19 排程執行）**：`458 passed / 0 failed / 21 skipped`
