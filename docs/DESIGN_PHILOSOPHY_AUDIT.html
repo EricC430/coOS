@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>coOS 設計哲學稽核 — 互動視覺化</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+  --tx:#e6e9ef; --tx2:#9aa3b2; --tx3:#6b7280;
+  --ok:#37c978; --warn:#f2b544; --bad:#ef5b5b; --none:#3a4050;
+  --acc:#7aa2f7; --acc2:#bb9af7; --acc3:#f7768e;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);
+  font-family:-apple-system,"Segoe UI","Noto Sans TC","PingFang TC",system-ui,sans-serif;
+  line-height:1.65;font-size:15px}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 80px}
+header h1{font-size:26px;margin:0 0 6px;letter-spacing:.5px}
+header .sub{color:var(--tx2);font-size:13.5px;margin-bottom:22px}
+nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:24px;
+  border-bottom:1px solid var(--line);padding-bottom:12px}
+nav button{background:transparent;border:1px solid var(--line);color:var(--tx2);
+  padding:7px 14px;border-radius:999px;cursor:pointer;font-size:13.5px;
+  font-family:inherit;transition:.15s}
+nav button:hover{color:var(--tx);border-color:#3c4353}
+nav button.on{background:var(--acc);border-color:var(--acc);color:#0f1115;font-weight:600}
+section{display:none;animation:fade .25s ease}
+section.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+h2{font-size:19px;margin:0 0 4px}
+.hint{color:var(--tx3);font-size:12.5px;margin:0 0 18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+
+/* philosophy families */
+.fam{background:var(--panel);border:1px solid var(--line);border-left-width:4px;
+  border-radius:10px;padding:14px 16px;cursor:pointer;transition:.15s}
+.fam:hover{background:var(--panel2)}
+.fam .tag{font-size:11px;color:var(--tx3);letter-spacing:1.5px;text-transform:uppercase}
+.fam h3{margin:3px 0 6px;font-size:16px}
+.fam .ax{color:var(--tx2);font-size:13.5px;font-style:italic;margin-bottom:10px}
+.fam .meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px}
+.bar{flex:1;height:6px;background:#252a34;border-radius:3px;overflow:hidden;min-width:80px}
+.bar i{display:block;height:100%;border-radius:3px}
+.fam .det{display:none;margin-top:12px;padding-top:12px;border-top:1px dashed var(--line);font-size:13px;color:var(--tx2)}
+.fam.open .det{display:block}
+.fam code{background:#0b0d11;padding:1px 6px;border-radius:4px;font-size:12px;color:var(--acc2)}
+
+/* heatmap */
+.hm{display:flex;flex-wrap:wrap;gap:7px}
+.mod{width:78px;height:56px;border-radius:8px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;font-size:11.5px;cursor:default;
+  border:1px solid rgba(255,255,255,.06);position:relative}
+.mod b{font-size:13px;font-weight:600}
+.mod span{opacity:.75;font-size:10px}
+.layer{margin-bottom:16px}
+.layer .lh{font-size:13px;color:var(--tx2);margin-bottom:7px;font-weight:600}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--tx2);margin:14px 0 4px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+
+/* tension */
+.ten{border-left:4px solid var(--acc3)}
+.ten h3{font-size:15.5px;margin:0 0 8px}
+.vs{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;margin:10px 0}
+.vs .side{background:#12151c;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px}
+.vs .x{color:var(--acc3);font-weight:700;font-size:14px}
+.evi{background:#12151c;border-radius:8px;padding:10px 12px;font-size:12.8px;color:var(--tx2);margin-top:8px}
+.evi b{color:var(--warn)}
+
+/* table */
+table{width:100%;border-collapse:collapse;font-size:13.2px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--tx3);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+tr:hover td{background:#1a1e26}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11.5px;font-weight:600}
+.p-ok{background:rgba(55,201,120,.15);color:var(--ok)}
+.p-warn{background:rgba(242,181,68,.15);color:var(--warn)}
+.p-bad{background:rgba(239,91,91,.15);color:var(--bad)}
+.p-none{background:rgba(120,130,150,.15);color:#8a93a5}
+
+/* matrix */
+#mx{position:relative;height:430px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.dot{position:absolute;transform:translate(-50%,-50%);border-radius:999px;
+  display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:700;
+  color:#0f1115;cursor:default;transition:.15s;white-space:nowrap;padding:0 9px;height:24px}
+.dot:hover{transform:translate(-50%,-50%) scale(1.12);z-index:9;box-shadow:0 0 0 3px rgba(255,255,255,.12)}
+.axl{position:absolute;color:var(--tx3);font-size:11.5px}
+.qd{position:absolute;color:#3a4050;font-size:11px;font-weight:700;letter-spacing:1px}
+.mxline{position:absolute;background:var(--line)}
+
+/* layer stack */
+.stack{display:flex;flex-direction:column;gap:4px}
+.lyr{border:1px solid;border-radius:10px;padding:14px 16px}
+.lyr-h{font-size:15px;margin-bottom:6px}
+.lyr-h .lyr-t{color:var(--tx3);font-size:11.5px;letter-spacing:1px;margin-left:8px;text-transform:uppercase}
+.lyr-b{font-size:13.2px;color:var(--tx2);margin-bottom:8px;line-height:1.8}
+.lyr-o{font-size:12.4px;color:var(--tx2);border-top:1px dashed var(--line);padding-top:8px}
+.arrows{display:flex;gap:10px;padding:4px 8px}
+.ar{flex:1;font-size:12.4px;color:var(--tx2);background:#12151c;border:1px solid var(--line);
+  border-radius:8px;padding:7px 12px}
+.ar span{display:block;color:var(--tx3);font-size:11.5px;margin-top:1px}
+.ar.up{border-left:3px solid var(--acc2)}
+.ar.dn{border-left:3px solid var(--acc)}
+
+/* phase1 */
+ol.slice{margin:0;padding-left:0;list-style:none;counter-reset:s}
+ol.slice li{counter-increment:s;position:relative;padding:8px 10px 8px 40px;font-size:13.4px;
+  color:var(--tx2);border-bottom:1px solid var(--line)}
+ol.slice li:last-child{border-bottom:none}
+ol.slice li::before{content:counter(s);position:absolute;left:8px;top:9px;width:22px;height:22px;
+  border-radius:6px;background:#252a34;color:var(--tx3);font-size:11.5px;font-weight:700;
+  display:flex;align-items:center;justify-content:center}
+ol.slice li.soul{background:rgba(122,162,247,.07)}
+ol.slice li.soul::before{background:var(--acc);color:#0f1115}
+.kit{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--acc2);
+  border-radius:10px;padding:14px 16px}
+.kit h4{margin:0 0 6px;font-size:14px}
+.kit .pth{font-size:11.5px;color:var(--tx3);font-family:ui-monospace,monospace;margin-bottom:8px}
+.kit div.b{font-size:12.9px;color:var(--tx2)}
+
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.kpi .n{font-size:27px;font-weight:700;letter-spacing:-.5px}
+.kpi .l{color:var(--tx3);font-size:12px;margin-top:2px}
+.note{font-size:12.5px;color:var(--tx3);margin-top:10px}
+canvas{max-height:300px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>coOS 設計哲學稽核</h1>
+  <div class="sub">2026-08-08 · 唯讀稽核 · 資料來源：<code>coOS/docs</code>、<code>services/</code>、<code>apps/</code>、Eric's Obsidian Vault (11,462 筆記)<br>
+  <span style="color:var(--acc2)">架構立場：Obsidian Vault = 底層 (System of Record)　·　coOS = 高階介面 (Interface &amp; Runtime)</span></div>
+</header>
+
+<nav>
+  <button class="on" data-t="s0">分層架構</button>
+  <button data-t="s1">哲學譜系</button>
+  <button data-t="s7">底層規範</button>
+  <button data-t="s2">模組完成度</button>
+  <button data-t="s3">五組張力</button>
+  <button data-t="s4">分層契約</button>
+  <button data-t="s5">衰減證據</button>
+  <button data-t="s6">優先矩陣</button>
+  <button data-t="s8">Phase 1 驗收</button>
+</nav>
+
+<!-- ============ S8 Phase 1 ============ -->
+<section id="s8">
+  <h2>Phase 1：範疇與驗收契約</h2>
+  <p class="hint">回答「怎麼確保做出來的是我要的，而不只是接通了？」完整版見 <code>PHASE1_SCOPE_AND_ACCEPTANCE.md</code>。</p>
+
+  <div class="card" style="border-left:4px solid var(--bad)">
+    <h3 style="margin:0 0 8px;font-size:15px">現況診斷：只有一層驗收</h3>
+    <div style="font-size:13.2px;color:var(--tx2)">
+      所有 Closure Report 的成果陳述都是同一句：149 / 407 / <b>446 passed, 0 failed</b>。
+      但 <code>manual_test_log.md</code> 裡每一條抱怨——問候 121 字、語氣急迫沒有溫度、氣泡延遲太短、標記重複、返回後氣泡合併——
+      <b style="color:var(--bad)">全部都通過了這 446 個測試</b>。<br><br>
+      它們不是 bug，是<b style="color:var(--tx)">保真度與體感的失敗</b>。問題不在測試不夠多，在於只有一層驗收。
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;margin:20px 0 6px">四層驗收階梯</h3>
+  <div class="card" style="padding:4px 8px"><table id="ladder"></table></div>
+  <div class="card" style="border-left:4px solid var(--ok);margin-top:10px">
+    <div style="font-size:13.5px;color:var(--tx2)">
+      <b style="color:var(--ok)">Definition of Done</b>　=　L0 全綠 <b>∧</b> L1 全綠 <b>∧</b> L2 全部判定為 ✅ 或已明確記錄的可接受差異 <b>∧</b> L3 已有 7 天數據。<br>
+      <span class="note" style="display:block;margin-top:8px">Closure Report <b style="color:var(--bad)">不得</b>以「N passed / 0 failed」作為主要成果陳述——主要成果陳述必須是 L2 判定表。</span>
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;margin:22px 0 6px">開工前四件套（想像外化）</h3>
+  <p class="hint">鐵則：這四件套完成前，一行實作程式碼都不准寫。它們不是文書工作，它們就是規格。</p>
+  <div class="grid g2" id="kit"></div>
+
+  <h3 style="font-size:15px;margin:22px 0 6px">唯一的垂直切片</h3>
+  <p class="hint">按模組分 Phase 會做出「每個模組都通了、但沒有一條路走得完」。Phase 1 只認這一條路。</p>
+  <div class="card"><ol class="slice" id="slice"></ol></div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card" style="border-left:4px solid var(--acc3)">
+      <h3 style="margin:0 0 8px;font-size:15px">與 AI 協作的三條防線</h3>
+      <div style="font-size:13px;color:var(--tx2);line-height:1.85">
+        <b style="color:var(--tx)">1. 黃金樣本不得由 AI 生成或修改</b>　AI 生成的樣本會自動與 AI 的實作對齊，驗收就失去意義。實作與樣本不符時，預設是實作錯。<br>
+        <b style="color:var(--tx)">2. AI 不得宣告「L2 通過」</b>　它可以產生 diff 報告，判定權在你。<br>
+        <b style="color:var(--tx)">3. 每週一次不看程式碼的走查</b>　只照劇本從頭走一遍。這是唯一能發現「每個模組都對、合起來很怪」的方法。
+      </div>
+    </div>
+    <div class="card" style="border-left:4px solid var(--warn)">
+      <h3 style="margin:0 0 8px;font-size:15px">到期未完成：砍功能，不砍品質</h3>
+      <div style="font-size:13px;color:var(--tx2);line-height:1.85">
+        由上往下砍：① XP Stats 等級連動 → ② 重複 claim 偵測（降級為記警告）→ ③ Skill XP 回寫 → ④ Principles / Domains 讀取<br><br>
+        <b style="color:var(--bad)">絕對不砍</b>：L1 契約驗收、L2 判定、步驟 9 與 11（雙寫收斂）。
+        砍掉這些，這個階段就退化成「接通」——而那正是要避免的事。
+      </div>
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;margin:22px 0 6px">開工前必須拍板（W0）</h3>
+  <div class="card" style="padding:4px 8px"><table id="dec"></table></div>
+</section>
+
+<!-- ============ S0 分層架構 ============ -->
+<section id="s0" class="on">
+  <h2>核心架構判斷：Obsidian 是底層，coOS 是高階介面</h2>
+  <p class="hint">Obsidian 不被取代、不被搬空、不進入維護模式。它是 System of Record；coOS 是 Interface &amp; Runtime。</p>
+
+  <div class="card" style="border-left:4px solid var(--acc);padding:20px">
+    <div class="stack">
+      <div class="lyr" style="border-color:var(--acc);background:linear-gradient(180deg,rgba(122,162,247,.10),rgba(122,162,247,.03))">
+        <div class="lyr-h"><b>coOS</b> — 高階介面層 <span class="lyr-t">Interface &amp; Runtime</span></div>
+        <div class="lyr-b">感測 · 對話 · 邊緣推論 · 草稿生成 · 即時心理狀態機</div>
+        <div class="lyr-o">擁有：<code>raw_tracking_logs</code> / <code>intent_logs</code> / <code>chat_transcripts</code> / Persona 狀態<br>
+          <span style="color:var(--tx3)">性質：高頻 · 短生命週期 · 可重建 · 隱私敏感</span></div>
+      </div>
+
+      <div class="arrows">
+        <div class="ar up">↑ 讀治理<span>誰是我 · 我信什麼 · 我在哪個人生階段</span></div>
+        <div class="ar dn">↓ 寫事實<span>核准後才寫 · append-only · 可撤銷</span></div>
+      </div>
+
+      <div class="lyr" style="border-color:var(--acc2);background:linear-gradient(180deg,rgba(187,154,247,.10),rgba(187,154,247,.03))">
+        <div class="lyr-h"><b>Obsidian Vault</b> — 底層 <span class="lyr-t">Substrate / System of Record</span></div>
+        <div class="lyr-b">
+          <b style="color:var(--tx)">Governance</b>　Vision → Domain → Role → Skill → Principle<br>
+          <b style="color:var(--tx)">Executive</b>　　Project · Event · Routine · Period<br>
+          <b style="color:var(--tx)">Resource</b>　　 Concept · Artifact · Input · People · Media
+        </div>
+        <div class="lyr-o">擁有：身分 · 原則 · 技能樹 · XP 帳本 · 長期記憶<br>
+          <span style="color:var(--tx3)">性質：低頻 · 永久 · 純文字 · 可攜 · 不依賴任何 app</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card" style="border-left:4px solid var(--acc2)">
+      <h3 style="margin:0 0 8px;font-size:15px">底層缺的：輸入頻寬</h3>
+      <div style="font-size:13.2px;color:var(--tx2)">
+        Vault 的設計沒有問題——欠缺的是「所有事實都得由人手動敲進去」。
+        所以它死於記錄疲勞：日記 9→20→18→6→1→2，XP 紀錄 5 月只剩 2 條。
+      </div>
+    </div>
+    <div class="card" style="border-left:4px solid var(--acc)">
+      <h3 style="margin:0 0 8px;font-size:15px">高階介面缺的：身分本體</h3>
+      <div style="font-size:13.2px;color:var(--tx2)">
+        coOS 有極強的輸入頻寬（OS 遙測 / VS Code 熵 / Git / 瀏覽器 / 對話），
+        但冷啟動時 role 空、goals 空、heatmap 回 <code>[]</code>。<b style="color:var(--tx)">兩者恰好互補。</b>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="border-left:4px solid var(--ok)">
+    <h3 style="margin:0 0 8px;font-size:15px">定位聲明建議改寫</h3>
+    <div style="font-size:13.2px;color:var(--tx2)">
+      <span style="color:var(--tx3)">原：</span>「不是 Notion / Obsidian 競品。我們不存儲使用者的內容，我們建模使用者的狀態。」<br>
+      <span style="color:var(--tx3)">改：</span><b style="color:var(--tx)">「coOS 不重建個人知識庫。它把 Obsidian Vault 當作身分與長期記憶的底層，自己負責感測、對話與即時心理狀態——Vault 記錄我是誰，coOS 負責照顧今天的我。」</b><br><br>
+      對應到哲學譜系：<b>F / G / H 由底層負責，A / B / C / D / E 由高階介面負責。</b>
+      coOS 不需要重新發明 F/G/H，它需要的是讀懂並尊重它們。
+    </div>
+  </div>
+</section>
+
+<!-- ============ S7 底層規範 ============ -->
+<section id="s7">
+  <h2>底層規範：Vault 的哲學、機制與 XP 經濟</h2>
+  <p class="hint">這些是 coOS 必須遵守的契約，不是可以重新設計的東西。</p>
+
+  <h3 style="font-size:15px;margin:18px 0 8px">五種機制 = 底層的 API</h3>
+  <div class="card" style="padding:4px 8px"><table id="mech"></table></div>
+
+  <h3 style="font-size:15px;margin:20px 0 8px">XP 經濟規格</h3>
+  <div class="card" style="padding:4px 8px"><table id="xps"></table></div>
+  <div class="card" style="border-left:4px solid var(--warn);margin-top:10px">
+    <div style="font-size:13.2px;color:var(--tx2)">
+      ⚠️ <b style="color:var(--warn)">底層本身有一致性瑕疵</b>：全域公式 <code>floor(0.1·√XP)</code> 與技能公式
+      <code>floor(√(XP/100))+1</code> 相差常數 1。coOS 若要顯示等級，必須先拍板統一，否則兩邊數字對不上。
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card" style="border-left:4px solid var(--acc2)">
+      <h3 style="margin:0 0 8px;font-size:15px">底層已設計、coOS 重新發明了一次</h3>
+      <div style="font-size:13px;color:var(--tx2)">
+        <code>ai_architecting/obsidian design.md</code>（65,729 行）第 1234–1264 行早就有一套五段式反思鷹架：<br><br>
+        <code>描述 → 發生了（客觀）→ 觸動了我（主觀）→ <b style="color:var(--acc2)">我聯想到了（突觸連結）</b> → 我有新的點子（整合）→ 觸發新任務（決策）</code><br><br>
+        這與 M4.4.3 的 <code>gibbs_template.py</code>（880 行）在做同一件事，
+        <b style="color:var(--tx)">而且你的版本多了「突觸連結」</b>——把當下經驗連回過去的概念與筆記。
+        這正是 <code>[R11: Park et al. §3.3 Reflection]</code> 的核心，也正是 coOS 最弱的一環
+        （<code>daily_reflections</code> 沒有任何連回 <code>Resource/Concepts</code> 的機制）。
+      </div>
+    </div>
+    <div class="card" style="border-left:4px solid var(--acc3)">
+      <h3 style="margin:0 0 8px;font-size:15px">底層有、coOS 完全沒有：角色衝突解決</h3>
+      <div style="font-size:13px;color:var(--tx2)">
+        <code>Vision Template.md</code> 內建
+        <code>## 🛤️ Multi-Track Scenarios（多軌道劇本）</code> 與
+        <code>## ⚔️ Conflict Resolution（衝突整合）</code>——
+        明確處理「同一領域下不同角色的夢想資源衝突」。<br><br>
+        <b style="color:var(--tx)">coOS 的 M4.3 角色隔離只做技術隔離，不做價值取捨。</b>
+        10 個角色搶同一個人的 24 小時，這是使用者真實的痛點，而底層已經想過了。
+      </div>
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;margin:20px 0 8px">底層目前的健康狀況（誠實盤點）</h3>
+  <div class="card" style="padding:4px 8px"><table id="health"></table></div>
+</section>
+
+<!-- ============ S1 哲學譜系 ============ -->
+<section id="s1">
+  <h2>八個思想家族</h2>
+  <p class="hint">點擊卡片展開細節。<b>A–E 由高階介面（coOS）負責</b>，來自 <code>03_research_index.md</code> 的 19 篇研究；<b>F–H 由底層（Vault）負責</b>，是你自己發明、運作兩年的設計傳統，從未進入研究索引。</p>
+  <div class="grid g2" id="fams"></div>
+  <div class="card" style="margin-top:16px;border-left:4px solid var(--acc2)">
+    <h3 style="margin:0 0 8px;font-size:15px">治理排序（<code>01_product_vision.md</code>）</h3>
+    <div style="font-size:14px;letter-spacing:.5px">
+      心理健康 <span style="color:var(--tx3)">&gt;</span> 隱私 <span style="color:var(--tx3)">&gt;</span> 學術依據
+      <span style="color:var(--tx3)">&gt;</span> 產品功能 <span style="color:var(--tx3)">&gt;</span> 商業指標
+    </div>
+    <div class="note">問題：排在第一位的「心理健康」目前沒有任何模組在測量它。<code>mood_score</code> 的來源 M4.8 已被推遲並改採 mock，反 KPI 因此沒有執行機關。</div>
+  </div>
+</section>
+
+<!-- ============ S2 模組完成度 ============ -->
+<section id="s2">
+  <h2>模組完成度熱圖</h2>
+  <p class="hint">以 <code>services/</code> 與 <code>apps/</code> 的實際檔案為判準，非以文件宣稱為準。數字為該模組 Python 行數。</p>
+  <div class="grid g3" style="margin-bottom:18px" id="kpis"></div>
+  <div id="hm"></div>
+  <div class="legend">
+    <span><i style="background:var(--ok)"></i>已實作（有程式碼 + 測試）</span>
+    <span><i style="background:var(--warn)"></i>半成品 / 有已知缺口</span>
+    <span><i style="background:var(--bad)"></i>SPEC 已寫、程式碼為零</span>
+    <span><i style="background:var(--none)"></i>進階、尚未排程</span>
+  </div>
+  <div class="card" style="margin-top:16px;border-left:4px solid var(--bad)">
+    <h3 style="margin:0 0 6px;font-size:15px">最大的名實落差</h3>
+    <div style="font-size:13.5px;color:var(--tx2)">
+      <code>01_product_vision.md</code> 第一句：「結合多智能體 AI、遊戲化機制<b style="color:var(--tx)">與薩提爾冰山心理模型</b>」。
+      但 <code>services/</code> 底下沒有任何 <code>m5_*</code>，Neo4j 從未被寫入，M4.8 隱性狀態推論已明確標記「先不實作、改採 mock」。
+      <b style="color:var(--bad)">薩提爾冰山目前是 0 行程式碼。</b>
+      三大賣點中已落地的兩個（多智能體、遊戲化）恰好是最不具差異化的兩個。
+    </div>
+  </div>
+</section>
+
+<!-- ============ S3 張力 ============ -->
+<section id="s3">
+  <h2>五組尚未被風險稽核涵蓋的哲學張力</h2>
+  <p class="hint"><code>05_integration_risk_audit.md</code> 的 18 條 RISK 處理「模組 A + B 合併後變差」。以下是更上層的、公理之間的矛盾。</p>
+  <div id="tens"></div>
+</section>
+
+<!-- ============ S4 Obsidian ============ -->
+<section id="s4">
+  <h2>分層契約：底層與高階介面的邊界</h2>
+  <p class="hint">先看兩層概念如何對應，再定義誰擁有什麼、怎麼互通。</p>
+  <div class="card" style="padding:4px 8px"><table id="ob"></table></div>
+  <h3 style="font-size:15px;margin:22px 0 6px">所有權矩陣：任何一筆資料只能有一個 owner</h3>
+  <p class="hint">另一層只能讀，或提議。</p>
+  <div class="card" style="padding:4px 8px"><table id="own"></table></div>
+
+  <div class="card" style="border-left:4px solid var(--bad);margin-top:14px">
+    <h3 style="margin:0 0 8px;font-size:15px">三條鐵律</h3>
+    <div style="font-size:13.2px;color:var(--tx2);line-height:1.9">
+      <b style="color:var(--tx)">1. append-only 且可撤銷</b>　只 append 到既有區塊，不改既有行；所有寫入帶
+      <code>coos_generated: true</code>，可用一條 Dataview 全數查出並刪除。<br>
+      <b style="color:var(--tx)">2. 未經 <code>is_reviewed = true</code>，一個字都不准進 Vault</b>　同時滿足
+      <code>[R08 §六.1 IKEA]</code> 與「Vault 只收乾淨資料」。<br>
+      <b style="color:var(--tx)">3. L1 明文永不寫入 Vault</b>　Vault 有 <code>obsidian-git</code> 做 GitHub 同步——
+      <b style="color:var(--bad)">寫進去等同上雲</b>。這比 M4.7 SPEC 現有的「偵測 iCloud / Dropbox 就警告」嚴格得多，
+      因為你的 Vault 本來就在同步。
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;margin:22px 0 6px">整合機制：沿用底層既有的事件匯流排，不要發明新的</h3>
+  <p class="hint">Vault 已經有一套跑了半年的模式：<code>calculateRPGStats.js</code> 偵測升級 → 寫 <code>.level_up_trigger.json</code> → <code>level_up_notifier.py</code> watch 並生圖寄信。</p>
+  <div class="card" style="padding:4px 8px"><table id="bus"></table></div>
+  <div class="card" style="border-left:4px solid var(--ok);margin-top:12px">
+    <h3 style="margin:0 0 8px;font-size:15px">為什麼這樣接</h3>
+    <div style="font-size:13.2px;color:var(--tx2);line-height:1.9">
+      <b style="color:var(--tx)">不需要 Tauri fs 權限</b>　Python sidecar 只讀寫 JSON，<code>.md</code> 的實際修改由 Vault 自己的 JS 完成——
+      <b style="color:var(--ok)">寫入 Vault 的永遠是 Vault 自己的程式</b>，格式一定合乎契約。<br>
+      <b style="color:var(--tx)">天然的第二道 Draft &amp; Approve</b>　<code>applyCoosInbox.js</code> 做成 QuickAdd 指令，
+      你在 Obsidian 裡按一下才落地，符合 <code>[R08 §五 意圖脫鉤]</code>。<br>
+      <b style="color:var(--tx)">離線安全</b>　coOS 沒開時 Vault 照常運作；Vault 沒開時 coOS 照常收集。兩層鬆耦合。<br>
+      <b style="color:var(--tx)">衝突處理</b>　全部 append-only 天然無衝突；若目標區塊不存在（模板改版），
+      寫進 <code>.coos_inbox/_failed/</code> 並發 Notice，不靜默失敗。
+    </div>
+  </div>
+
+  <div class="card" style="border-left:4px solid var(--bad);margin-top:14px">
+    <h3 style="margin:0 0 8px;font-size:15px">對照：M4.7 SPEC 目前的設計為何不能用</h3>
+    <div style="font-size:13px;color:var(--tx2)">
+      SPEC §7.3 輸出 <code>{vault}/coOS/2026-06-03_csie.md</code>，純標題 + 條列，<b style="color:var(--bad)">沒有 frontmatter</b>。
+      Vault 靠 Dataview 組裝所有視圖（Role 頁查 <code>contains(related_roles, this.file.link)</code>、
+      Daily 頁查 <code>contains(daily_link, …)</code>），沒有 <code>class:</code> / <code>related_roles:</code> 的檔案
+      <b style="color:var(--bad)">不會被任何一條查詢撈到</b>——寫入即死檔。<br><br>
+      附帶：§7.4 的 PII 正則 <code>[一-鿿]{2,3}(?:小|大|老)\w</code> 匹配不到「陳小明」
+      （2–3 個中文字後必須緊接 小/大/老），所以 §6 的驗收測試
+      <code>assert "陳小明" not in content</code> <b style="color:var(--bad)">會失敗</b>；
+      反而「專題小組」會被誤殺。
+    </div>
+  </div>
+  <div class="card" style="margin-top:14px;border-left:4px solid var(--acc2)">
+    <h3 style="margin:0 0 8px;font-size:15px">被錯過的最大資產：<code>Governance/Principles</code>（6 條）</h3>
+    <div style="font-size:13.2px;color:var(--tx2)">
+      它們不是勵志格言，結構是 <b style="color:var(--tx)">The Logic（為什麼有效）→ The Algorithm（IF-THEN-ELSE）→ Anti-Patterns（已知失敗模式）</b>。<br><br>
+      例：「最小可行迭代法則」的 Algorithm 是
+      <em>IF（我發現自己在看第 3 個教學影片卻還沒寫一行 code）THEN（關掉瀏覽器／寫最爛的一段 code／讓程式報錯）</em>。<br><br>
+      這正是 M1.5 微 Nudges 需要的規則，<b style="color:var(--acc)">而且是使用者自己在冷靜時訂下的</b>——
+      AI 引用「這是你自己說的」可以繞過心理阻抗 <code>[R03 §4]</code>，比任何 LLM 生成的說教都有效，
+      同時也是 <code>[R16: MI §Rolling with Resistance]</code> 的理想輸入。
+    </div>
+  </div>
+</section>
+
+<!-- ============ S5 衰減 ============ -->
+<section id="s5">
+  <h2>你自己系統的衰減曲線 = coOS 存在的理由</h2>
+  <p class="hint">Obsidian Vault 的實測資料。這是「記錄疲勞」最有說服力的前測證據，目前沒有寫進任何一份 coOS 文件或論文。</p>
+  <div class="grid g2">
+    <div class="card"><canvas id="c1"></canvas></div>
+    <div class="card"><canvas id="c2"></canvas></div>
+  </div>
+  <div class="card" style="border-left:4px solid var(--warn)">
+    <h3 style="margin:0 0 8px;font-size:15px">為什麼這件事很重要</h3>
+    <div style="font-size:13.3px;color:var(--tx2)">
+      Vault 的日記模板<b style="color:var(--tx)">已經非常接近 coOS 的草稿與核准設計</b>：13 條 Routine 預先填好、
+      4 個 Dataview 區塊自動生成、使用者只需填 Highlights / Improvements 兩欄。<br><br>
+      它在四個月內從每月 20 篇掉到 1 篇。最新一篇（2026-06-25）的
+      <code>mood</code>／<code>energy</code>／<code>productivity</code> 全空、<code>total_xp: 0</code>、
+      13 個 checkbox 全未勾、Save Point 反思區塊空白。<br><br>
+      <b style="color:var(--warn)">推論</b>：外部審查的魔鬼代言人指出的「審核疲勞」不是理論假設——
+      你已經有一份 N=1 的實測資料顯示，把摩擦從「寫」搬到「填兩欄」<b style="color:var(--tx)">不足以</b>阻止衰減。
+      coOS 若要成立，需要的是<b style="color:var(--acc)">摩擦預算控制器</b>（系統主動限制自己索取的時間），
+      而不是再加一層外在獎勵。<br><br>
+      <b style="color:var(--ok)">學術價值</b>：把這條曲線寫進期末報告，能同時解除審查報告的 C1（證據—結論落差）
+      與 M2（確認偏誤）——因為你先呈現了自己的失敗，而非只呈現對自己有利的詮釋。
+    </div>
+  </div>
+</section>
+
+<!-- ============ S6 矩陣 ============ -->
+<section id="s6">
+  <h2>轉向建議優先矩陣</h2>
+  <p class="hint">橫軸＝實作成本，縱軸＝對「設計目標對齊」的影響。左上角＝先做。滑鼠移上去看說明。</p>
+  <div id="mx"></div>
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card">
+      <h3 style="margin:0 0 8px;font-size:15px">Now（4 週）— 確立分層 · 證據 · 冷啟動</h3>
+      <ol style="margin:0;padding-left:20px;font-size:13.2px;color:var(--tx2);line-height:1.9">
+        <li><b style="color:var(--tx)">把「Vault = Layer 0 底層」寫進憲章</b>（02_architecture / 01_product_vision / 04_module_registry / CLAUDE.md）</li>
+        <li>M4.7a Vault Governance Reader（唯讀 + 週期重掃）</li>
+        <li>N=1 使用數據報告（含 Vault 衰減曲線作 baseline）</li>
+        <li><code>eguard.mask_pii()</code> 補上 + 隱私表加註 L1 例外與「Vault = L3-local」</li>
+        <li>修 GAP-C3（套問 confidence）、GAP-C8（turn counter）</li>
+      </ol>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 8px;font-size:15px">Next（8 週）— 執行機關 · 接通回寫</h3>
+      <ol start="6" style="margin:0;padding-left:20px;font-size:13.2px;color:var(--tx2);line-height:1.9">
+        <li>M4.7c 事件匯流排（<code>.coos_outbox/</code> ↔ <code>.coos_inbox/</code>）</li>
+        <li>M4.7b Vault Writer with Contract</li>
+        <li>人生階段（Period）——直接讀底層的 <code>active_period</code></li>
+        <li>M1.7 摩擦預算控制器</li>
+        <li>Persona 語氣硬約束 + message_splitter 重寫</li>
+        <li>「今日一張卡」主入口收斂</li>
+        <li>反 KPI 計算器（先做能算的）</li>
+      </ol>
+    </div>
+  </div>
+  <div class="card" style="border-left:4px solid var(--acc3)">
+    <h3 style="margin:0 0 8px;font-size:15px">建議凍結（不是砍，是寫明理由後暫停）</h3>
+    <div style="font-size:13.2px;color:var(--tx2)">
+      <b>M3.11 Gacha</b>｜反 KPI 的執行機關不存在前引入變動比例增強＝沒有煞車就踩油門（RISK-09 已預警）<br>
+      <b>M4.11 ZPD 任務池</b>｜需要 M4.8 的能力估計作輸入，而 M4.8 已推遲<br>
+      <b>M4.12 隱藏成就</b>｜邊際價值低<br>
+      <b>M7.1 生圖管線</b>｜純美術，Vault 已有 130 張現成 Badge<br><br>
+      <b style="color:var(--tx)">共同理由</b>：Vault 的 XP 系統是同一設計哲學的先驗實驗，它沒有救活那套系統。
+      在拿到證據之前，再加一層外在獎勵是拿 RISK-09 / RISK-10 換不確定的留存。
+    </div>
+  </div>
+</section>
+
+</div>
+
+<script>
+/* ---------- nav ---------- */
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on'));
+  document.querySelectorAll('section').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+  document.getElementById(b.dataset.t).classList.add('on');
+});
+
+/* ---------- S1 families ---------- */
+const FAM=[
+ {k:'A',c:'#37c978',n:'心理所有權學派',ax:'使用者必須付出足以感受到的勞動，洞察才會屬於他。',
+  r:'R08 §六.1 IKEA · R08 §四.2 微摩擦 · R08 §五 意圖脫鉤 · R10 §典範轉移',p:95,
+  d:'落地最完整。三重守門（is_reviewed + user_feeling + user_action_plan）在 <code>m4_5_xp_settlement/engine.py</code> 與 <code>m6_5_acid_gatekeeper/gatekeeper.py</code> 均有實作與測試。這是 coOS 最原創、最站得住腳的設計命題。'},
+ {k:'B',c:'#f2b544',n:'混合主動式控制論',ax:'系統的介入時機比介入內容更重要。',
+  r:'R08 §二 Defer-to-Breakpoint · R08 §三 警報疲勞 · R01 ZONE · R02 HMM',p:55,
+  d:'M1.2 斷點偵測已實作（<code>breakpoint_engine.py</code>，601 行）。<b style="color:var(--warn)">但控制論的迴圈缺了感測器</b>：完整版需要認知負荷估計作輸入，而估計器 M4.8（POMDP + 多模態 BKT）已被推遲改 mock。目前只能靠視窗切換這種粗訊號。'},
+ {k:'C',c:'#7aa2f7',n:'關係性人格學派',ax:'一個穩定、有邊界、不諂媚的他者，比一面鏡子更能促成改變。',
+  r:'R03 Echo Mode · R05 ToM/治療同盟 · R09 SDT/BDI · R12–R18（Character-LLM / PersonaLLM / RoleLLM / MemGPT / MI / WAI / 反諂媚）',p:85,
+  d:'篇幅最大的家族，落地最厚——<code>m4_2_persona/</code> 2,426 行，全專案最大模組。PersonaCard v2、ClaimLedger、message_splitter、副語言注入、MI selector 都在。<b style="color:var(--acc)">不論文件怎麼寫，程式碼的重心在這裡——這才是目前 coOS 真正的產品核心。</b>'},
+ {k:'D',c:'#ef5b5b',n:'深層心理本體論',ax:'行為只是冰山一角，可以被結構化地往下溯因。',
+  r:'R04 薩提爾七層 + DGNN + NSVIF · R06 應對姿態 + 數位表型',p:0,
+  d:'<b style="color:var(--bad)">落地：零。</b> M5.1 / M5.2 / M5.3 全部 <code>[進階]</code>，<code>services/</code> 無對應目錄。建議做輕量版：SQLite 一張 <code>m5_1_iceberg_claims</code> 表（7 層 + evidence_log_ids + user_confirmed），NSVIF 降級為 SQL 層符號檢查，復用既有的 <code>claim_ledger.py</code>。DGNN + Hawkes + Neo4j 對 N=1 資料量是嚴重過度工程。'},
+ {k:'E',c:'#9ece6a',n:'隱私主權派',ax:'敏感明文的物理位置決定隱私，而非政策宣示。',
+  r:'R07 POST / Eguard / PRISM · R19 sqlite-vec',p:75,
+  d:'外部審查評價最高的部分。<code>m2_2_gemma</code> 913 行 + <code>m2_3_eguard</code> 397 行 + L1/L2/L3 白名單分流 + <code>daily_reflection_segments</code> 表級 hard block。<b style="color:var(--warn)">但 DEVIATION-09 承認逐字稿直送 Gemini 只過 DRIFT 不過 Eguard，回退方案已拍板卻 0 行程式碼。</b>'},
+ {k:'F',c:'#bb9af7',n:'自我治理論',ax:'人生應該像組織一樣被治理：願景 → 領域 → 角色 → 技能 → 原則。',
+  r:'底層自有 — 無研究索引編號',p:80,by:'底層',
+  d:'Vault <code>Governance/</code> 五層憲政結構：Vision → 5 Domain → 10 Role（各有 mission）→ 130 Skill（樹狀 parent_skill）→ 6 Principle。<b style="color:var(--acc2)">Role 是「內在代理人」而非資料標籤</b>——各有 Quest / Inbox / Skill Tree / Allies / Codex 五區塊，比 coOS 的「Role = 資料沙盒」豐富得多。且 Vision Template 內建角色衝突解決機制，coOS 完全沒有。<br><br><span style="color:var(--warn)">底層唯一缺口：<code>Governance/Visions</code> 是空的（0 個檔案），憲政最頂層缺席。</span>'},
+ {k:'G',c:'#e0af68',n:'具象化成長',ax:'抽象的成長必須被鑄造成可見資產才有重量。',
+  r:'底層自有 — 無研究索引編號',p:75,by:'底層',
+  d:'130 個 Skill 各配 Badge 圖、技能樹遞迴、六大 XP 來源、凌晨 5 點的一天邊界、依 <code>active_period</code> 分階段的參數。<b style="color:var(--tx)">這是 coOS 必須遵守的規格，不是可以重新設計的東西</b>（完整表格見「底層規範」分頁）。<br><br><span style="color:var(--warn)">底層瑕疵：全域公式 <code>floor(0.1·√XP)</code> 與技能公式 <code>floor(√(XP/100))+1</code> 差一個常數，需拍板統一。</span>'},
+ {k:'H',c:'#2ac3de',n:'資料主權與可查詢性',ax:'我的資料必須是純文字，視圖是查詢的結果而非資料本身。',
+  r:'底層自有 — 無研究索引編號',p:85,by:'底層',
+  d:'五種機制動態組裝：frontmatter 契約（schema）· Dataview（視圖）· Templater（建構器）· JS 引擎（業務邏輯）· <b style="color:var(--acc2)">觸發檔事件匯流排（對外整合點）</b>。<br><br>最後一條是關鍵：<code>_System/.level_up_trigger.json</code> → <code>level_up_notifier.py</code> 已經跑了半年。<b style="color:var(--ok)">coOS 不需要發明新的整合機制，沿用這條匯流排即可。</b>'},
+];
+document.getElementById('fams').innerHTML=FAM.map(f=>{
+ const by=f.by||'coOS';
+ const bc=by==='底層'?'#bb9af7':'#7aa2f7';
+ return `
+<div class="fam" style="border-left-color:${f.c}" onclick="this.classList.toggle('open')">
+  <div class="tag">家族 ${f.k}
+    <span style="float:right;color:${bc};border:1px solid ${bc}55;border-radius:999px;padding:0 8px;letter-spacing:0">
+      ${by==='底層'?'底層 Vault':'高階介面 coOS'}
+    </span></div>
+  <h3>${f.n}</h3>
+  <div class="ax">「${f.ax}」</div>
+  <div class="meta">
+    <span style="color:var(--tx3)">落地度</span>
+    <span class="bar"><i style="width:${f.p||3}%;background:${f.c}"></i></span>
+    <b style="color:${f.c}">${f.p}%</b>
+  </div>
+  <div class="det"><div style="margin-bottom:8px"><span style="color:var(--tx3)">引用：</span>${f.r}</div>${f.d}</div>
+</div>`}).join('');
+
+/* ---------- S2 heatmap ---------- */
+const ST={ok:'#1e5f3d',warn:'#6b5119',bad:'#6b2626',none:'#252a34'};
+const TX={ok:'#7ee2a8',warn:'#f2c96b',bad:'#f5908f',none:'#6b7280'};
+const LAYERS=[
+ {n:'M0 基礎與 IPC',m:[['M0.1','—','ok'],['M0.2','—','ok'],['M0.3','—','ok'],['M0.4','717','ok']]},
+ {n:'M1 端側感知',m:[['M1.1','Rust','ok'],['M1.2','601','warn'],['M1.3','擴充','ok'],['M1.4','451','ok'],['M1.5','0','bad'],['M1.6','0','none']]},
+ {n:'M2 邊緣與隱私',m:[['M2.1','320','ok'],['M2.2','913','warn'],['M2.3','397','warn'],['M2.4','0','none'],['M2.5','0','none'],['M2.6','0','none']]},
+ {n:'M3 前端 UI',m:[['M3.1','✓','ok'],['M3.2','✓','ok'],['M3.3','✓','ok'],['M3.4','✓','warn'],['M3.5','✓','ok'],['M3.6','✓','ok'],['M3.7','✓','ok'],['M3.8','0','none'],['M3.9','0','none'],['M3.10','0','bad'],['M3.11','0','none']]},
+ {n:'M4 多智能體邏輯',m:[['M4.1','1505','ok'],['M4.2','2426','warn'],['M4.3','690','warn'],['M4.4','1654','warn'],['M4.5','266','ok'],['M4.6','1493','warn'],['M4.7','0','bad'],['M4.8','0','bad'],['M4.9','0','none'],['M4.10','0','none'],['M4.11','0','none'],['M4.12','0','none'],['M4.13','1795','ok']]},
+ {n:'M5 深層認知圖譜',m:[['M5.1','0','bad'],['M5.2','0','bad'],['M5.3','0','bad']]},
+ {n:'M6 資料庫',m:[['M6.1','206','ok'],['M6.2','351','ok'],['M6.3','64','ok'],['M6.4','321','ok'],['M6.5','317','ok'],['M6.6','1192','ok']]},
+ {n:'M7 素材生成',m:[['M7.1','0','none']]},
+];
+const NOTE={'M1.2':'實作完整，但缺 M4.8 提供的認知負荷估計作輸入','M2.2':'GAP-C2：generate_json 語意錯位，本地承諾萃取空轉',
+ 'M2.3':'DEVIATION-09：逐字稿送雲前未過 mask_pii','M3.4':'manual_test_log：氣泡太長、語氣急迫、返回後狀態遺失',
+ 'M4.2':'2,426 行，全專案最大模組；語氣硬約束待補','M4.3':'DEVIATION-07：三個端點曾被加入豁免清單（已拍板移出）',
+ 'M4.4':'GAP-C3 缺 confidence 檢查、GAP-C8 turn counter 語意錯','M4.6':'DEVIATION-06：語意改為 Topic Tag；每回合重複標記',
+ 'M4.7':'SPEC 完整但零程式碼；且現行設計寫入 Vault 即死檔','M4.8':'已明確標記「先不實作、改採 mock」→ 反 KPI 因此無來源',
+ 'M5.1':'產品定位第一句話的實作，目前為零','M5.2':'NSVIF 幻覺防禦，零','M5.3':'ARPM 圖層，零','M3.10':'Vault 已有 130 個技能樹節點可直接餵入'};
+document.getElementById('hm').innerHTML=LAYERS.map(L=>`
+<div class="layer"><div class="lh">${L.n}</div><div class="hm">${
+ L.m.map(([id,v,s])=>`<div class="mod" style="background:${ST[s]};color:${TX[s]}" title="${NOTE[id]||''}"><b>${id}</b><span>${v}</span></div>`).join('')
+}</div></div>`).join('');
+document.getElementById('kpis').innerHTML=[
+ ['20 / 29','MVP 模組實際落地 / 標稱','var(--warn)'],
+ ['446','後端測試通過（0 failed）','var(--ok)'],
+ ['14','SPEC 已寫、程式碼為零的模組','var(--bad)'],
+].map(([n,l,c])=>`<div class="kpi"><div class="n" style="color:${c}">${n}</div><div class="l">${l}</div></div>`).join('');
+
+/* ---------- S3 tensions ---------- */
+const TEN=[
+ {id:'T-01',t:'摩擦力的方向盤上有兩隻手',
+  a:'<code>[R08 §四.2]</code>「強制留白，摩擦是 feature」→ M3.3.3 必填欄位、M4.5 三重守門',
+  b:'模組 M4.5 的正式名稱是「<b>零摩擦</b> XP 自動結算引擎」；vision 目標 3~7 分鐘／日',
+  e:'分流設計本身合理（Ambient 走零摩擦、Earned 走高摩擦）。真正的問題是 <b>沒有任何模組在測量總摩擦量</b>。<code>ambient.py</code> 有 <code>AMBIENT_XP_DAILY_CAP_RATIO = 0.05</code> 這種漂亮的硬約束，但「今天花了幾分鐘在 coOS 上」沒有 cap、沒有 controller。'},
+ {id:'T-02',t:'定位聲明與程式碼行為背離',
+  a:'<code>01_product_vision.md</code>：「不是 Notion / Obsidian 競品。<b>我們不存儲使用者的內容，我們建模使用者的狀態。</b>」',
+  b:'實際 schema：<code>chat_transcripts</code>（逐字稿明文）、<code>daily_reflection_segments</code>、<code>role_projects</code>、<code>goals</code>、<code>promises</code>、<code>m6_6_social_posts</code>',
+  e:'coOS <b>已經是</b>一個內容系統，而且直接與 Vault 競爭（<code>daily_reflections</code> vs <code>Executive/Period/Daily</code>）。後果有二：(1) M4.7 被設計成單向輸出，錯過最大整合機會；(2) 你現在同時維護兩套日記系統，<b>這保證兩套都做不好</b>。'},
+ {id:'T-03',t:'治療同盟越成功，隱私風險越大（結構性反向誘因）',
+  a:'家族 C：透過 <code>[R17: WAI]</code> 三成分建立情感連結，讓使用者願意說真話',
+  b:'家族 E：敏感明文絕不離端。但 DEVIATION-09 承認逐字稿直送 Gemini',
+  e:'<b>這條張力完全沒有出現在任何文件中，但它是最深的結構性問題</b>：Persona 做得越好，使用者說的話越私密，送上雲的 L1 明文就越敏感。<b>產品成功與隱私風險正相關。</b>DEVIATION-09 的回退方案（意圖向量上雲 → Local LLM 生成回應）已拍板但 0 行程式碼，且 GAP-C2 顯示本地 Gemma 通道本身還不夠健康。'},
+ {id:'T-04',t:'SDT 與 XP 經濟的擠出效應',
+  a:'<code>[R09 §第四章 SDT]</code> 被引用來支撐「自主、勝任、連結」三需求',
+  b:'系統建了完整 XP 經濟：帳本、等級、徽章、質押對賭、Gacha 待做',
+  e:'SDT 文獻的核心發現之一正是 <b>crowding-out effect</b>：外在獎勵會擠出內在動機。而 vision 的反 KPI 設計得非常漂亮（Gacha 爆增→RISK-09、連續登入高但 mood_score 低→RISK-10），<b>但沒有任何模組在計算這些反 KPI</b>——mood_score 來源 M4.8 未實作。反 KPI 目前是一份沒有執行機關的憲法。而 Vault 的 XP 系統（268 條紀錄、5 月只剩 2 條）已經先驗證過外在獎勵沒救活那套系統。'},
+ {id:'T-05',t:'學術憲法的執行成本正在拖慢迭代',
+  a:'<code>CLAUDE.md</code>：實作任一模組前必讀 4 份文件、引用精確到 <code>[Rxx §y.z]</code>、跨模組必跑 audit-integration',
+  b:'你自己的 <code>Principle - 最小可行迭代法則</code>：「完成比完美更重要，拒絕教學地獄，堅持住在爛泥中產出」',
+  e:'品質上極為出色（5 位審查者一致肯定），代價是 <b>14 個模組 SPEC 已寫、程式碼為零</b>的設計債。<b>你的個人原則與專案憲章正在互相打架。</b>不是要放棄嚴謹，而是 SPEC 的撰寫節奏應該跟上實作節奏，而非領先 14 個模組。'},
+];
+document.getElementById('tens').innerHTML=TEN.map(t=>`
+<div class="card ten">
+  <h3><span style="color:var(--acc3);font-family:monospace">${t.id}</span> · ${t.t}</h3>
+  <div class="vs"><div class="side">${t.a}</div><div class="x">VS</div><div class="side">${t.b}</div></div>
+  <div class="evi">${t.e}</div>
+</div>`).join('');
+
+/* ---------- S4 table ---------- */
+const OB=[
+ ['Domain 生活領域','5','無','—','none','coOS 沒有 Role 之上的層級'],
+ ['Role 角色','10（各有 mission）','<code>m6_2</code> roles','Vault Role = 人格分身 + 使命；coOS Role = 資料沙盒','warn','語意不同，需映射'],
+ ['Skill 技能','130（樹狀 + Badge + XP log）','M3.10 技能樹 <code>[進階]</code>','Vault XP 記在 Skill；coOS 記在 user/role','bad','未實作；130 節點可直接餵入'],
+ ['Principle 個人原則','6（IF-THEN-ELSE 格式）','無','—','bad','<b>最大遺珠</b>：PersonaCard.stances + M1.5 nudge 的理想來源'],
+ ['Vision 願景','<b>0</b>','goals','—','warn','Vault 最頂層是空的，但 Domain 頁面有 <code>FROM "Governance/Visions"</code> 死查詢'],
+ ['Project 專案','58（45 active）','<code>role_projects</code>','coOS 的 project 已被 DEVIATION-06 改為「聊天主題標籤」','warn','語意分歧'],
+ ['Routine 習慣','28（xp_value / freq / periods 分階段）','無','—','bad','coOS 沒有週期性習慣概念'],
+ ['Event 行事曆','108（Google Calendar 雙向）','無','—','none','coOS 沒有行事曆整合'],
+ ['Daily 日記','56（時間鎖定 + Quest Log + Save Point）','<code>daily_reflections</code>','高度重疊','warn','<b>直接競爭</b>'],
+ ['Resource/People','1,176','無','—','none','疑似 Notion 批量匯入，未經人工整理'],
+ ['Resource/Media','1,467','無','—','none','同上'],
+ ['Global Settings <code>active_period</code>','1（semester / vacation / exam_week）','無','—','bad','<b>第二大遺珠</b>：coOS 完全沒有「人生階段」概念'],
+];
+const PM={ok:'p-ok',warn:'p-warn',bad:'p-bad',none:'p-none'};
+const PL={ok:'對應',warn:'半對應',bad:'缺口',none:'無'};
+document.getElementById('ob').innerHTML=
+ '<tr><th>Vault 概念</th><th>規模</th><th>coOS 對應</th><th>語意差異</th><th>狀態</th><th>備註</th></tr>'+
+ OB.map(r=>`<tr><td><b>${r[0]}</b></td><td>${r[1]}</td><td>${r[2]}</td><td style="color:var(--tx3);font-size:12.5px">${r[3]}</td><td><span class="pill ${PM[r[4]]}">${PL[r[4]]}</span></td><td style="color:var(--tx2);font-size:12.5px">${r[5]}</td></tr>`).join('');
+
+/* ---------- S7 底層規範 ---------- */
+function tbl(el,head,rows){document.getElementById(el).innerHTML=
+ '<tr>'+head.map(h=>`<th>${h}</th>`).join('')+'</tr>'+
+ rows.map(r=>'<tr>'+r.map(c=>`<td>${c}</td>`).join('')+'</tr>').join('');}
+
+tbl('mech',['機制','角色','具體檔案 / 語法'],[
+ ['<b>frontmatter 契約</b>','資料庫 schema','<code>class:</code> <code>type:</code> <code>related_roles:</code> <code>domains:</code> <code>skills:</code> <code>status:</code>'],
+ ['<b>Dataview 查詢</b>','視圖層（等同 SELECT）','Role 頁的 <code>WHERE contains(related_roles, this.file.link)</code>'],
+ ['<b>Templater 建構器</b>','帶互動 prompt 的寫入器','<code>_System/Templates/</code> 19 份，含自動命名、自動歸檔、防衝突'],
+ ['<b>JS 運算引擎</b>','業務邏輯層（單一真相來源）','<code>calculateRPGStats.js</code>，被 Home Note / XP Stats / iOS Widget 共用'],
+ ['<b>觸發檔事件匯流排</b>','<span style="color:var(--ok)">對外整合點</span>','<code>_System/.level_up_trigger.json</code> → <code>level_up_notifier.py</code>（生圖 + 寄信）'],
+]);
+
+tbl('xps',['項目','底層規格','來源'],[
+ ['全域等級公式','<code>level = floor(0.1 × sqrt(total_xp))</code>','<code>calculateRPGStats.js:303</code>'],
+ ['升級門檻','<code>xp_for_level(L) = (L / 0.1)² = 100·L²</code>','<code>calculateRPGStats.js:307</code>'],
+ ['單一技能等級','<code>level = floor(sqrt(skill_xp / 100)) + 1</code>','Role / Skill 頁面的 DataviewJS'],
+ ['XP 六大來源','<code>routine · event · task · alchemy · life · project</code>','<code>xp_breakdown</code>'],
+ ['XP 權重','task 5 ／ routine 10 ／ project_bonus 200 ／ default_resource 10','<code>XP_WEIGHTS</code>'],
+ ['技能 XP 紀錄格式','<code>- YYYY-MM-DD: +N XP (Task: …)</code>，append 在 <code>## 📜 Experience Log</code>','<code>logSkillXP.js</code>'],
+ ['一天的邊界','<b style="color:var(--warn)">凌晨 5 點</b>（<code>moment().subtract(5,\'hours\')</code>）——凌晨 2 點算前一天','<code>claimXP.js</code> v6.4'],
+ ['階段參數化','Routine 的 <code>xp_value</code> / <code>freq</code> / <code>status</code> 依 <code>active_period</code> 取不同值','<code>getProp(fm, prop)</code>'],
+]);
+
+tbl('health',['問題','證據','coOS 能否協助'],[
+ ['<b><code>Governance/Visions</code> 是空的</b>','0 個檔案，但 Domain / Vision 頁面都有 <code>FROM "Governance/Visions"</code> 查詢','<span class="pill p-warn">只能由你補</span> 憲政最頂層缺席'],
+ ['<b><code>00 Inbox</code> 資料夾已不存在</b>','Domain 與 Role 頁面仍有 <code>FROM "00 Inbox"</code> → 死查詢','<span class="pill p-warn">需手動修</span>'],
+ ['<b>兩套 level 公式並存</b>','全域 <code>floor(0.1√XP)</code> vs 技能 <code>floor(√(XP/100))+1</code>','<span class="pill p-warn">需拍板</span>'],
+ ['<b>45 個 active 專案（共 58）</b>','<code>grep "^status:" Executive/Projects/*.md</code>','<span class="pill p-ok">可以</span> M4.6 偵測 30 天無遙測 → 提議降 <code>on_hold</code>'],
+ ['<b>手動 claim 導致衰減</b>','Daily 9→20→18→6→1→2；XP 268 條，5 月剩 2 條','<span class="pill p-ok">正是 coOS 存在的理由</span> 補上底層唯一欠缺的輸入頻寬'],
+]);
+
+/* ---------- S4 ownership + bus ---------- */
+tbl('own',['資料','Owner','另一層的權限','理由'],[
+ ['Vision / Domain / Role / Principle','<span class="pill" style="background:rgba(187,154,247,.15);color:#bb9af7">Vault</span>','coOS 唯讀','身分與價值觀屬於使用者，不該住在 app 裡'],
+ ['Skill 樹結構、Badge','<span class="pill" style="background:rgba(187,154,247,.15);color:#bb9af7">Vault</span>','coOS 唯讀','130 個節點是兩年的手工資產'],
+ ['Skill XP 帳本','<span class="pill" style="background:rgba(187,154,247,.15);color:#bb9af7">Vault</span>','coOS 可 append（<b>核准後</b>）','底層是唯一等級真相；coOS 只是新增一個輸入來源'],
+ ['Project 定義（status / deadline / 目標）','<span class="pill" style="background:rgba(187,154,247,.15);color:#bb9af7">Vault</span>','coOS 可提議新建、可提議降級','人決定什麼是專案，AI 只提供證據'],
+ ['Routine 定義與週期','<span class="pill" style="background:rgba(187,154,247,.15);color:#bb9af7">Vault</span>','coOS 唯讀 + 可回報完成','—'],
+ ['<code>active_period</code> 人生階段','<span class="pill" style="background:rgba(187,154,247,.15);color:#bb9af7">Vault</span>','coOS 唯讀（並據此調參）','—'],
+ ['Daily 日記檔','<span class="pill" style="background:rgba(187,154,247,.15);color:#bb9af7">Vault</span>','coOS 可寫入指定區塊（<b>核准後</b>）','—'],
+ ['遙測日誌 / 意圖向量 / 對話逐字稿','<span class="pill" style="background:rgba(122,162,247,.15);color:#7aa2f7">coOS</span>','<b style="color:var(--bad)">Vault 永不接收</b>','L1/L2 隱私分層；高頻資料不該汙染純文字 Vault'],
+ ['Persona / 信任等級 / 心理狀態機','<span class="pill" style="background:rgba(122,162,247,.15);color:#7aa2f7">coOS</span>','Vault 唯讀（可展示）','runtime state，可重建'],
+ ['草稿（未核准）','<span class="pill" style="background:rgba(122,162,247,.15);color:#7aa2f7">coOS</span>','<b style="color:var(--bad)">Vault 永不接收</b>','<code>[R08 §六.1 IKEA]</code>：未核准的東西不算數'],
+]);
+
+tbl('bus',['方向','路徑','內容','消費者'],[
+ ['<b style="color:#bb9af7">Vault → coOS</b>','<code>_System/.coos_outbox/*.json</code>','升級事件、Routine 完成、Project 狀態變更、<code>active_period</code> 切換','coOS FastAPI sidecar（watchdog）'],
+ ['<b style="color:#7aa2f7">coOS → Vault</b>','<code>_System/.coos_inbox/*.json</code>','已核准的 XP 條目、日報段落、Project 提議','新增 <code>_System/Scripts/applyCoosInbox.js</code>（QuickAdd 手動觸發）'],
+]);
+
+/* ---------- S8 Phase 1 ---------- */
+tbl('ladder',['層','名稱','問題','誰驗','工具','可自動化'],[
+ ['<b style="color:#8a93a5">L0</b>','<b>接通</b> Wiring','端到端跑得動嗎？','CI','pytest / vitest','<span class="pill p-ok">完全</span>'],
+ ['<b style="color:var(--ok)">L1</b>','<b>契約</b> Contract','輸出符合形式規格嗎？','CI','schema 驗證 · Dataview 等價查詢 · 冪等重放 · <code>git diff</code> 檢查','<span class="pill p-ok">完全</span>'],
+ ['<b style="color:var(--warn)">L2</b>','<b>保真</b> Fidelity','輸出跟我想的一樣嗎？','<b style="color:var(--tx)">人</b>（不可授權給 AI）','對照劇本與黃金樣本，逐項 diff','<span class="pill p-warn">半自動</span>'],
+ ['<b style="color:var(--acc3)">L3</b>','<b>體感</b> Felt Quality','我真的願意每天用嗎？','<b style="color:var(--tx)">人 + 數據</b>','連續使用 7 天 + 基線對照','<span class="pill p-bad">只能實測</span>'],
+]);
+
+document.getElementById('kit').innerHTML=[
+ ['逐字劇本 Demo Script','docs/phase1/DEMO_SCRIPT.md',
+  '不是 SPEC，是<b style="color:var(--tx)">劇本</b>。第一人稱寫「我會看到什麼、打什麼字、系統回什麼」，<b>必須有具體字串</b>——不可以寫「系統顯示問候語」，要寫出你希望看到的那一句。<br><br><span style="color:var(--warn)">寫不出來 = 還不知道自己要什麼</span>，這時該先用 Obsidian 手動模擬一次，不是先寫程式。'],
+ ['黃金樣本 Golden Fixtures','testing/golden/phase1/',
+  '對每一種輸出<b style="color:var(--tx)">手寫</b>一份「理想長什麼樣」存進 repo：Daily Save Point 區塊、Skill XP 行、Inbox 靈感行、role 匯入物件、草稿卡欄位。<br><br><b style="color:var(--bad)">鐵則：不得由 AI 生成。</b>AI 生成的樣本會自動與 AI 的實作對齊，驗收就失去意義。'],
+ ['反例清單 Anti-Examples','docs/phase1/ANTI_EXAMPLES.md',
+  '把「我不要的東西」寫成可測條件。<code>manual_test_log.md</code> 已是現成清單，只需變成斷言：<code>len(greeting) &lt;= 40</code>、一氣泡最多一個問號、禁用催促語氣模式、寫入後 Dataview 撈得到、同 id 重放 <code>total_xp</code> 不變。<br><br>反例比正例好用——<b style="color:var(--tx)">不需要你想清楚要什麼，只需要認得出什麼不行</b>。'],
+ ['基線量測 Baseline','docs/phase1/BASELINE.md',
+  '<b style="color:var(--warn)">動工前先跑</b>，否則做完無從比較。四項：Vault 衰減曲線（已有）· coOS 現有草稿核准率 · 每日互動分鐘數 · 冷啟動空白程度（目前多為 <code>[]</code>）。'],
+].map(([t,p,b])=>`<div class="kit"><h4>${t}</h4><div class="pth">${p}</div><div class="b">${b}</div></div>`).join('');
+
+const SLICE=[
+ ['開 coOS → 側欄出現 Vault 裡<b>真實的 10 個角色</b>（含 mission），不是 demo 資料',0],
+ ['選「🔬 大學專題生」→ 看到屬於這個角色的真實 active 專案',0],
+ ['跟一位專家聊 10 分鐘 → 對話進 <code>chat_transcripts</code>，Observer 偵測到主題',0],
+ ['隔天 02:00 → 草稿卡生成',0],
+ ['我填「主觀感受」與「行動計畫」→ 核准',0],
+ ['打開 Obsidian → 今天的 Daily note 的 <b>Save Point 區塊多了一段</b>，帶 <code>coos::</code> 標記',0],
+ ['對應的 Skill note 的 Experience Log 多一行 <code>- YYYY-MM-DD: +N XP (…) [coos:: …]</code>',0],
+ ['XP Stats 頁面的等級跟著動',0],
+ ['我在 Obsidian <b>手動</b>新增一個 Skill、把一個 Project 改成 <code>on_hold</code> → coOS 重掃後看得到',1],
+ ['我在 Obsidian <b>手動 claim</b> 了同一天同一技能的 XP → coOS 在下一張卡上<b>問我</b>是不是重複，不自動加',1],
+ ['<b>coOS 完全關閉</b> → 我用 QuickAdd 與 iOS 捷徑照常記錄，一切正常',1],
+];
+document.getElementById('slice').innerHTML=SLICE.map(([t,s])=>`<li class="${s?'soul':''}">${t}</li>`).join('')
+ +`<li style="border-top:1px dashed var(--line);padding-left:10px;color:var(--acc)">
+   <b>第 9–11 步是這個階段的靈魂。</b>只做 1–8 就只是「接通」；9–11 才證明分層架構真的成立
+   （底層必須保持可獨立寫入）。</li>`;
+
+tbl('dec',['#','問題','為何擋著開工'],[
+ ['<b>D1</b>','分層架構是否入憲？（Vault = Layer 0）','所有模組設計的前提'],
+ ['<b>D2</b>','等級公式統一為哪一套？<code>floor(0.1·√XP)</code> vs <code>floor(√(XP/100))+1</code>','步驟 8 無法驗收'],
+ ['<b>D3</b>','<code>.coos_inbox/</code> 落地是自動（Obsidian 開啟即執行）還是手動（QuickAdd 按一下）？','決定步驟 6 的體感，也決定 <code>[R08 §五]</code> 的摩擦強度'],
+ ['<b>D4</b>','行內標記用 <code>[coos:: id]</code>（Dataview inline field）還是 <code>&lt;!-- coos:id --&gt;</code>？','前者可查詢可撤銷但會顯示；後者隱形但撈不到'],
+ ['<b style="color:var(--acc)">D5</b>','<b style="color:var(--tx)">這條垂直切片（11 步）是不是你要的第一階段？有沒有哪步其實不重要、或漏了關鍵的一步？</b>','<span style="color:var(--acc)">最重要的一題</span>'],
+ ['<b>D6</b>','Phase 1 是否同時做 N=1 證據報告，還是只做基線量測？','影響 W0 與 W4 的工作量'],
+]);
+
+/* ---------- S5 charts ---------- */
+Chart.defaults.color='#9aa3b2';Chart.defaults.borderColor='#2a2f3a';
+Chart.defaults.font.family='-apple-system,"Noto Sans TC",system-ui,sans-serif';
+const M=['2026-01','2026-02','2026-03','2026-04','2026-05','2026-06'];
+new Chart(document.getElementById('c1'),{type:'line',
+ data:{labels:M,datasets:[{label:'每月日記篇數',data:[9,20,18,6,1,2],
+  borderColor:'#f7768e',backgroundColor:'rgba(247,118,142,.12)',fill:true,tension:.3,
+  pointRadius:5,pointBackgroundColor:'#f7768e'}]},
+ options:{plugins:{title:{display:true,text:'Executive/Period/Daily — 每月日記篇數',font:{size:14},color:'#e6e9ef'},legend:{display:false}},
+  scales:{y:{beginAtZero:true,grid:{color:'#22262f'}},x:{grid:{display:false}}}}});
+new Chart(document.getElementById('c2'),{type:'bar',
+ data:{labels:M,datasets:[
+  {label:'全部 XP 紀錄',data:[86,86,44,35,2,15],backgroundColor:'rgba(122,162,247,.45)'},
+  {label:'非零 XP 紀錄',data:[17,33,44,27,2,15],backgroundColor:'#7aa2f7'}]},
+ options:{plugins:{title:{display:true,text:'Governance/Skills — 每月 XP 紀錄條數（共 268 條）',font:{size:14},color:'#e6e9ef'}},
+  scales:{y:{beginAtZero:true,grid:{color:'#22262f'}},x:{grid:{display:false}}}}});
+
+/* ---------- S6 matrix ---------- */
+const ITEMS=[
+ {n:'N=1 數據報告',x:20,y:92,c:'#37c978',t:'資料多半已在 SQLite：核准率、核准延遲、字數分布、互動時長、Eguard 遮蔽計數、Gemma/Cloud fallback 比例。解除審查報告 P0（CRITICAL C1）。'},
+ {n:'分層架構入憲',x:8,y:97,c:'#37c978',t:'把「Vault = Layer 0 底層、coOS = 高階介面」寫進 02_architecture.md（新增 Layer 0 + 「Vault = L3-local」隱私列）、01_product_vision.md（改寫「不是什麼」）、04_module_registry.md（M4.7 拆為 a/b/c）、CLAUDE.md（新增鐵則：寫入 Vault 必須經 .coos_inbox 契約）。這是所有後續模組設計的前提，順序不能反。'},
+ {n:'M4.7a Vault Reader',x:32,y:95,c:'#37c978',t:'投入產出比最高。Vault 是純 Markdown + YAML，一個 ~500 行 reader 即可覆蓋 Roles / Domains / Skills / Principles / Projects / Global Settings。讓 coOS 從第一天起就知道使用者是誰（目前冷啟動全空）。必須是唯讀 + 週期重掃，不做一次性 import——底層會持續被手動編輯。'},
+ {n:'M4.7c 事件匯流排',x:40,y:68,c:'#f2b544',t:'.coos_outbox/ ↔ .coos_inbox/ + applyCoosInbox.js。不需要 Tauri fs 權限，寫入 Vault 的永遠是 Vault 自己的程式；天然的第二道 Draft & Approve；兩層鬆耦合離線安全。'},
+ {n:'mask_pii 補上',x:10,y:70,c:'#37c978',t:'m2_3_eguard 已有函式，成本極低。解除 DEVIATION-09 的一半矛盾。'},
+ {n:'GAP-C3 / C8 修復',x:16,y:58,c:'#37c978',t:'套問 confidence 檢查 + turn counter 語意修正。沒有這兩個，套問會在系統已知答案時仍發問 → 直接觸發「被審問感」。'},
+ {n:'M1.7 摩擦預算',x:42,y:88,c:'#f2b544',t:'把每日互動時間預算升格為一級設計約束，超出時系統自己降級（停套問 / segment 減半）。唯一能證明「摩擦是設計不是失控」的方式。直接回應審查報告 DA-M3 審核疲勞。'},
+ {n:'人生階段 Period',x:46,y:74,c:'#f2b544',t:'Vault 的 active_period 是 coOS 缺的。對大學生受眾，學期/期末週/寒暑假的認知負荷差異是數量級。沒有它，所有心理參數只能用一組固定值。'},
+ {n:'Persona 語氣硬約束',x:30,y:78,c:'#f2b544',t:'問候 ≤40 字、一氣泡一問題、氣泡延遲 = f(字數,WPM)、催促語氣進 FORBIDDEN_PHRASES。全部來自 manual_test_log 的真實回饋。'},
+ {n:'今日一張卡',x:52,y:72,c:'#f2b544',t:'3~7 分鐘的產品不該有拖拉 Widget 網格 + 圓餅選單 + 3D Coverflow。主入口收斂為一張卡，現有儀表板降為第二層「探索模式」。'},
+ {n:'反 KPI 計算器',x:38,y:80,c:'#f2b544',t:'先做能算的：核准率、互動時長、Persona 一致性抽測。讓治理原則有執行機關。'},
+ {n:'輕量冰山 M5.1',x:66,y:82,c:'#7aa2f7',t:'不做 Neo4j/DGNN/Hawkes。SQLite 一張 iceberg_claims 表（7 層 + evidence_log_ids + user_confirmed），NSVIF 降級為 SQL 符號檢查，復用 claim_ledger.py。讓定位第一句話有東西撐。'},
+ {n:'M4.7b Vault Writer',x:50,y:70,c:'#f2b544',t:'XP 回寫 Skill note 既有格式 - YYYY-MM-DD: +N XP (Task: …)，日報寫進 Daily 的 Save Point 區塊，必帶 coos_generated: true 供撤銷。append-only、核准後才寫、L1 明文永不寫入（Vault 有 obsidian-git 在同步）。'},
+ {n:'Gibbs 對齊底層五段式',x:36,y:52,c:'#7aa2f7',t:'底層 obsidian design.md 早有五段式反思鷹架，且多了「突觸連結」段（連回 Resource/Concepts）——正是 [R11 §3.3 Reflection] 的核心，也是 coOS 最弱的一環。對齊後草稿寫回 Vault 格式天然相容。'},
+ {n:'專案健康度回報',x:44,y:46,c:'#7aa2f7',t:'coOS 偵測 30 天無遙測活動的 Project → 提議降級為 on_hold。解底層 45 個 active（共 58）的 WIP 超載。'},
+ {n:'M1.5 微 Nudges',x:60,y:66,c:'#7aa2f7',t:'規則來源 = Vault Principles 的 The Algorithm。AI 引用「這是你自己說的」可繞過心理阻抗 [R03 §4]。'},
+ {n:'M3.11 Gacha',x:70,y:22,c:'#565f73',t:'建議凍結：反 KPI 執行機關不存在前引入變動比例增強 = 沒煞車踩油門。'},
+ {n:'M4.11 ZPD 池',x:80,y:26,c:'#565f73',t:'建議凍結：需要 M4.8 的能力估計作輸入，而 M4.8 已推遲。'},
+ {n:'M4.12 隱藏成就',x:74,y:14,c:'#565f73',t:'建議凍結：邊際價值低。'},
+ {n:'M7.1 生圖',x:62,y:10,c:'#565f73',t:'建議凍結：純美術，Vault 已有 130 張現成 Badge。'},
+ {n:'完整 DGNN 圖譜',x:94,y:44,c:'#565f73',t:'R04 全套（DGNN + Hawkes + Neo4j + D-ALP）對 N=1 資料量是嚴重過度工程。'},
+];
+const mx=document.getElementById('mx');
+mx.innerHTML=
+ `<div class="mxline" style="left:0;right:0;top:50%;height:1px"></div>
+  <div class="mxline" style="top:0;bottom:0;left:50%;width:1px"></div>
+  <div class="qd" style="left:16px;top:12px">先做 · 高影響低成本</div>
+  <div class="qd" style="right:16px;top:12px">大工程 · 需排期</div>
+  <div class="qd" style="left:16px;bottom:12px">順手做</div>
+  <div class="qd" style="right:16px;bottom:12px">建議凍結</div>
+  <div class="axl" style="left:50%;bottom:-22px;transform:translateX(-50%)">實作成本 →</div>
+  <div class="axl" style="left:-6px;top:50%;transform:rotate(-90deg) translateX(50%);transform-origin:left center">對齊影響 →</div>`
+ + ITEMS.map(i=>`<div class="dot" style="left:${6+i.x*.88}%;top:${100-i.y*.9}%;background:${i.c}" title="${i.t}">${i.n}</div>`).join('');
+</script>
+</body>
+</html>

@@ -47,6 +47,40 @@
   --bg-pattern: radial-gradient(circle at 20% 80%, rgba(244,162,97,0.06) 0%, transparent 50%),
                 radial-gradient(circle at 80% 20%, rgba(231,111,81,0.04) 0%, transparent 50%),
                 radial-gradient(circle at 50% 50%, rgba(106,137,167,0.03) 0%, transparent 70%);
+
+  /* ---------- Categorical accents (topic tags etc.) ----------
+     Warm-coherent set, replaces ad hoc indigo/emerald/violet hashing.
+     Reuses gold/coral/warmblue where possible so tags stay in-family. */
+  --cat-1: var(--gold-accent);
+  --cat-2: var(--coral-accent);
+  --cat-3: var(--warmblue);
+  --cat-4: #8a9a6b; /* sage */
+  --cat-5: #a67f9e; /* mauve */
+  --cat-6: #c98a3e; /* ochre */
+}
+
+/* ---------- Typography scale ---------- */
+:root {
+  --font-display: 'Zilla Slab', Georgia, serif;
+  --font-body: 'IBM Plex Sans', 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', Consolas, 'Andale Mono', monospace;
+
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-3xl: 36px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
 }
 
 /* ---------- Dark Mode ---------- */
@@ -91,7 +125,8 @@
 
 body {
   margin: 0;
-  font-family: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: var(--bg-base);
@@ -99,7 +134,24 @@ body {
   overflow: hidden;
 }
 
-/* ---------- Typography (loaded via index.html link tag) ---------- */
+/* ---------- Typography (loaded via index.html link tag) ----------
+   Display face (Zilla Slab) is for identity-carrying headings: page/section
+   titles, role names, modal titles. Body copy stays on --font-body so long
+   text stays easy to scan. Small uppercase eyebrow labels (dashboard-title,
+   context-slot-label) use the mono face instead -- reads as an instrument
+   readout, not a headline, at that size/weight. */
+.context-role-title,
+.settings-header h2,
+.settings-section h3,
+h1, h2, h3 {
+  font-family: var(--font-display);
+}
+
+.dashboard-title,
+.context-slot-label,
+.bento-card-title {
+  font-family: var(--font-mono);
+}
 
 /* ---------- Glassmorphism Card ---------- */
 .glass-card {

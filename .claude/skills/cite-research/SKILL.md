@@ -28,7 +28,7 @@ What exactly are you about to claim? Reduce to a single sentence:
 
 ### Step 2: Find the source
 
-Open `docs/03_research_index.md` and find the paper that supports the claim. You can also cross-reference `docs/04_module_registry.md` to check which research papers are already assigned to the module you're working on.
+Find the paper in `docs/03_research_index.md` with a targeted read — `grep -n -A 35 "^## R08 " docs/03_research_index.md` — instead of loading the whole 1000-line index. You can also cross-reference `docs/04_module_registry.md` to check which research papers are already assigned to the module you're working on.
 
 If you cannot find a supporting paper:
 
@@ -44,7 +44,7 @@ Use exactly this format:
 [Rxx: 短關鍵字 §章節]
 ```
 
-- `Rxx` = paper number (R01-R10), uppercase R
+- `Rxx` = paper number, uppercase R. 有效編號以 `grep -n "^## R[0-9]" docs/03_research_index.md` 現查為準 (不要相信任何寫死的上限)
 - `短關鍵字` = the key concept from the paper, in Chinese or English as it appears in the index
 - `§章節` = the specific section in the paper
 
@@ -62,7 +62,7 @@ Use exactly this format:
 # 根據相關研究...                              ← 模糊
 # 為了避免人設崩塌                              ← 沒引用
 # 根據 R03                                     ← 沒章節
-# [R11: ...]                                   ← R11 不存在
+# [R99: ...]                                   ← R99 不存在
 # Based on the paper                           ← 哪篇?
 ```
 
@@ -76,24 +76,26 @@ When implementing certain modules, you typically need multiple citations:
 | 隱私壓縮上雲 | `[R07 §POST, R07 §Eguard, R06 §7.4]` |
 | 草稿與核准 | `[R08 §四, R08 §六, R10 §MindScape]` |
 | 狀態推論 | `[R02 §HMM, R01 §POMDP+BKT, R06 §第四章]` |
-| 圖譜建模 | `[R04 §冰山, R04 §NSVIF, R03 §ARPM]` |
+| 冰山推論 | `[R04 §心理幻覺, R04 §反溯因, R06 §4.2, R20 §個人冰山]` |
+| 冰山介入 | `[R20 §變化歷程, R16 §OARS, R21–R26]` |
 
 ## Self-check before commit
 
 Before `git commit`, check:
 
 - [ ] 每個架構決策都有 `[Rxx §y.z]` 或明確標記為「非學術依據」
-- [ ] 沒有 `R11` 以上的編號 (目前只有 R01-R10)
+- [ ] 每個 `Rxx` 都出現在 `grep -n "^## R[0-9]" docs/03_research_index.md` 的結果中,且 `§章節` 在該篇條目內查得到
 - [ ] 沒有 `[R03]` 這種沒章節的引用
 - [ ] 沒有「根據相關研究」「研究表明」「論文指出」這種無編號表達
 
 Commit message 範本:
 
 ```
-feat(M4.2): Echo Mode 阻抗消解控制器
+feat(m4.2): Echo Mode 阻抗消解控制器
 
 實作 ToneState 狀態機與漸進 Agency 切換。
 
+Change: <change-id>   (完整 commit 格式見 docs/DEV_WORKFLOW.md §7)
 依據:
 - [R03: Echo Mode §3.2] 5 步漸進切換
 - [R03: ARPM §2] 切換必須通過 ARPM 監督

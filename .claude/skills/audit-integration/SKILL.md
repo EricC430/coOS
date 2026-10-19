@@ -7,7 +7,7 @@ description: Use this skill BEFORE implementing any task that touches 2 or more 
 
 ## When to invoke
 
-**Always** invoke this skill at the start of any task that meets any of these criteria:
+通常由 skill `propose-change` 在 P2 呼叫 (見 `docs/DEV_WORKFLOW.md` §3)。**Always** run it before code is written for any task that meets any of these criteria:
 
 - Task touches 2+ modules across different layers (M0~M7)
 - Task adds a new dependency edge between modules
@@ -55,46 +55,38 @@ For every `RISK-xx` found, walk through its four parts:
 3. **緩解策略**:is the prescribed mitigation already implemented in my plan? If not, add it before writing code.
 4. **驗收測試**:is there a `@pytest.mark.integration_risk("RISK-xx")` test? If not, write it first.
 
-### Step 4: Output an audit summary
+### Step 4: Write the audit summary into the proposal
 
-Before writing implementation code, output to the user:
+由 skill `propose-change` 呼叫時,把結果寫進 `docs/changes/<change-id>/proposal.md` 的「整合風險」段。
+**不要另外問使用者 y/n**——稽核結果隨提案一起在 G1 拍板 (DEV_WORKFLOW §3 P2),避免同一個任務問好幾次。
 
 ```
-## Integration Risk Audit for [Task Name]
+## 整合風險 (audit-integration 結果)
 
-### Touched modules
-- M4.5, M3.3.3, M6.4, M6.5, M4.6
-
-### Triggered risks
-1. RISK-01 (Earned XP vs Ambient XP 分流)
-   - 緩解狀態: 待實作
-   - 行動: 將 M4.5 守門員邏輯加入 is_reviewed 檢查
-   - 測試: test_xp_blocked_without_approval (待新增)
-
-2. RISK-04 (Defer-to-Breakpoint vs 即時慶祝)
-   - 緩解狀態: 已實作於 M3.x notification 三層分類
-   - 行動: 確認 XP grant 屬於 L1 即時類
-   - 測試: test_xp_grant_is_immediate (已存在)
-
-### Untriggered risks (for context)
-- RISK-02, RISK-03, ...
-
-### Action plan
-1. 先寫測試: test_xp_blocked_without_approval
-2. 實作 M4.5 守門員
-3. 跑整合測試確認 RISK-01 緩解生效
-4. Commit with [RISK-01 緩解] in message
-
-是否確認此計畫?(y/n)
+- **觸及模組**:M4.5, M3.3.3, M6.4, M6.5, M4.6
+- **觸發的 RISK**:
+  - RISK-01 (Earned XP vs Ambient XP 分流) — 緩解:本 change 實作 → 測試 test_xp_blocked_without_approval (待新增)
+  - RISK-04 (Defer-to-Breakpoint vs 即時慶祝) — 緩解:已實作 → 測試 test_xp_grant_is_immediate (已存在)
+- **未觸發但相關**:RISK-14 (本 change 不改 lifetime/current XP 同步)
+- **新發現的風險**:無
 ```
 
-只有在使用者確認後才開始寫程式碼。
+每個「待新增」的測試,都要在 `tasks.md` 一致性分析表裡有對應任務。
+在 change 流程之外單獨被呼叫時 (例如使用者只想知道風險),把同樣格式直接輸出給使用者即可。
 
-## Quick risk lookup by module
+## Finding risks by module — grep 為準
 
-For fast reference, here are the RISK ids triggered by common modules:
+風險條目會持續新增,下方速查表**只是提示,可能過時**。每次以 grep 現查為準:
 
-| 模組 | 可能觸發的 RISK |
+```bash
+grep -n "^## RISK-\|^\*\*觸發組合" docs/05_integration_risk_audit.md   # 全部風險 + 觸發組合
+grep -n "M4\.5\|M3\.3\.3" docs/05_integration_risk_audit.md            # 某些模組相關的 RISK 行號
+grep -n -A 12 "^## 5. Known Risks" docs/modules/M4_5_*_SPEC.md         # SPEC 自己登記的風險
+```
+
+grep 到行號後只讀那幾段 RISK 全文,不要整份讀入。
+
+| 模組 (提示) | 可能觸發的 RISK |
 | ---- | --------------- |
 | M1.2 (斷點) | RISK-04 |
 | M2.2 (Gemma) | RISK-05, RISK-12 |
@@ -110,8 +102,15 @@ For fast reference, here are the RISK ids triggered by common modules:
 | M4.9 (ARPM) | RISK-02 |
 | M4.11 (ZPD 任務池) | RISK-07 |
 | M4.13 (XP 質押) | RISK-07 |
-| M5.1 (圖譜) | RISK-05 |
-| M5.2 (NSVIF) | RISK-05 |
+| M5.1 (冰山假設庫) | RISK-05, RISK-12, RISK-19, RISK-21, RISK-23 |
+| M5.2 (證據萃取) | RISK-05, RISK-06, RISK-19, RISK-21 |
+| M5.3 (符號驗證) | RISK-05, RISK-21, RISK-23 |
+| M5.4 (轉化歷程) | RISK-06, RISK-10, RISK-20 |
+| M5.5 (介入規劃) | RISK-01, RISK-04, RISK-09, RISK-20, RISK-22, RISK-23 |
+| M5.6 (指令編譯) | RISK-02, RISK-03, RISK-06, RISK-08, RISK-19, RISK-23 |
+| M3.12 (冰山之鏡) | RISK-12, RISK-19, RISK-21, RISK-23 |
+| M3.13 (小實驗卡) | RISK-01, RISK-04, RISK-12, RISK-22 |
+| M0.5 (合成使用者模擬器) | RISK-24, RISK-25 |
 | Voice input | RISK-11 |
 
 ## When risks are missing from the document
@@ -132,6 +131,6 @@ If your task touches modules but no RISK-xx covers the combination:
 
 Do not silently skip. Respond:
 
-> 「整合風險稽核是專案級不變式 (CLAUDE.md §5)。若您確認此次跳過,請說明理由,我會記錄為 'audit-skipped' 並在 git commit 中標記。」
+> 「整合風險稽核是專案級不變式 (CLAUDE.md 憲章 第三條)。若您確認此次跳過,請說明理由,我會記錄為 'audit-skipped' 並在 git commit 中標記。」
 
 如果使用者堅持跳過且給出理由,在 commit message 加 `[audit-skipped: <理由>]`,並 echo 給使用者一個警告。

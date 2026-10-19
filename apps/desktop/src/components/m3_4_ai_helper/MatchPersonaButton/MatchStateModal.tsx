@@ -6,6 +6,7 @@
 
 import React, { useState } from "react";
 import { useCoOSStore } from "../../../stores/m3_1_global_store";
+import { RefreshIcon, SparkleIcon, TargetIcon } from "../../../lib/icons";
 
 interface ExpertPreview {
   id: string;
@@ -101,11 +102,13 @@ export function MatchStateModal({ onSuccess, onClose, excludePersonaId }: Props)
         <div className="px-6 pt-5 pb-3 border-b border-[var(--glass-border)]">
           <h3 className="font-semibold text-lg flex items-center gap-2">
             {step === "input" ? (
-              <>
-                {excludePersonaId ? "🔄 重新配對專家" : "✨ 配對你的 AI 專家"}
-              </>
+              excludePersonaId ? (
+                <><RefreshIcon className="text-[var(--gold-accent)]" /> 重新配對專家</>
+              ) : (
+                <><SparkleIcon className="text-[var(--gold-accent)]" /> 配對你的 AI 專家</>
+              )
             ) : (
-              <>🎯 推薦的專家人選</>
+              <><TargetIcon className="text-[var(--gold-accent)]" /> 推薦的專家人選</>
             )}
           </h3>
         </div>
@@ -186,7 +189,7 @@ export function MatchStateModal({ onSuccess, onClose, excludePersonaId }: Props)
                 data-testid="confirm-match-btn"
                 onClick={handleRequestMatch}
                 disabled={!stateInput.trim() || loading}
-                className="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-40 disabled:hover:bg-indigo-600 transition-all font-medium shadow-md"
+                className="px-5 py-2 text-sm bg-[var(--gold-accent)] hover:opacity-90 text-white rounded-lg disabled:opacity-40 transition-all font-medium shadow-md"
               >
                 {loading ? "分析配對中..." : "送出配對請求"}
               </button>

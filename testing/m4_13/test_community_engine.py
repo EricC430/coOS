@@ -1,9 +1,22 @@
+import os
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
-import uuid
 from services.main import app
-from m6_2_postgresql.engine import get_cloud_session
 from sqlalchemy import text
+
+from m6_2_postgresql.engine import get_cloud_session
+
+# TEST-01 (MVP_CLOSURE_REPORT §6.2): same requires_cloud gate as testing/m6_2.
+# Every test here hits Supabase via get_cloud_session(); without the env var
+# they must skip instead of failing on an unreachable tenant.
+_HAS_CLOUD = bool(os.environ.get("SUPABASE_DB_URL"))
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_CLOUD,
+    reason="SUPABASE_DB_URL not set -- skipping cloud integration tests",
+)
 
 client = TestClient(app)
 

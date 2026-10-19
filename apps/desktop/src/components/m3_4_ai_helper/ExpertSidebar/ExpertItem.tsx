@@ -7,6 +7,7 @@
 
 import React from "react";
 import type { Expert } from "../../../stores/m3_1_global_store";
+import { AssistantIcon } from "../../../lib/icons";
 
 interface Props {
   expert: Expert & { isToolType?: boolean };
@@ -25,7 +26,7 @@ export function ExpertItem({ expert, isActive, onClick, icon, onDelete }: Props)
   // - Expert without avatarUrl: show FIRST character of expertName (Chinese char like 志, 宏, etc.)
   let avatarContent: React.ReactNode;
   if (isToolType) {
-    avatarContent = icon ?? "🤖";
+    avatarContent = icon ?? <AssistantIcon />;
   } else if (expert.avatarUrl) {
     avatarContent = (
       <img

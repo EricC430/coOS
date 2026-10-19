@@ -202,6 +202,8 @@ def test_observer_insight_deferred():
 
 **觸發組合**:`M2.2 (Gemma 邊緣壓縮) + M5.1 (薩提爾冰山圖譜) + M5.2 (NSVIF)`
 
+> **2026-10-19 狀態更新**:依 `M5_ICEBERG_REDESIGN.md` (Q2 拍板),冰山不再寫入雲端 Neo4j,全部證據與假設留在本地 SQLite,`m5_1_iceberg_evidence.source_id` 直接指回本地原文。此風險的失效路徑已在架構上消除;下方「必須走本地 raw_log」的驗收測試仍保留,改由新 M5.3 符號驗證器承擔。
+
 **失效機制**:
 
 M2.2 將原始程式碼壓縮為意圖向量 (壓縮率約 50-100x)。M5.1 用意圖向量在 Neo4j 建立節點與邊。但意圖向量丟失了具體變數名稱、具體錯誤、具體挫折時刻 → M5.1 建立的 `(Behavior)-[REFLECTS]->(CopingStance)` 邊可能基於誤解 → M5.2 NSVIF 嘗試反溯因驗證時找不到對應 raw_log (因為只有意圖向量) → 無法驗證 → 大量邊被丟棄 → 圖譜空洞化。
@@ -1017,6 +1019,346 @@ def test_small_community_uses_conservative_template():
     small_community = make_community(member_cap=3, member_count=2)
     challenge = generate_challenge(community_id=small_community.id)
     assert challenge.template_tier == "conservative"
+```
+
+---
+
+## RISK-19：冰山假設經行為指令洩漏至雲端 LLM
+
+**觸發組合**：`M5.6 (指令編譯器)` + `M4.2 (Persona 提示詞)` + 雲端 Gemini
+
+**失效機制**：
+
+M5.1 的冰山假設 (例:「求助等於無能」「渴望被肯定」) 是由 L1 對話逐字稿推得,本身屬 L1 敏感資料。M5.6 把假設編譯成 `[這一輪的陪伴方式]` 指令注入 M4.2 系統提示詞,而 M4.2 的提示詞會送往雲端 Gemini。若編譯器把假設原文、層名或使用者狀態描述直接寫進指令 (「使用者渴望被接納,請…」),等於把心理剖繪明文上雲,違反 CLAUDE.md 隱私三層原則。
+
+**研究衝突點**：R04 §冰山層次節點類型 (需要完整語意才能推論) vs R07 §POST (L1 明文不上雲)
+
+**緩解策略**：
+
+指令只描述「專家怎麼做」,不描述「使用者是什麼」;離開 M5 前一律通過洩漏閘:
+
+```python
+# [R07: POST §4.3] 假設文字永不離開本地;只有行為指令可上雲
+ICEBERG_TERMS = ("冰山", "應對姿態", "討好", "指責", "超理智", "打岔",
+                 "渴望", "自我價值", "yearning", "coping", "placating", "blaming")
+
+def leak_gate(directive: IcebergDirective, hypotheses: list[Hypothesis]) -> bool:
+    text = directive.instruction + (directive.quote or "")
+    if any(t in text.lower() for t in ICEBERG_TERMS):
+        return False
+    if any(ngram_overlap(h.content, directive.instruction) >= 0.5 for h in hypotheses):
+        return False
+    if contains_user_state_descriptor(directive.instruction):   # 沿用 RISK-03 的狀態描述詞表
+        return False
+    return True
+# 未通過 → 丟棄 move,改 mode 12,寫 raw_tracking_logs (gate="leak_gate")
+```
+
+`quote` (mode 7 使用者原話) 必須來自同一 `role_scope`,並先經 `eguard.mask_pii()`。
+
+**驗收測試**：
+
+```python
+@pytest.mark.integration_risk("RISK-19")
+def test_directive_contains_no_iceberg_terms():
+    for move in MOVE_CATALOG:
+        d = compile_directive(move, sample_hypotheses())
+        assert leak_gate(d, sample_hypotheses()) or d.mode == 12
+
+@pytest.mark.integration_risk("RISK-19")
+def test_cloud_payload_never_contains_hypothesis_content(capture_gemini_payload):
+    h = seed_hypothesis(layer="perception", content="求助等於無能")
+    run_persona_turn(user_message="我又卡住了")
+    assert "求助等於無能" not in capture_gemini_payload()
+```
+
+---
+
+## RISK-20：脆弱期碰撞 → 二次傷害
+
+**觸發組合**：`M5.5 (介入規劃器)` + `M4.8 / role_implicit_states (焦慮)` + `M6.4 mood_score (低落)`
+
+**失效機制**：
+
+碰撞 (mode 2/7/8) 刻意讓使用者面對自己的不一致。若在使用者低落、焦慮、或剛被碰撞後的混亂期再次碰撞,使用者感受到的是被指責而非被理解 → 防衛升高、mood 再降、棄用。這與 RISK-03 的焦慮鏡像迴路同型,但觸發源是「內容」而非「語氣」。
+
+**研究衝突點**：R20 §變化歷程 (外來元素是改變的必要條件) vs R20 §變化歷程 (混亂期需要承接,不是更多外來元素) / R01 §α-DPO (挫折時擴張支持)
+
+**緩解策略**：
+
+```python
+# [R20: Satir Model §變化歷程] 混亂期與脆弱狀態下禁止碰撞
+def collision_allowed(ctx: GateContext) -> tuple[bool, str]:
+    if ctx.latest_mood_48h is not None and ctx.latest_mood_48h <= 3:
+        return False, "low_mood"
+    if ctx.implicit_state == "anxiety":            # 無資料 = unknown,不阻擋
+        return False, "anxiety"
+    if ctx.theme.satir_phase == SatirPhase.CHAOS:
+        return False, "chaos_phase"
+    if ctx.echo_mode_triggered_this_turn:
+        return False, "reactance"
+    if ctx.theme.is_sensitive:
+        return False, "sensitive_theme"
+    return True, "ok"
+# 碰撞後 2 輪強制 mode 4/5 (承接)
+```
+
+**驗收測試**：
+
+```python
+@pytest.mark.integration_risk("RISK-20")
+def test_collision_blocked_low_mood():
+    ctx = make_ctx(latest_mood_48h=2)
+    assert plan_move(ctx).mode not in {2, 7, 8}
+
+@pytest.mark.integration_risk("RISK-20")
+def test_collision_blocked_in_chaos_phase():
+    ctx = make_ctx(theme_phase="chaos")
+    assert plan_move(ctx).mode in {4, 5, 12}
+
+@pytest.mark.integration_risk("RISK-20")
+def test_two_holding_turns_after_collision():
+    log_move(mode=2)
+    assert plan_move(make_ctx()).mode in {4, 5}
+    log_move(mode=5)
+    assert plan_move(make_ctx()).mode in {4, 5}
+```
+
+---
+
+## RISK-21：防衛性否認一律視為證實 → 假設不可證偽
+
+**觸發組合**：`M5.2 (反應分類器)` + `M4.2 reactance_detector` + `M5.3 (信心更新)`
+
+**失效機制**：
+
+心理學上「否認可能是防衛」為真,但若系統把所有帶情緒的否認都當成「假設正確、使用者在防衛」,假設將永遠無法被推翻:使用者越反對,系統越確信 → 碰撞越強 → 使用者更反對。這是心理幻覺 (R04) 的互動版本,也是最傷害信任的失效模式。
+
+**研究衝突點**：R16 §Rolling with Resistance (阻抗不等於反駁,不可硬推) vs R04 §反溯因推理的對抗性驗證 (假設必須可被挫敗)
+
+**緩解策略**：
+
+```python
+# [R04: 反溯因 §反溯因推理的對抗性驗證] 否認不能永遠被解讀為防衛
+def evidence_from_reaction(reaction: Reaction, hypothesis: Hypothesis) -> Evidence:
+    if reaction == Reaction.REJECT_CALM:
+        return Evidence(polarity="contradicts", weight=0.8)
+    if reaction == Reaction.REJECT_REACTIVE:
+        prior = count_reactive_rejections(hypothesis.id)
+        if prior >= 2:                               # 本次為第 3 次
+            return Evidence(polarity="contradicts", weight=0.5)
+        return Evidence(polarity="inconclusive", weight=0.0)
+    ...
+```
+
+且 reject_reactive **永遠不可**作為 `supports` 證據。
+
+**驗收測試**：
+
+```python
+@pytest.mark.integration_risk("RISK-21")
+def test_reactive_rejection_never_supports():
+    for _ in range(5):
+        ev = evidence_from_reaction(Reaction.REJECT_REACTIVE, h)
+        assert ev.polarity != "supports"
+
+@pytest.mark.integration_risk("RISK-21")
+def test_three_reactive_rejections_count_as_contradiction():
+    record_reaction(h, Reaction.REJECT_REACTIVE); record_reaction(h, Reaction.REJECT_REACTIVE)
+    ev = evidence_from_reaction(Reaction.REJECT_REACTIVE, h)
+    assert ev.polarity == "contradicts"
+```
+
+---
+
+## RISK-22：遊戲化結構強化冰山問題
+
+**觸發組合**：`M5.1 (established 主題)` + `M4.5 / M3.5 (XP 呈現)` + `M4.13 (XP 質押)` + `M3.11 (Gacha)`
+
+**失效機制**：
+
+對「價值 = 表現」「不能失敗」主題的使用者,排名比較、連續中斷的損失文案、XP 質押對賭,每天在結構上強化他的冰山觀點。系統一邊在對話中鬆動這個觀點,一邊在介面上加固它,互相抵銷。
+
+**研究衝突點**：R01 §α-DPO / R09 §3.3 病態使用 vs (產品架構 §遊戲化損失規避)
+
+**緩解策略**：
+
+M5 只輸出**呈現政策旗標**,不碰 XP 數值與 M6.5 ACID 流程;無 M5 時旗標全部為 false,MVP 不受影響:
+
+```python
+# [R09: 病態使用 §3.3] 冰山主題影響呈現,不影響帳本
+def presentation_policy(user_id: str) -> PresentationPolicy:
+    if not m5_available():
+        return PresentationPolicy()                 # 全部 False
+    themes = established_themes(user_id, tags={"worth_contingent", "fear_of_failure"})
+    return PresentationPolicy(
+        soften_loss_framing=bool(themes),
+        emphasize_effort=bool(themes),
+        hide_rank_comparison=bool(themes),
+        block_stake_offers=bool(themes),
+    )
+```
+
+**驗收測試**：
+
+```python
+@pytest.mark.integration_risk("RISK-22")
+def test_policy_blocks_stake_for_worth_theme():
+    seed_established_theme(tag="worth_contingent")
+    assert presentation_policy(USER).block_stake_offers is True
+
+@pytest.mark.integration_risk("RISK-22")
+def test_policy_never_changes_xp_amount():
+    seed_established_theme(tag="worth_contingent")
+    assert settle_xp(reflection).earned_xp == settle_xp_without_m5(reflection).earned_xp
+```
+
+---
+
+## RISK-23：深層冰山假設跨角色 → 角色隔離失效
+
+**觸發組合**：`M5.1 (yearning / self 假設)` + `M4.3 (角色情境隔離)` + `M4.2 (Persona 注入)`
+
+**失效機制**：
+
+渴望與自我本質上跨角色 (一個人在課業和家庭中可能都渴望被肯定)。若 CSIE 角色中形成的 yearning 假設直接在 FAMILY 角色的專家對話中使用,且專家引用了 CSIE 的事件或原話,就違反 M4.3 的角色沙盒 (RISK-06 的深層版本)。但若完全禁止跨角色,深層假設會被切成碎片,每個角色都證據不足。
+
+**研究衝突點**：R20 §個人冰山 (自我是整體的) vs (架構文件 §角色沙盒)
+
+**緩解策略** (使用者拍板 2026-10-19,有條件跨角色):
+
+```python
+# [M4.3 + R20 §個人冰山] 深層可跨角色,但只能影響陪伴方式,不可帶任何事件
+def can_mark_cross_role(h: Hypothesis) -> bool:
+    if h.layer not in ("yearning", "self"):
+        return False                                # 淺層與證據一律綁 role
+    roles_with_independent_chain = {
+        r for r in roles_supporting(h) if has_full_upper_chain(h, role=r)
+    }
+    return len(roles_with_independent_chain) >= 2
+
+def allowed_modes_for(h: Hypothesis, current_role: str) -> set[int]:
+    if h.role_scope == "cross_role" and not supported_in_role(h, current_role):
+        return {1, 5, 6}                            # 只影響陪伴方式
+    return ALL_MODES
+# 編譯 mode 7 quote 時:quote.role_scope 必須 == current_role
+```
+
+**驗收測試**：
+
+```python
+@pytest.mark.integration_risk("RISK-23")
+def test_cross_role_requires_two_independent_chains():
+    h = seed_yearning(chains_in_roles=["CSIE"])
+    assert can_mark_cross_role(h) is False
+    add_chain(h, role="FAMILY")
+    assert can_mark_cross_role(h) is True
+
+@pytest.mark.integration_risk("RISK-23")
+def test_quote_never_crosses_role():
+    seed_quote(role="CSIE", text="問了就代表我不行")
+    d = plan_and_compile(current_role="FAMILY")
+    assert d.quote is None or "問了就代表我不行" not in d.quote
+
+@pytest.mark.integration_risk("RISK-23")
+def test_cross_role_hypothesis_limited_to_relational_modes():
+    h = seed_cross_role_yearning(supported_roles=["CSIE", "CLUB"])
+    assert allowed_modes_for(h, current_role="FAMILY") == {1, 5, 6}
+```
+
+---
+
+## RISK-24：合成資料污染真實資料 → 論文 N=1 證據失效
+
+**觸發組合**：`M0.5 (合成使用者模擬器)` + `M6.1 (本地 SQLite)` + `M0.3 (Settings.local_db_path)` + 論文評估腳本 (`paper_eval_data`)
+
+**失效機制**：
+
+M0.5 會大量寫入與正式表同 schema 的列 (chat_transcripts、raw_tracking_logs、反思)。若寫入路徑誤指 `data/coos.db` (例如測試沒覆寫 `local_db_path`,MVP 結案報告已發現此情況),或論文腳本誤讀合成庫,合成列就會與 N=1 真實使用數據混在一起,而兩者在 schema 上無法區分 → 論文的真實使用指標被灌水,且事後無法清除乾淨。
+
+**研究衝突點**：無直接研究衝突;屬資料治理。對應 `docs/MVP_CLOSURE_REPORT.md` §7.2b D-1 (以合成數據取代真實數據門檻) 與「合成數據只證明機制,不證明真人改變」的限制。
+
+**緩解策略** (使用者拍板 2026-10-19,見 `docs/modules/M0_5_synthetic_user_simulator_SPEC.md` §7.3):
+
+```python
+# 四道隔離,任一失敗即中止,不寫任何一列
+SYNTHETIC_APP_ID = 0x434F5335          # "COS5"
+
+class SyntheticWriter:
+    def __init__(self, path: Path):
+        real = Settings(_env_file=None).local_db_path.resolve()
+        if path.resolve() == real or path.name == "coos.db":
+            raise RealDatabaseRefused(path)              # 1. 路徑拒絕
+        ...
+# 2. PRAGMA application_id = SYNTHETIC_APP_ID:評估器只收帶哨兵的 DB;論文腳本拒收帶哨兵的 DB
+# 3. 合成庫每張表 is_synthetic INTEGER NOT NULL DEFAULT 1 CHECK (is_synthetic = 1) (正式 schema 不動)
+# 4. 合成結果在論文中獨立成節,不與 N=1 數據合併計算
+```
+
+**驗收測試**：
+
+```python
+@pytest.mark.integration_risk("RISK-24")
+def test_refuses_real_db_path():
+    with pytest.raises(RealDatabaseRefused):
+        SyntheticWriter(Settings(_env_file=None).local_db_path)
+
+@pytest.mark.integration_risk("RISK-24")
+def test_every_row_is_synthetic(syn_db):
+    run_sim(syn_db, cfg(days=3))
+    assert rows_where(syn_db, "is_synthetic IS NOT 1") == 0
+
+@pytest.mark.integration_risk("RISK-24")
+def test_paper_eval_rejects_synthetic_db(syn_db):
+    init_synthetic_db(syn_db)
+    with pytest.raises(SyntheticDatabaseRefused):
+        paper_eval_metrics(syn_db)
+```
+
+---
+
+## RISK-25：標準答案外洩給被測系統 → 推論準確度虛高
+
+**觸發組合**：`M0.5 (標準答案表 m0_5_gt_* / realizer)` + `M5.2 (證據萃取)` + `M5.3 (符號驗證)`
+
+**失效機制**：
+
+M0.5 的價值在於「知道正確答案」,可量測 M5.2 / M5.3 推論的精確率 / 召回率。但若被測模組能讀到同一個合成庫裡的 `m0_5_gt_*` 表,或模擬器的 LLM 把使用者的核心信念原文直接說出來 (「我覺得求助就等於無能」),M5.2 只要做字串比對就能「推論」正確 → 精確率接近 1,卻完全不代表系統能從隱微語言推得冰山。這是心理幻覺 (R04) 在評估端的鏡像:評估本身產生了虛假的信心。
+
+**研究衝突點**：R04 §心理幻覺的定義與生成機制 (信心錯位) vs (M0.5 單一合成庫的方便性)
+
+**緩解策略** (見 M0.5 SPEC §7.3.5、§7.4、§7.7.6):
+
+```python
+# 被測模組的連線一律掛 authorizer,拒讀標準答案表
+def _deny_ground_truth(action, arg1, arg2, db, trigger):
+    if action == sqlite3.SQLITE_READ and arg1 and arg1.startswith("m0_5_"):
+        return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
+
+con_sut.set_authorizer(_deny_ground_truth)
+# realizer 對 perception 以上的層只收 attrs 與情境,不收 GT 原文
+# 語句顯性度稽核:與 GT 原文 3-gram Jaccard > 0.6 的語句占比 > 5% → 報告標紅,精確率不可採信
+```
+
+**驗收測試**：
+
+```python
+@pytest.mark.integration_risk("RISK-25")
+def test_pipeline_cannot_read_ground_truth(syn_db):
+    con = open_for_system_under_test(syn_db)
+    with pytest.raises(sqlite3.DatabaseError):
+        con.execute("SELECT * FROM m0_5_gt_nodes").fetchall()
+
+@pytest.mark.integration_risk("RISK-25")
+def test_realize_request_has_no_deep_gt_text():
+    req = build_realize_request(user=load_seed("su_help_A"), express_layer="perception")
+    assert "求助等於無能" not in req.model_dump_json()
+
+@pytest.mark.integration_risk("RISK-25")
+def test_explicitness_audit_reported(syn_db):
+    run_sim(syn_db, cfg(days=7))
+    assert 0.0 <= evaluate(syn_db, run_id=last_run(syn_db)).leakage.explicit_utterance_rate <= 1.0
 ```
 
 ---

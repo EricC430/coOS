@@ -105,6 +105,10 @@
 
 新增的 Free Tier 配額表中 `Gemma 4 26B` 出現兩列（RPM 15 / 31），疑似第二列應為 `Gemma 4 31B`；且表格縮排在部分 Markdown renderer 會破版。需修正。
 
+## DEVIATION-13 🟡 M5 薩提爾冰山層重新設計 (研究約束鬆綁 R04)
+
+依 `docs/M5_ICEBERG_REDESIGN.md` (2026-10-19 使用者六題全部照建議拍板):R04 的 DGNN、霍克斯過程、雲端 Neo4j 不再落地,但**圖模型保留**:冰山以本地 SQLite 邊表儲存 (L1),並以 networkx 做核心渴望分析與推理路徑;D-ALP 降級為證據權重,反溯因保留。M5 章重編為 M5.1–M5.6 + M3.12 / M3.13;原 M4.10、原 M5.3 退役。新增 R20–R26、RISK-19 ~ RISK-23。**尚未同步**:`02_architecture.md` (第 44、55、93、184、248 行仍寫冰山圖譜在雲端 Neo4j) 與 `CLAUDE.md` 技術棧 / 隱私三層表中的 Neo4j 描述 —— `CLAUDE.md` 屬憲章,修改前需使用者確認。
+
 ---
 
 ## 拍板追蹤表
@@ -122,3 +126,10 @@
 | DEVIATION-09 | 🔴 | 隱私條款拍板 + 補 mask_pii + 不同意隱私條款的回退手段:使用意圖向量在CloudLLM收集可能的資訊再綜合對話完整內容與資訊在LocalLLM生成回應以及其他人設語氣等後處理(要調查最佳實踐、可行性與否) | ■ |
 | DEVIATION-10/11 | 🟢 | 補文件即可 | ■ |
 | DEVIATION-12 | 🟡 | 修配額表 | ■ |
+| DEVIATION-13 | 🟡 | 六題照建議 (見 M5_ICEBERG_REDESIGN.md §13);待同步 02_architecture.md 與 CLAUDE.md | ■ 已拍板 |
+
+## 追加紀錄 (2026-10-19 排程執行,MVP_CLOSURE_REPORT §9)
+
+- **RISK-01 後端防線補齊**:SPEC 寫的三重守門 (`is_reviewed` + `user_feeling` + `user_action_plan`) 先前只有 `m4_5_xp_settlement/engine.py::settle` 完整實作,實際被 API 使用的 M6.5 `XPGatekeeper` 少了 `user_action_plan`。現已補進 `settle_segment_xp` / `settle_earned_xp` 與 `/api/m6_5/grant_badge`,實作與 SPEC 回到一致。屬偏離修正,不需拍板。
+- **新發現、待拍板**:`draft_scheduler._get_gemini_key()` 因 import 錯誤,排程草稿實際從未使用雲端 Gemini (結案報告 §9.3 LOOP-05)。修正會開啟一條過去沒在運作的雲端呼叫路徑,與 DEVIATION-09 的隱私條款相關,請使用者決定。
+- **測試數字**:`458 passed / 0 failed / 21 skipped`。

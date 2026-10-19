@@ -5,6 +5,7 @@ import { RoleFocusCarouselDock } from "./RoleFocusCarouselDock";
 import { ContextHeaderAggregator } from "./ContextHeaderAggregator";
 import { TransitionBackground } from "./TransitionBackground";
 import { RoleCreationModal } from "./RoleCreationModal";
+import { SproutIcon } from "../../lib/icons";
 
 interface HeatmapEntry {
   date: string;
@@ -105,11 +106,11 @@ export function RoleDashboard({ onEnterChat, onFirstRoleCreated }: Props) {
               gap: '24px'
             }}
           >
-            <div style={{ fontSize: '4rem', opacity: 0.2 }}>🌿</div>
-            <div style={{ fontSize: 18, textAlign: 'center' }}>
+            <SproutIcon style={{ fontSize: '4rem', opacity: 0.35, color: 'var(--gold-accent)' }} />
+            <div style={{ fontSize: 'var(--text-lg)', textAlign: 'center', fontFamily: 'var(--font-display)' }}>
                 歡迎來到 coOS。<br/>首先，建立一個你的生活角色吧。
             </div>
-            <button className="settings-save-btn" onClick={handleAddRole} style={{ height: 'auto', padding: '12px 32px', fontSize: '1.1rem' }}>
+            <button className="settings-save-btn" onClick={handleAddRole} style={{ height: 'auto', padding: '12px 32px', fontSize: 'var(--text-lg)' }}>
               + 建立第一個角色
             </button>
           </div>

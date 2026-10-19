@@ -7,8 +7,12 @@ Privacy constraint: payload must never contain L1 plaintext field names
 """
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
+try:
+    from datetime import UTC
+except ImportError:
+    UTC = timezone.utc
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 

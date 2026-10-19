@@ -24,9 +24,13 @@ interface Props {
   currentRoleId?: string;
 }
 
-// Stable colour from group name
+// Stable colour from group name -- warm-coherent set (matches --cat-1..6 in
+// index.css; kept as literal hex here, not var(), because callers append a
+// hex alpha suffix e.g. `${color}18`, which only works on a real hex string).
+// Replaces the old indigo/emerald/violet mix that clashed with the app's
+// warm gold/coral palette.
 function groupColor(name: string): string {
-  const palette = ["#6366f1", "#10b981", "#f59e0b", "#e76f51", "#6a89a7", "#8b5cf6", "#f4a261"];
+  const palette = ["#f4a261", "#e76f51", "#6a89a7", "#8a9a6b", "#a67f9e", "#c98a3e"];
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffffff;
   return palette[Math.abs(h) % palette.length];

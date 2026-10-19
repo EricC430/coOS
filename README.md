@@ -1,5 +1,8 @@
 # coOS
 
+![coOS](./docs/brand/readme-cover-dark.png#gh-dark-mode-only)
+![coOS](./docs/brand/readme-cover-light.png#gh-light-mode-only)
+
 一款結合多智能體 AI、遊戲化、薩提爾冰山心理模型與邊緣-雲端協同推論的個人目標管理系統。
 
 ## 給人類

@@ -13,6 +13,7 @@
 import React, { useState } from "react";
 import type { Expert } from "../../../stores/m3_1_global_store";
 import { useCoOSStore } from "../../../stores/m3_1_global_store";
+import { ChatIcon } from "../../../lib/icons";
 import { ExpertItem } from "./ExpertItem";
 
 interface Props {
@@ -90,7 +91,7 @@ export function ExpertSidebar({
         color: "var(--text-secondary)",
         borderBottom: "1px solid var(--glass-border)",
       }}>
-        💬 {roleName}聊天室
+        <ChatIcon style={{ marginRight: 6, verticalAlign: -2 }} /> {roleName}聊天室
       </div>
 
       {/* Tool AI -- always first */}
@@ -98,7 +99,6 @@ export function ExpertSidebar({
         expert={TOOL_AI}
         isActive={!activeExpertId || activeExpertId === "__tool__"}
         onClick={onSelectTool}
-        icon="🤖"
       />
 
       {activeExperts.length > 0 && (

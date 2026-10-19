@@ -18,7 +18,11 @@ import sqlite3
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
+try:
+    from datetime import UTC
+except ImportError:
+    UTC = timezone.utc
 from typing import Any
 from uuid import UUID
 
@@ -48,6 +52,7 @@ from m4_3_role_isolation.context import build_role_context
 from m4_3_role_isolation.middleware import RoleIsolationMiddleware
 from m4_13_community_engine.routes import router as m6_6_community_router
 from m4_11_zpd_pipeline.router import router as m4_11_router
+from m4_12_hidden_achievement.router import router as m4_12_router
 from m6_2_postgresql.engine import get_cloud_engine, is_cloud_available
 from m6_5_acid_gatekeeper.gatekeeper import XPGatekeeper
 
@@ -1403,6 +1408,9 @@ app.include_router(m6_6_community_router)
 
 # M4.11 ZPD Gacha Pipeline
 app.include_router(m4_11_router)
+
+# M4.12 Hidden Achievement Engine
+app.include_router(m4_12_router)
 
 
 # ---------------------------------------------------------------------------

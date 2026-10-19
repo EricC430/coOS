@@ -1,0 +1,48 @@
+# M0.5 Gemini quota guard config (ASCII only -- CLAUDE.md Windows rule).
+#
+# Decision 2026-10-19 (SPEC 9.1 Q8): use the FREE TIER ONLY. No billing, no spend.
+#
+# Where the numbers come from:
+#   - Google no longer publishes a per-model free-tier table. The rate-limits page
+#     (ai.google.dev/gemini-api/docs/rate-limits, last updated 2026-10-15) says limits
+#     are applied PER PROJECT (not per key), depend on tier/account, and are shown in
+#     Google AI Studio -> Usage -> Rate limit. RPD resets at midnight Pacific time.
+#   - Values below were copied by the user from that AI Studio page for the project
+#     that owns GEMINI_API_KEY on 2026-10-19 (SPEC 9.1 Q11).
+#   - Free-tier content is "Used to improve our products" (pricing page, 2026-10-16).
+#     Fine for M0.5: it only sends synthetic data.
+#
+# The guard also LEARNS the real limit from Google's 429 QuotaFailure (quotaValue)
+# and stores it in data/coos_synthetic.db, so a stale value self-corrects downward.
+# Re-check AI Studio and update checked_at when Google changes the free tier.
+
+mode = "free_only"            # "off" | "free_only" | "paid_capped"
+share_of_project_quota = 0.5  # M0.5 uses at most this fraction; the coOS app shares the same key/project (SPEC 9.1 Q9).
+                              # Set to 1.0 only if M0.5 gets its own key in a separate project.
+monthly_usd_cap = 0.0         # only read when mode = "paid_capped" (also needs per-model prices)
+default_model = "gemini-3.1-flash-lite"
+fallback_model = "gemini-3.5-flash-lite"   # same free quota as 3.1 Flash-Lite; 2.5 Flash-Lite has only 20 RPD
+
+[models."gemini-3.1-flash-lite"]
+rpm = 15
+tpm = 250000
+rpd = 500
+verified = true
+checked_at = "2026-10-19"
+source = "AI Studio rate-limit page (user's project)"
+
+[models."gemini-3.5-flash-lite"]
+rpm = 15
+tpm = 250000
+rpd = 500
+verified = true
+checked_at = "2026-10-19"
+source = "AI Studio rate-limit page (user's project)"
+
+[models."gemini-2.5-flash-lite"]
+rpm = 10
+tpm = 250000
+rpd = 20
+verified = true
+checked_at = "2026-10-19"
+source = "AI Studio rate-limit page (user's project)"
