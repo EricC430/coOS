@@ -7,6 +7,7 @@ Research:
   [R01 §alpha-DPO] stake refund must be atomic (rollback on failure)
 Risk mitigation:
   RISK-01: settle_segment_xp() enforces segment.is_reviewed + user_feeling
+           + user_action_plan ([R08: 微摩擦力 §四.2], LOOP-03 2026-10-19)
   RISK-07: stake_xp() blocks edge ZPD tasks to prevent compound frustration
   RISK-13: soft-delete guard -- is_active check before any XP settlement
   RISK-14: settle_segment_xp() updates BOTH current_xp AND lifetime_xp atomically
@@ -24,7 +25,11 @@ logic -- that is M0.3 / M6.2's responsibility.
 """
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+try:
+    from datetime import UTC
+except ImportError:
+    UTC = timezone.utc
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -93,7 +98,8 @@ class XPGatekeeper:
 
         Guard order:
         1. Segment exists AND is_active=True (RISK-13 soft-delete guard)
-        2. is_draft=False AND is_reviewed=True AND user_feeling non-empty (RISK-01)
+        2. is_draft=False AND is_reviewed=True AND user_feeling AND
+           user_action_plan non-empty (RISK-01, R08 §四.2)
         3. xp_settled=False (prevent double-settlement)
         4. Relative XP increment on current_xp AND lifetime_xp (RISK-14)
         5. Write ledger entry with segment_id linkage
@@ -109,6 +115,11 @@ class XPGatekeeper:
                 or not segment.user_feeling
                 or not segment.user_feeling.strip()):
             return TransactionResult(False, "GATEKEEPER_001", "segment_not_approved")
+
+        # [R08: 微摩擦力 §四.2] [RISK-01] backend line of defence: user_action_plan
+        # is mandatory too -- feeling-only approvals earn no XP (LOOP-03)
+        if not _has_text(getattr(segment, "user_action_plan", None)):
+            return TransactionResult(False, "GATEKEEPER_001", "missing_user_action_plan")
 
         if segment.xp_settled:
             return TransactionResult(False, "GATEKEEPER_002", "already_settled")
@@ -157,7 +168,8 @@ class XPGatekeeper:
 
         Guard order (matches SPEC §7.1):
         1. Reflection exists
-        2. is_draft=False AND is_reviewed=True AND user_feeling non-empty
+        2. is_draft=False AND is_reviewed=True AND user_feeling AND
+           user_action_plan non-empty
         3. xp_settled=False (prevent double-settlement)
         4. Relative XP increment (never absolute overwrite)
         5. Write ledger entry
@@ -173,6 +185,10 @@ class XPGatekeeper:
                 or not reflection.user_feeling
                 or not reflection.user_feeling.strip()):
             return TransactionResult(False, "GATEKEEPER_001", "draft_not_approved")
+
+        # [R08: 微摩擦力 §四.2] [RISK-01] user_action_plan mandatory (LOOP-03)
+        if not _has_text(getattr(reflection, "user_action_plan", None)):
+            return TransactionResult(False, "GATEKEEPER_001", "missing_user_action_plan")
 
         if reflection.xp_settled:
             return TransactionResult(False, "GATEKEEPER_002", "already_settled")
@@ -293,6 +309,10 @@ class XPGatekeeper:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _has_text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
 
 def _make_ledger(**kwargs):
     """Build a simple dict ledger entry (production will use SQLAlchemy model)."""

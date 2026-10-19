@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "M4.12 WebSocket & IPC 事件規範",
+  "description": "M4.12 向桌面端發布之無預警驚喜解鎖廣播事件與客戶端確認協定",
+  "events": [
+    {
+      "name": "HIDDEN_ACHIEVEMENT_UNLOCKED",
+      "direction": "backend_to_client",
+      "channel": "ws://localhost:8000/api/m4_12/ws",
+      "description": "於 M1.2 自然微斷點觸發，通知前端彈出 SurpriseModal 驚喜視窗",
+      "payload": {
+        "type": "object",
+        "required": [
+          "event_type",
+          "achievement_id",
+          "archetype",
+          "name",
+          "description",
+          "flavor_text",
+          "rarity",
+          "exp_reward",
+          "badge_icon_url",
+          "unlocked_at"
+        ],
+        "properties": {
+          "event_type": {
+            "type": "string",
+            "const": "HIDDEN_ACHIEVEMENT_UNLOCKED"
+          },
+          "achievement_id": {
+            "type": "string",
+            "example": "ha_curious_cartographer_01"
+          },
+          "archetype": {
+            "type": "string",
+            "enum": ["curiosity", "metacognition", "restoration", "cross_synthesis"],
+            "example": "curiosity"
+          },
+          "name": {
+            "type": "string",
+            "example": "深淵探求者"
+          },
+          "description": {
+            "type": "string",
+            "example": "跳出日常語境，主動探索編譯器底層語法樹生成機制。"
+          },
+          "flavor_text": {
+            "type": "string",
+            "example": "「未知不是迷宮，而是等待繪製的地圖。」"
+          },
+          "rarity": {
+            "type": "string",
+            "enum": ["rare", "epic", "legendary"],
+            "example": "epic"
+          },
+          "exp_reward": {
+            "type": "integer",
+            "example": 150
+          },
+          "badge_icon_url": {
+            "type": "string",
+            "example": "/assets/badges/deep_cartographer.svg"
+          },
+          "origin_role_id": {
+            "type": "string",
+            "nullable": true,
+            "example": "role_csie"
+          },
+          "unlocked_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "context_summary": {
+            "type": "string",
+            "nullable": true,
+            "example": "自主提問 Rust LLVM 後端 IR 最佳化原理。"
+          }
+        }
+      }
+    },
+    {
+      "name": "ACK_SURPRISE_MODAL",
+      "direction": "client_to_backend",
+      "channel": "ws://localhost:8000/api/m4_12/ws",
+      "description": "前端使用者關閉或確認驚喜彈窗時發布，將 is_acknowledged 標記為 true",
+      "payload": {
+        "type": "object",
+        "required": ["action", "achievement_id", "user_id"],
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "ACK_SURPRISE_MODAL"
+          },
+          "achievement_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}

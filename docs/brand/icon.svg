@@ -1,0 +1,42 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2E1F15"/>
+      <stop offset="100%" stop-color="#0C0805"/>
+    </linearGradient>
+    <linearGradient id="dial" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F3E4CC"/>
+      <stop offset="100%" stop-color="#E3C99E"/>
+    </linearGradient>
+    <linearGradient id="needleN" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F2A73D"/>
+      <stop offset="100%" stop-color="#D9722C"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" rx="192" fill="url(#bg)"/>
+
+  <!-- bold dark bezel ring, strong contrast against both bg and dial -->
+  <circle cx="512" cy="512" r="366" fill="#1C120B"/>
+  <!-- light dial face -->
+  <circle cx="512" cy="512" r="316" fill="url(#dial)"/>
+  <!-- bezel rim highlight -->
+  <circle cx="512" cy="512" r="366" fill="none" stroke="#D9722C" stroke-width="10"/>
+
+  <!-- ticks on the dark bezel: N distinct triangle, E/S/W bold bars -->
+  <path d="M 512 118 L 546 182 L 478 182 Z" fill="#F2A73D"/>
+  <g fill="#F3E4CC">
+    <rect x="492" y="838" width="40" height="56" rx="8"/>
+    <rect x="118" y="492" width="56" height="40" rx="8"/>
+    <rect x="850" y="492" width="56" height="40" rx="8"/>
+  </g>
+
+  <!-- needle: both halves dark/saturated enough to read on the light dial -->
+  <path d="M 512 258 L 610 512 L 512 512 Z" fill="url(#needleN)"/>
+  <path d="M 512 258 L 414 512 L 512 512 Z" fill="#9C5A22"/>
+  <path d="M 512 766 L 610 512 L 512 512 Z" fill="#3A2A1C"/>
+  <path d="M 512 766 L 414 512 L 512 512 Z" fill="#5C4530"/>
+
+  <circle cx="512" cy="512" r="34" fill="#1C120B"/>
+  <circle cx="512" cy="512" r="20" fill="#F2A73D"/>
+</svg>

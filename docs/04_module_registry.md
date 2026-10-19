@@ -172,6 +172,7 @@
 
 **Deps**:M1.2 (必須在斷點才推播)
 **Consumed by**:M4.4
+**備註**:「打破負向信念時主動強化」的觸發 (見 `dev_logs/non_m6_features_brainstorm.md` §1.2) 2026-10-19 起由 M5.5.4 小實驗判定提供;M1.5 只負責單鍵問卷。
 **Research**:`[R08: 微干預 §三.3]` `[R10: 認知負荷消解]`
 **Risks**:無
 
@@ -506,28 +507,70 @@
 
 **Purpose**:可動態點亮的節點拓樸圖,將個人成長目標具象化。
 
-**Deps**:M5.1
+**Deps**:無 (2026-10-19 起不再依賴 M5,且**不顯示冰山節點**:把心理層畫成可點亮的遊戲節點等於將「自我」遊戲化,見 `M5_ICEBERG_REDESIGN.md` §4.1)
 **Research**:`[R04: 拓樸演化 §GraphRAG]`
 **Risks**:無
 
 ---
 
-### M3.11 遊戲化抽卡組件 (Gamification Gacha UI) `[進階]`
+### M3.11 遊戲化抽卡組件與視覺合成工坊 (Gamification Gacha UI & Visual Studio) `[已實作]`
 
-**Purpose**:變動比例增強的盲盒抽卡與隱藏成就。
+**Purpose**:變動比例增強的盲盒抽卡、隱藏成就與 AI 視覺排版融合工坊。
 
 **子模組**:
 
 | 編號 | 職責 |
 | ---- | ---- |
-| M3.11.1 | 變動比例盲盒抽卡介面 (XP 抽背景/徽章) |
-| M3.11.2 | 程序化任務「🎲 抽挑戰」按鈕 |
-| M3.11.3 | 隱藏成就**絕對無 UI 狀態**控制器 (解鎖前完全隱藏,防 FOMO) |
-| M3.11.4 | 隱藏成就無預警驚喜彈窗 |
+| M3.11.1 | 變動比例盲盒抽卡介面 (100 XP 抽背景/物件，支援官方精選與自創混合池，60 分鐘上限 5 次滑動視窗防沉迷冷卻，L1 即時開獎) |
+| M3.11.2 | 程序化任務「🎲 抽挑戰」按鈕 (基於 ZPD 動態難度，嚴格禁止 XP 質押與損失) |
+| M3.11.3 | 隱藏成就**絕對無 UI 狀態**控制器 (解鎖前完全不產生 DOM 節點，零洩漏防 FOMO) |
+| M3.11.4 | 隱藏成就無預警驚喜彈窗 (WebSocket/SSE 即時監聽與 FIFO 佇列展示) |
+| M3.11.5 | 焦慮推播門禁 (偵測焦慮/迴避/抑鬱狀態主動封鎖推播) 與 AI 視覺合成工坊 (背景/透明物件生圖、畫布排版拖曳、非破壞性光影 AI 融合、自訂桌面主題套用) |
 
 **Deps**:M3.5, M4.11, M4.12, M6.5
-**Research**:無 (產品設計)
-**Risks**:RISK-04 (即時慶祝), RISK-09 (焦慮 + Gacha 上癮)
+**Implementation**: `apps/desktop/src/components/m3_11_gacha/`, `specs/001-m3-11-gacha-ui/`
+**Research**:`[R01: α-DPO Dropout 危機 §α-DPO]`, `[R09: 病態使用風險 Replika 案例 §3.3]`, `[R08: IKEA 效應 §VI.1]`
+**Risks**:RISK-04 (即時慶祝不經 Defer), RISK-07 (ZPD 任務零質押), RISK-09 (焦慮門禁封鎖推播)
+**SPEC**:`docs/modules/M3_11_gacha_ui_SPEC.md`
+
+---
+
+### M3.12 冰山之鏡 (Iceberg Mirror — 透明與控制) `[進階]`
+
+**Purpose**:讓使用者在主動打開時看見系統目前對自己的理解,並能確認、修正、封存話題、暫停或刪除。
+
+**子模組**:
+
+| 編號 | 職責 |
+| ---- | ---- |
+| M3.12.1 | 首次同意流程 (寫入 `user_consents`, consent_type = `m5_iceberg`) |
+| M3.12.2 | 假設列表 (無術語語言 + 三段信心) 與推理路徑「這個猜測是怎麼來的」(最強 1–2 條祖先路徑 + 競爭假設) |
+| M3.12.3 | 回饋操作:對 / 不太對 / 完全不是 / 這個話題先不要碰 |
+| M3.12.4 | 控制:暫停 N 天、碰撞劑量上限 (預設 2,可開到 3)、刪除全部 |
+
+**Deps**:M5.1, M5.4, M3.1
+**Research**:`[R08: §五 意圖脫鉤與作者身分五大設計模式]` `[R04: 心理幻覺 §心理幻覺的定義與生成機制]`
+**Risks**:RISK-21, RISK-23
+**SPEC**:`docs/modules/M3_12_iceberg_mirror_SPEC.md`
+
+---
+
+### M3.13 小實驗卡 (Micro-Experiment Card) `[進階]`
+
+**Purpose**:在儀表板呈現系統提議的小實驗,讓使用者自主接受、婉拒或換一個,並顯示觀察結果。
+
+**子模組**:
+
+| 編號 | 職責 |
+| ---- | ---- |
+| M3.13.1 | 提議卡 (接受 / 不要 / 換一個) |
+| M3.13.2 | 觀察中狀態與到期 |
+| M3.13.3 | 結果呈現 (只陳述觀察到的事實,反思交給使用者) |
+
+**Deps**:M5.5, M3.2
+**Research**:`[R23: 行為實驗 §實驗設計]` `[R09: SDT §第四章]` `[R25: 生成效應 §實驗結果]`
+**Risks**:RISK-22, RISK-01
+**SPEC**:`docs/modules/M3_13_micro_experiment_card_SPEC.md`
 
 ---
 
@@ -650,7 +693,11 @@
 
 ---
 
-### M4.7 Markdown 同步至 Obsidian Agent `[MVP]`
+### M4.7 Markdown 同步至 Obsidian Agent `[進階]`
+
+> **已移出 MVP (2026-06-10 拍板)**:MVP 閉環不依賴 Obsidian,移至 Phase 6 (見 `docs/IMPLEMENTATION_GAP_REPORT.md` GAP-A1、`docs/06_implementation_phases.md`)。原標籤 `[MVP]`。
+>
+> **2026-10-19 D-3**:M4.7a Vault Governance Reader (唯讀) 升為下一階段主軸,排在 M5 之前;M4.7b / M4.7c 不擋 M5 (見 `docs/MVP_CLOSURE_REPORT.md` §7.5)。
 
 **Purpose**:Session 結束 → 歸納重點 → 寫入指定 Obsidian Vault。
 
@@ -673,10 +720,10 @@
 | M4.8.1 | 特徵矩陣萃取:DistilBERT 情感 + 源碼變更熵 + 時間動力學 |
 | M4.8.2 | 隱性狀態解碼:孤立森林 + HMM/HSMM + Viterbi → 常態/焦慮/逃避 |
 | M4.8.3 | 認知分析:POMDP + 多模態 BKT → 認知負荷透視 + ZPD 邊界動態縮放 |
-| M4.8.4 | 心理指標降維轉譯:冰冷日誌 → 「焦慮」「逃避」等心理標籤 |
+| M4.8.4 | 心理指標降維轉譯:冰冷日誌 → 「焦慮」「逃避」等心理標籤 (應對姿態部分 2026-10-19 移交 M5.2.1) |
 | M4.8.5 | REMT YAML 上下文工程:DRIFT 保護下將推論結果注入 Persona 決策樹 |
 
-**Deps**:M2.2, M4.1, M4.2, M5.1
+**Deps**:M2.2, M4.1, M4.2 (2026-10-19 移除對 M5.1 的依賴;M5.4 / M5.5 改為讀取 `role_implicit_states`)
 **Research**:`[R02: 非監督式管線 §全章]` `[R01: POMDP+BKT §動態追蹤]` `[R06: 應對姿態 §4.2]`
 **Risks**:RISK-03 (焦慮鏡像), RISK-06 (跨角色洩漏), RISK-09 (Gacha 推播門禁)
 
@@ -688,13 +735,15 @@
 
 **子模組**:無 (核心為排序演算法)
 
-**Deps**:M4.1, M5.3
+**Deps**:M4.1 (2026-10-19 起併入原 M5.3 Graph 層 ARPM 職責)
 **Research**:`[R03: ARPM §2]`
 **Risks**:RISK-02 (與 Echo Mode 的衝突)
 
 ---
 
-### M4.10 NSVIF 神經符號驗證 + D-ALP `[進階]`
+### ~~M4.10 NSVIF 神經符號驗證 + D-ALP~~ `[退役]`
+
+> 2026-10-19 併入新 **M5.3 符號驗證器**,以下為歷史紀錄。
 
 **Purpose**:論述加權溯因邏輯,確保心理剖繪有客觀事實支撐,防範心理幻覺。
 
@@ -724,20 +773,26 @@
 
 ---
 
-### M4.12 隱藏成就驗證引擎 `[進階]`
+### M4.12 隱藏成就驗證引擎 (Hidden Achievement Verification Engine) `[進階]` `[已實作]`
 
-**Purpose**:背景對話驗證使用者是否主動探索高階概念,觸發無預警解鎖。
+**Purpose**:背景無感驗證使用者自主探索、元認知重構、生活恢復與跨領域融通，透過心流微斷點觸發無預警驚喜解鎖，嚴格隔離未解鎖成就以杜絕 FOMO。
+
+**SPEC**:[docs/modules/M4_12_hidden_achievement_SPEC.md](./modules/M4_12_hidden_achievement_SPEC.md)
 
 **子模組**:
 
 | 編號 | 職責 |
 | ---- | ---- |
-| M4.12.1 | 主動探索特徵捕捉網:背景對話驗證,監聽是否主動探索高階概念 |
-| M4.12.2 | 無預警 WebSocket 解鎖廣播 |
+| M4.12.1 | 主動探索特徵捕捉網:快慢雙軌混合架構 (快軌正則 <100ms + 慢軌本地 Gemma 語意深度分析與超時佇列) |
+| M4.12.2 | 心流感知微斷點推播與 WebSocket 廣播:整合 M1.2 門禁與開機單上限 (Single Cap) 補發 |
+| M4.12.3 | 零洩漏狀態隔離:SQL 層與 API 序列化層強制過濾未達成隱藏成就 (M3.11.3 鐵律) |
+| M4.12.4 | 四大核心成長原型與 AI 個性化金句合成 (好奇探險家、心靈煉金術士、微光漫遊者、通識織網者) |
+| M4.12.5 | ACID 交易寫入、XP 發放稽核與 60 秒滑動視窗防刷 (整合 M6.5 與 M0.4) |
 
-**Deps**:M4.6, M3.11
-**Research**:`[R01: 動態邊界]`
-**Risks**:無
+**Deps**:M1.2, M2.2, M3.11, M6.5, M0.4
+**Criteria**:快軌特徵掃描 <100ms;未解鎖隱藏成就 0% 洩漏至 API/DOM;心流深層工作時零通知干擾;成就終身限解鎖 1 次並具備 ACID 交易保證。
+**Research**:`[R01: 動態邊界]` `[R08: Defer-to-Breakpoint §二]`
+**Risks**:RISK-04 (心流感知微斷點門禁)
 
 ---
 
@@ -761,44 +816,131 @@
 
 ---
 
-## 🕸️ M5 深層認知圖譜層 (GraphRAG Pipeline) `[進階]`
+## 🧊 M5 薩提爾冰山理解與轉化層 (Iceberg Understanding & Transformation) `[進階]`
 
-> 全章皆屬 [進階],GraphRAG 屬對話深度增強,非 MVP 必要。
+> **2026-10-19 重編** (使用者拍板,見 `docs/M5_ICEBERG_REDESIGN.md`)。原「雲端 Neo4j / DGNN / Hawkes」設計退役,**圖模型保留**:冰山以本地 SQLite 邊表儲存、networkx 做記憶體圖分析;全章資料皆為 L1,只存在本地。
+> 動工前提:`docs/MVP_CLOSURE_REPORT.md` 存在 (Q4)。本章全數移除時,MVP 必須照常運作。
+> 資料流:證據 (M5.2) → 假設 (M5.1) ⇄ 驗證 (M5.3) → 階段追蹤 (M5.4) → 介入規劃 (M5.5) → 指令編譯 (M5.6) → 呈現通道 (M4.2 / M1.2 / M3.3 / M3.12 / M3.13)。
 
-### M5.1 薩提爾圖譜寫入器 (Cypher Generator) `[進階]`
+### M5.1 冰山假設庫 (Iceberg Hypothesis Store) `[進階]`
 
-**Purpose**:Gemini 將日誌轉化為 Behavior / Feeling / Yearning 節點寫入 Neo4j。
+**Purpose**:以本地 SQLite 保存八層冰山假設、層間因果邊、證據與主題,並執行信心更新與衰減。
 
-**子模組**:無
+**子模組**:
 
-**Deps**:M4.6, M6
-**Criteria**:節點與邊 schema 通過 Cypher validator;能還原原始日誌語意。
-**Research**:`[R04: 冰山本體論化 §冰山七大節點]` `[R06: 應對姿態 §4.1]`
-**Risks**:RISK-05 (意圖向量精度)
+| 編號 | 職責 |
+| ---- | ---- |
+| M5.1.1 | `m5_1_iceberg_hypotheses` / `_links` / `_evidence` / `_prompts` 與 `m5_settings` 綱要與存取層 |
+| M5.1.2 | log-odds 信心更新 + 每日衰減 + 層信心上限 |
+| M5.1.3 | 狀態機:candidate → working → established → softening → transformed / refuted / user_rejected |
+| M5.1.4 | 全量刪除與停用 (使用者控制) |
+| M5.1.5 | `IcebergGraph` 圖存取介面:角色子圖載入 (networkx)、祖先路徑、後代;上層模組唯一的圖入口 |
+
+**Deps**:M6.1 (本地 SQLite + Alembic local)
+**Criteria**:無上層鏈的 yearning/self 無法建立;self 無 user_stated 永不 established;全量刪除後 MVP 測試照常通過。
+**Research**:`[R20: Satir Model §個人冰山]` `[R04: 冰山 §冰山層次節點類型與結構化屬性定義]` `[R04: 心理幻覺 §心理幻覺的定義與生成機制]`
+**Risks**:RISK-05 (已於架構上消除), RISK-23
+**SPEC**:`docs/modules/M5_1_iceberg_hypothesis_store_SPEC.md`
 
 ---
 
-### M5.2 NSVIF 幻覺防禦引擎 `[進階]`
+### M5.2 證據萃取器與反應分類器 (Evidence Extractor & Reaction Classifier) `[進階]`
 
-**Purpose**:反溯因驗證器,對照 `raw_tracking_logs` 進行因果檢驗,丟棄不合邏輯邊緣。
+**Purpose**:把既有本地資料轉為冰山證據,並把使用者對介入的反應轉為證據。
 
-**子模組**:無
+**子模組**:
 
-**Deps**:M5.1, M0.4
-**Research**:`[R04: 反溯因驗證 §神經符號約束]`
-**Risks**:RISK-05 (必須走本地 raw_log 路徑)
+| 編號 | 職責 |
+| ---- | ---- |
+| M5.2.1 | 規則語言標記 (即時):五種應對姿態、歸因句型、期待句型、感受詞 (吸收原 M4.8.4) |
+| M5.2.2 | 本地 Gemma 每日合成:新假設候選、層間連結、強制競爭假設、主題形成 |
+| M5.2.3 | 反應分類器:7 種 reaction → 證據 (含 RISK-21 規則) |
+| M5.2.4 | 雲端反思讀取器:經 M6.4 API 讀取 `user_feeling` / `user_learned` / `mood_score` 轉本地證據 |
+
+**Deps**:M5.1, M2.2 (本地 Gemma), M6.1 (`chat_transcripts` / `raw_tracking_logs`), M6.4, M1.4, M4.2 (reactance 分數)
+**Research**:`[R06: 應對姿態 §4.2]` `[R06: 數位表型 §2.1]` `[R04: 反溯因 §反溯因推理的對抗性驗證]` `[R16: MI §Change Talk]`
+**Risks**:RISK-21, RISK-19
+**SPEC**:`docs/modules/M5_2_evidence_extractor_SPEC.md`
 
 ---
 
-### M5.3 ARPM 異質時序記憶治理 (Graph 層) `[進階]`
+### M5.3 符號驗證器 (Symbolic Verifier, NSVIF-lite) `[進階]`
 
-**Purpose**:雙時態檢索器,BM25 + 時序權重,分離靜態人設與動態經驗。
+**Purpose**:以確定性規則檢查每條假設的證據門檻、不跳層、競爭假設與來源可解析性,不合格者拒絕或降級。
 
 **子模組**:無
 
-**Deps**:M5.1, M4.9
-**Research**:`[R03: ARPM §2]` `[R04: 霍克斯過程 §時序激發]`
-**Risks**:無
+**Deps**:M5.1, M0.4 (`raw_tracking_logs`), M6.4 API
+**Research**:`[R04: D-ALP §神經符號約束滿足與 D-ALP 框架]` `[R04: 反溯因 §反溯因推理的對抗性驗證]`
+**Risks**:RISK-05, RISK-21
+**SPEC**:`docs/modules/M5_3_symbolic_verifier_SPEC.md`
+**備註**:合併原 M5.2 NSVIF 與原 M4.10。
+
+---
+
+### M5.4 轉化歷程追蹤 (Change Process Tracker) `[進階]`
+
+**Purpose**:為每個主題維護薩提爾變化階段,計算變化指標與每位專家的同盟分數。
+
+**子模組**:
+
+| 編號 | 職責 |
+| ---- | ---- |
+| M5.4.1 | `m5_4_themes` 階段狀態機 (現狀 / 外來元素 / 混亂 / 整合 / 練習 / 新現狀) |
+| M5.4.2 | 變化指標:一致性指數、姿態分布、觀點語言轉移、實驗完成率 |
+| M5.4.3 | `m5_4_alliance` 同盟分數 (取代靜態 `trust_level` 作為閘門) |
+| M5.4.4 | 核心渴望分析 (圖分析):找出同時驅動 ≥2 個主題的渴望,寫入 `m5_4_core_yearnings`,供 M5.5 排序 mode 5 |
+
+**Deps**:M5.1, M5.2, M6.4 API, M6.3 (`role_implicit_states`)
+**Research**:`[R20: Satir Model §變化歷程]` `[R17: WAI §Triad Dimensions]` `[R16: MI §Change Talk]`
+**Risks**:RISK-20
+**SPEC**:`docs/modules/M5_4_change_process_tracker_SPEC.md`
+
+---
+
+### M5.5 介入規劃器 (Move Planner) `[進階]`
+
+**Purpose**:依守門規則與評分,為每一輪 / 每個通道選出至多一個 move (12 種作用方式之一)。
+
+**子模組**:
+
+| 編號 | 職責 |
+| ---- | ---- |
+| M5.5.1 | Move catalog (12 mode × 每 mode ≥2 條目) |
+| M5.5.2 | 守門:全域硬閘、碰撞類閘、碰撞後承接、主動通道斷點閘 |
+| M5.5.3 | 評分選擇 (info_gain × readiness + phase_fit − fatigue) |
+| M5.5.4 | 小實驗生命週期 (`m5_5_experiments`) 與遙測判定式 (吸收原 M1.5 負向信念觸發) |
+| M5.5.5 | `presentation_policy()` 呈現政策旗標 |
+
+**Deps**:M5.1, M5.4, M1.2 (斷點), M4.2 (echo_mode 結果), M1.4 / M0.4 (實驗判定)
+**Research**:`[R20: Satir Model §變化歷程]` `[R16: MI §OARS]` `[R21: 矯正性情緒經驗 §核心概念]` `[R22: 外化 §外化對話]` `[R23: 行為實驗 §實驗設計]` `[R24: 改變階段 §階段定義]` `[R25: 生成效應 §實驗結果]` `[R26: 示範學習 §觀察學習]` `[R08: §二 任務斷點打斷管理]` `[R09: 病態使用 §3.3]`
+**Risks**:RISK-20, RISK-22, RISK-23, RISK-04, RISK-09
+**SPEC**:`docs/modules/M5_5_move_planner_SPEC.md`
+
+---
+
+### M5.6 指令編譯器與洩漏閘 (Directive Compiler & Leak Gate) `[進階]`
+
+**Purpose**:把選中的 move 編譯為不含任何假設內容的專家行為指令,並在離開本層前通過洩漏閘。
+
+**子模組**:
+
+| 編號 | 職責 |
+| ---- | ---- |
+| M5.6.1 | `IcebergDirective` 編譯與 `[這一輪的陪伴方式]` 區塊 |
+| M5.6.2 | 洩漏閘 (術語 / 假設 n-gram / 使用者狀態描述 / 跨角色 quote) |
+| M5.6.3 | M4.2 LangGraph `iceberg_move` 節點與 BDI / MI 對接 |
+
+**Deps**:M5.5, M4.2, M2.3 (`eguard.mask_pii`)
+**Research**:`[R07: POST §4.3]` `[R03: Echo Mode §3.2]` `[R16: MI §OARS]`
+**Risks**:RISK-19, RISK-03, RISK-06, RISK-08
+**SPEC**:`docs/modules/M5_6_directive_compiler_SPEC.md`
+
+---
+
+### ~~原 M5.3 ARPM 異質時序記憶治理 (Graph 層)~~ 退役
+
+職責併入 M4.9。原 M5.1 Cypher Writer、原 M5.2 NSVIF 由上方新 M5.1 / M5.3 取代。
 
 ---
 
@@ -938,12 +1080,14 @@
 | M0 基礎 | 4 | 0 | 7 |
 | M1 感知 | 4 | 2 | 14 |
 | M2 邊緣 | 3 | 3 | 13 |
-| M3 UI | 6 | 5 | 38 |
-| M4 邏輯 | 7 | 6 | 31 |
-| M5 圖譜 | 0 | 3 | 0 |
+| M3 UI | 6 | 7 | 38 |
+| M4 邏輯 | 6 | 6 | 31 |
+| M5 冰山 | 0 | 6 | 0 |
 | M6 資料庫 | 5 | 1 | 0 |
 | M7 素材 | 0 | 1 | 2 |
-| **合計** | **29** | **21** | **105** |
+| **合計** | **28** | **26** | **105** |
+
+> 2026-10-19 更新 (MVP_CLOSURE_REPORT W5):依本檔各 `### Mx.y` 標題標籤重新計數,與 `06_implementation_phases.md` 一致 —— M4.7 移出 MVP (MVP 29 → 28,M4 進階含 M4.7);M3 進階含新增的 M3.12 / M3.13;M5 依重新設計為 M5.1–M5.6。「子模組總數」欄未重算 (M3 / M5 今日新增內容待使用者審閱後再統計)。
 
 ## 如何使用此文件
 

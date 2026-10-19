@@ -1,0 +1,158 @@
+openapi: 3.0.3
+info:
+  title: M4.12 隱藏成就驗證引擎 API 合約
+  description: 提供全域成就查詢（嚴格零洩漏隔離）與手動確認端點，以及測試/補發管理端點。
+  version: 1.0.0
+paths:
+  /api/achievements:
+    get:
+      summary: 取得使用者已解鎖之成就總覽 (嚴格零洩漏)
+      description: |
+        查詢當前使用者的成就清單。SQL 與序列化層保證「未解鎖之隱藏成就 0% 回傳」。
+        若有在離線或斷線期間解鎖且尚未展示過彈窗的成就，將被標註 is_new = true。
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "user_default"
+        - name: role_id
+          in: query
+          required: false
+          description: 可選角色過濾（若未提供則回傳全域所有解鎖成就）
+          schema:
+            type: string
+            example: "role_csie"
+      responses:
+        '200':
+          description: 成功取得成就清單
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AchievementWallResponse'
+        '500':
+          description: 伺服器內部錯誤
+
+  /api/achievements/ack:
+    post:
+      summary: 確認已接收並關閉驚喜彈窗
+      description: 客戶端在 SurpriseModal 關閉或標記為已讀時呼叫，將 is_acknowledged 更新為 true。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+                - achievement_ids
+              properties:
+                user_id:
+                  type: string
+                achievement_ids:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: 成功更新確認狀態
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  acknowledged_count:
+                    type: integer
+
+  /api/m4_12/queue/status:
+    get:
+      summary: 查詢離線特徵佐證暫存佇列狀態 (可觀測性)
+      description: 供系統診斷本機 Gemma 離線佇列積壓情況。
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending_count:
+                    type: integer
+                  processing_count:
+                    type: integer
+                  failed_count:
+                    type: integer
+
+components:
+  schemas:
+    UnlockedAchievementItem:
+      type: object
+      required:
+        - id
+        - archetype
+        - name
+        - description
+        - flavor_text
+        - rarity
+        - exp_reward
+        - badge_icon_url
+        - unlocked_at
+        - is_new
+      properties:
+        id:
+          type: string
+          example: "ha_curious_cartographer_01"
+        archetype:
+          type: string
+          example: "curiosity"
+        name:
+          type: string
+          example: "本質探求者"
+        description:
+          type: string
+          example: "在無需外力催促的情境下，主動追問底層原理達五層以上。"
+        flavor_text:
+          type: string
+          example: "「你所觸碰的不是表象，而是深邃的知識核心。」"
+        rarity:
+          type: string
+          enum: [rare, epic, legendary]
+          example: "rare"
+        exp_reward:
+          type: integer
+          example: 100
+        badge_icon_url:
+          type: string
+          example: "/assets/badges/cartographer.svg"
+        origin_role_id:
+          type: string
+          nullable: true
+          example: "role_csie"
+        unlocked_at:
+          type: string
+          format: date-time
+        is_new:
+          type: boolean
+          example: true
+        context_summary:
+          type: string
+          nullable: true
+          example: "於微積分專案對話中，自主引出泛函分析的概念討論。"
+
+    AchievementWallResponse:
+      type: object
+      required:
+        - user_id
+        - total_unlocked_count
+        - items
+      properties:
+        user_id:
+          type: string
+        total_unlocked_count:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/UnlockedAchievementItem'

@@ -80,6 +80,11 @@ class PersonaCard:
     stances: list[dict] = field(default_factory=list)
     # [{"topic": "...", "position": "...", "intensity": "firm|mild"}]
 
+    # [R05][R12] Per-persona few-shot example exchanges
+    # Generated at persona creation time to ground the LLM's output style
+    example_exchanges: list[dict] = field(default_factory=list)
+    # [{"context": "user_anxious", "user": "...", "assistant": ["...", "..."]}]
+
 
 def validate_persona_card(card: PersonaCard) -> list[str]:
     """
@@ -164,117 +169,135 @@ def critic_check(card: PersonaCard) -> tuple[bool, list[str]]:
 
 def compile_to_prompt(card: PersonaCard) -> str:
     """
-    [R12][R13][R18][R05] Compile PersonaCard v2 into a personality_prompt string.
+    [R12][R13][R18][R05] 將 PersonaCard v2 編譯為繁體中文人設提示詞。
 
-    This is the single source of truth compiler: all system prompt persona
-    sections derive from this function, not from raw prose.
+    全中文輸出，讓 LLM 從人設描述開始就在中文語境思考，
+    避免英文→中文的語境切換導致語感斷裂。
     """
     sections: list[str] = []
 
-    # --- Identity ---
+    # --- 身份 ---
     identity = card.identity
-    name = identity.get("name", "Expert")
+    name = identity.get("name", "專家")
     birth_year = identity.get("birth_year", "")
     education = identity.get("education", "")
     career = identity.get("career", "")
 
-    id_line = f"You are {name}"
+    id_line = f"你是{name}"
     if birth_year:
-        id_line += f", born in {birth_year}"
+        id_line += f"，{birth_year} 年生"
     if education:
-        id_line += f", {education}"
+        id_line += f"，{education}"
     if career:
-        id_line += f", {career}"
-    id_line += "."
+        id_line += f"，{career}"
+    id_line += "。"
     sections.append(id_line)
 
-    # --- [R13] Big Five personality ---
+    # --- [R13] Big Five 性格 ---
     bf = card.big_five
     traits: list[str] = []
     if bf.get("O", 0.5) > 0.7:
-        traits.append("creative and open-minded")
+        traits.append("有創造力、思想開放")
     elif bf.get("O", 0.5) < 0.3:
-        traits.append("practical and conventional")
+        traits.append("務實、偏好傳統方法")
     if bf.get("C", 0.5) > 0.7:
-        traits.append("disciplined and organized")
+        traits.append("自律、有條理")
     if bf.get("E", 0.5) > 0.7:
-        traits.append("outgoing and energetic")
+        traits.append("外向、有活力")
     elif bf.get("E", 0.5) < 0.3:
-        traits.append("reserved and thoughtful")
+        traits.append("內斂、深思熟慮")
     if bf.get("A", 0.5) > 0.7:
-        traits.append("warm and cooperative")
+        traits.append("溫暖、善於合作")
     elif bf.get("A", 0.5) < 0.3:
-        traits.append("direct and challenging")
+        traits.append("直來直往、敢於挑戰")
     if bf.get("N", 0.5) > 0.7:
-        traits.append("emotionally sensitive")
+        traits.append("情感敏銳")
     elif bf.get("N", 0.5) < 0.3:
-        traits.append("emotionally stable and calm")
+        traits.append("情緒穩定、沉著")
     if traits:
-        sections.append("Personality: " + ", ".join(traits) + ".")
+        sections.append("你的性格：" + "、".join(traits) + "。")
 
-    # --- Core values ---
+    # --- 核心價值 ---
     if card.core_values:
-        sections.append("Core values: " + ", ".join(card.core_values[:5]) + ".")
+        sections.append("你最在意的事：" + "、".join(card.core_values[:5]) + "。")
 
-    # --- [R12] Formative episodes ---
+    # --- [R12] 塑造你的關鍵經歷 ---
     if card.formative_episodes:
         ep_lines = []
         for ep in card.formative_episodes[:3]:
             age = ep.get("age", "?")
             event = ep.get("event", "")
             impact = ep.get("impact", "")
-            ep_lines.append(f"  - At age {age}: {event}. Impact: {impact}")
-        sections.append("Key life experiences:\n" + "\n".join(ep_lines))
+            ep_lines.append(f"  - {age} 歲時：{event}。這件事讓你{impact}")
+        sections.append("塑造你的關鍵經歷：\n" + "\n".join(ep_lines))
 
-    # --- [R12] Knowledge boundary ---
+    # --- [R12] 知識邊界 ---
     kb = card.knowledge_boundary
     if kb.get("expert_in"):
-        sections.append("Expert domains: " + ", ".join(kb["expert_in"][:5]) + ".")
+        sections.append("你擅長的領域：" + "、".join(kb["expert_in"][:5]) + "。")
     if kb.get("ignorant_of"):
         sections.append(
-            "Outside your expertise: " + ", ".join(kb["ignorant_of"][:5]) + ". "
-            "If asked about these topics, honestly admit you don't know and suggest "
-            "the user consult a specialist."
+            "你不懂的領域：" + "、".join(kb["ignorant_of"][:5]) + "。"
+            "被問到這些時，坦白說你不清楚，建議對方找專門的人。"
         )
 
-    # --- [R18] Anti-sycophancy stances ---
+    # --- [R18] 個人立場（反談媽） ---
     if card.stances:
         stance_lines = []
         for s in card.stances[:4]:
             topic = s.get("topic", "")
             position = s.get("position", "")
             intensity = s.get("intensity", "firm")
-            stance_lines.append(f"  - {topic}: {position} (stance: {intensity})")
+            firmness = "堅定" if intensity == "firm" else "溫和但不退讓"
+            stance_lines.append(f"  - {topic}：{position}（{firmness}）")
         sections.append(
-            "Your professional stances (do NOT abandon when challenged):\n"
+            "你的個人立場（不因對方反對就改口）：\n"
             + "\n".join(stance_lines) + "\n"
-            "When the user's view conflicts with your stance, acknowledge their "
-            "reasoning, then gently but firmly maintain your position."
+            "對方跟你意見不同時，先承認他說的有道理的地方，再溫和堅持你的看法並給理由。"
         )
 
-    # --- [R05] Speech quirks ---
+    # --- [R05] 說話小習慣 ---
     if card.speech_profile.get("quirks"):
         sections.append(
-            "Speech quirks (use occasionally, NOT every message): "
-            + ", ".join(card.speech_profile["quirks"][:3]) + "."
+            "你說話的小習慣（偶爾出現就好，不要每句都用）：" +
+            "、".join(card.speech_profile["quirks"][:3]) + "。"
         )
     catchphrase = card.speech_profile.get("口頭禪") or card.speech_profile.get("catchphrase")
     if catchphrase:
         sections.append(
-            f'You have a catchphrase "{catchphrase}", but only use it occasionally '
-            "when it truly fits — do not repeat it every time."
+            f"你有句口頭禪「{catchphrase}」，但只在真的很貼切時才用，不要每次都說。"
         )
     if card.speech_profile.get("taboos"):
         sections.append(
-            "Never say: " + ", ".join(card.speech_profile["taboos"][:3]) + "."
+            "絕對不說這些話：" + "、".join(card.speech_profile["taboos"][:3]) + "。"
         )
 
-    # --- [R05 §跨越恐怖谷] Sentence rhythm (texting-like, human pacing) ---
+    # --- [R05 §跨越恐怖谷] 說話節奏 ---
     sentence_length = card.speech_profile.get("sentence_length", "short")
     if sentence_length == "short":
         sections.append(
-            "Speech rhythm: you text like a real person — short sentences, "
-            "casual, one idea at a time. Do not info-dump your whole background at once."
+            "你說話像在傳訊息：短句、口語、一次講一件事。"
+            "不要一口氣把所有背景和學經歷交代完。"
+        )
+
+    # --- [R12] Per-persona few-shot 範例對話 ---
+    example_exchanges = card.speech_profile.get("example_exchanges")
+    if not example_exchanges and hasattr(card, "example_exchanges"):
+        example_exchanges = card.example_exchanges
+    if example_exchanges:
+        ex_lines = []
+        for ex in example_exchanges[:3]:
+            user_msg = ex.get("user", "")
+            assistant_msgs = ex.get("assistant", [])
+            if isinstance(assistant_msgs, str):
+                assistant_msgs = [assistant_msgs]
+            ex_lines.append(f"  使用者：{user_msg}")
+            for a_msg in assistant_msgs:
+                ex_lines.append(f"  你：{a_msg}")
+            ex_lines.append("")
+        sections.append(
+            "【語氣參考 — 模仿這個節奏和長度，不要照抄內容】\n" +
+            "\n".join(ex_lines).rstrip()
         )
 
     return "\n\n".join(sections)
@@ -290,6 +313,7 @@ def persona_card_from_dict(data: dict) -> PersonaCard:
         formative_episodes=data.get("formative_episodes", []),
         knowledge_boundary=data.get("knowledge_boundary", {}),
         stances=data.get("stances", []),
+        example_exchanges=data.get("example_exchanges", []),
     )
 """
 """

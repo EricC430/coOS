@@ -1,0 +1,106 @@
+<svg viewBox="0 0 1200 1697" xmlns="http://www.w3.org/2000/svg">
+  <title>coOS — poster</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#271A12"/>
+      <stop offset="55%" stop-color="#170F0A"/>
+      <stop offset="100%" stop-color="#0C0805"/>
+    </linearGradient>
+    <radialGradient id="glowTop" cx="50%" cy="14%" r="30%">
+      <stop offset="0%" stop-color="#F4A261" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#F4A261" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="50%" cy="50%" r="44%">
+      <stop offset="0%" stop-color="#F4A261" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#F4A261" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="dial" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F3E4CC"/>
+      <stop offset="100%" stop-color="#E3C99E"/>
+    </linearGradient>
+    <linearGradient id="needleN" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F2A73D"/>
+      <stop offset="100%" stop-color="#D9722C"/>
+    </linearGradient>
+    <symbol id="mark" viewBox="0 0 1024 1024">
+      <rect x="0" y="0" width="1024" height="1024" rx="192" fill="url(#bg)"/>
+      <circle cx="512" cy="512" r="366" fill="#1C120B"/>
+      <circle cx="512" cy="512" r="316" fill="url(#dial)"/>
+      <circle cx="512" cy="512" r="366" fill="none" stroke="#D9722C" stroke-width="10"/>
+      <path d="M 512 118 L 546 182 L 478 182 Z" fill="#F2A73D"/>
+      <g fill="#F3E4CC">
+        <rect x="492" y="838" width="40" height="56" rx="8"/>
+        <rect x="118" y="492" width="56" height="40" rx="8"/>
+        <rect x="850" y="492" width="56" height="40" rx="8"/>
+      </g>
+      <path d="M 512 258 L 610 512 L 512 512 Z" fill="url(#needleN)"/>
+      <path d="M 512 258 L 414 512 L 512 512 Z" fill="#9C5A22"/>
+      <path d="M 512 766 L 610 512 L 512 512 Z" fill="#3A2A1C"/>
+      <path d="M 512 766 L 414 512 L 512 512 Z" fill="#5C4530"/>
+      <circle cx="512" cy="512" r="34" fill="#1C120B"/>
+      <circle cx="512" cy="512" r="20" fill="#F2A73D"/>
+    </symbol>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="1697" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1200" height="600" fill="url(#glowTop)"/>
+
+  <!-- header -->
+  <use href="#mark" x="490" y="90" width="220" height="220"/>
+  <text x="600" y="410" text-anchor="middle" font-family="Zilla Slab, Georgia, serif" font-weight="700" font-size="132" fill="#F4E9DD">coOS</text>
+  <text x="600" y="458" text-anchor="middle" font-family="IBM Plex Sans, Arial, sans-serif" font-size="30" fill="#C9AE93">多智能體 AI × 遊戲化 × 薩提爾冰山心理模型</text>
+  <text x="600" y="500" text-anchor="middle" font-family="IBM Plex Mono, Consolas, monospace" font-weight="500" font-size="18" letter-spacing="3" fill="#F4A261" opacity="0.9">PRIVACY-FIRST · MULTI-AGENT · YOUR OWN COMPASS</text>
+
+  <rect x="0" y="558" width="1200" height="4" fill="#4A3323"/>
+
+  <!-- journey route: a vertical way-line connecting the four architecture layers -->
+  <line x1="122" y1="640" x2="122" y2="1290" stroke="#4A3323" stroke-width="4"/>
+
+  <g font-family="IBM Plex Mono, Consolas, monospace">
+    <!-- 01 -->
+    <circle cx="122" cy="656" r="30" fill="#F4A261"/>
+    <text x="122" y="665" text-anchor="middle" font-weight="700" font-size="22" fill="#241811">01</text>
+    <text x="172" y="650" font-family="Zilla Slab, Georgia, serif" font-weight="600" font-size="30" fill="#F4E9DD">端側感知與介面層</text>
+    <text x="172" y="678" font-size="18" fill="#FCE29A">Tauri + React</text>
+    <text x="172" y="704" font-family="IBM Plex Sans, Arial, sans-serif" font-size="18" fill="#C9AE93">收集 + 展示</text>
+
+    <!-- 02 -->
+    <circle cx="122" cy="848" r="30" fill="#F4A261" opacity="0.85"/>
+    <text x="122" y="857" text-anchor="middle" font-weight="700" font-size="22" fill="#241811">02</text>
+    <text x="172" y="842" font-family="Zilla Slab, Georgia, serif" font-weight="600" font-size="30" fill="#F4E9DD">邊緣推論與隱私層</text>
+    <text x="172" y="870" font-size="18" fill="#FCE29A">ai.local · Gemma 4 E4B</text>
+    <text x="172" y="896" font-family="IBM Plex Sans, Arial, sans-serif" font-size="18" fill="#C9AE93">壓縮為意圖向量，此後絕無明文</text>
+
+    <!-- 03 -->
+    <circle cx="122" cy="1040" r="30" fill="#F4A261" opacity="0.7"/>
+    <text x="122" y="1049" text-anchor="middle" font-weight="700" font-size="22" fill="#241811">03</text>
+    <text x="172" y="1034" font-family="Zilla Slab, Georgia, serif" font-weight="600" font-size="30" fill="#F4E9DD">混合式多智能體層</text>
+    <text x="172" y="1062" font-size="18" fill="#FCE29A">FastAPI + LangGraph</text>
+    <text x="172" y="1088" font-family="IBM Plex Sans, Arial, sans-serif" font-size="18" fill="#C9AE93">業務邏輯 + Persona 對話 + 排程</text>
+
+    <!-- 04 -->
+    <circle cx="122" cy="1232" r="30" fill="#F4A261" opacity="0.55"/>
+    <text x="122" y="1241" text-anchor="middle" font-weight="700" font-size="22" fill="#241811">04</text>
+    <text x="172" y="1226" font-family="Zilla Slab, Georgia, serif" font-weight="600" font-size="30" fill="#F4E9DD">深層認知與動態圖譜層</text>
+    <text x="172" y="1254" font-size="18" fill="#FCE29A">Neo4j GraphRAG</text>
+    <text x="172" y="1280" font-family="IBM Plex Sans, Arial, sans-serif" font-size="18" fill="#C9AE93">薩提爾冰山圖譜 + NSVIF 幻覺防禦</text>
+  </g>
+
+  <!-- footer: six pillars legend -->
+  <line x1="90" y1="1362" x2="1110" y2="1362" stroke="#4A3323"/>
+  <text x="90" y="1404" font-family="IBM Plex Mono, Consolas, monospace" font-weight="700" font-size="20" letter-spacing="2" fill="#F4A261">六大支柱 · SIX PILLARS</text>
+
+  <g font-family="IBM Plex Sans, Arial, sans-serif" font-size="20" fill="#F4E9DD">
+    <text x="108" y="1450"><tspan fill="#F4A261">— </tspan>1. 半自動捕捉與微摩擦力反思</text>
+    <text x="108" y="1490"><tspan fill="#F4A261">— </tspan>2. 視覺化成就與多巴胺刺激</text>
+    <text x="108" y="1530"><tspan fill="#F4A261">— </tspan>3. 身分邊界</text>
+    <text x="648" y="1450"><tspan fill="#F4A261">— </tspan>4. 擬真社會承諾與同理心制約</text>
+    <text x="648" y="1490"><tspan fill="#F4A261">— </tspan>5. 社會情懷與同儕互相依賴</text>
+    <text x="648" y="1530"><tspan fill="#F4A261">— </tspan>6. 極致隱私的邊緣-雲端協同</text>
+  </g>
+
+  <text x="600" y="1600" text-anchor="middle" font-family="Zilla Slab, Georgia, serif" font-size="26" fill="#F4E9DD">傳統工具依賴意志力，失敗模式是動力耗竭；</text>
+  <text x="600" y="1636" text-anchor="middle" font-family="Zilla Slab, Georgia, serif" font-size="26" fill="#F4E9DD">coOS 的失敗模式是設計缺陷 —— 而設計缺陷，可以修正。</text>
+
+  <text x="1110" y="1672" text-anchor="end" font-family="IBM Plex Mono, Consolas, monospace" font-size="16" fill="#8A6B4E" opacity="0.8">docs/01_product_vision.md · M0–M6 · MVP</text>
+</svg>

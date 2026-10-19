@@ -1,0 +1,205 @@
+openapi: 3.0.3
+info:
+  title: M4.11 Dynamic ZPD Gacha Pipeline API
+  description: Dynamic ZPD Task Pool Generation, BKT Mastery Tracking, and Restorative Serendipity API.
+  version: 1.0.0
+paths:
+  /api/m4_11/draw_challenge:
+    post:
+      summary: 抽取符合 ZPD 邊界之動態挑戰任務
+      description: 結合對話脈絡、BKT 掌握度與認知負荷，生成或抽取一個 ZPD 延伸挑戰或生活恢復任務。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - role_id
+              properties:
+                user_id:
+                  type: string
+                  default: default_user
+                role_id:
+                  type: string
+                  example: role_csie
+                force_fallback:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: 成功抽取到挑戰任務
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ZPDChallenge'
+        '429':
+          description: 抽卡達到防沉迷滑動視窗冷卻限制 (1 小時內 >= 5 次)
+        '500':
+          description: 內部服務例外
+
+  /api/m4_11/active_challenge:
+    get:
+      summary: 取得當前角色進行中的 ZPD 挑戰
+      parameters:
+        - name: role_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 回傳當前進行中的挑戰物件，若無則為 null
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active_challenge:
+                    anyOf:
+                      - $ref: '#/components/schemas/ZPDChallenge'
+                      - type: 'null'
+
+  /api/m4_11/accept_challenge:
+    post:
+      summary: 接受並啟用抽取的挑戰任務 (單一槽位)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - challenge_id
+              properties:
+                challenge_id:
+                  type: string
+                replace_existing:
+                  type: boolean
+                  default: true
+      responses:
+        '200':
+          description: 接受成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  active_challenge:
+                    $ref: '#/components/schemas/ZPDChallenge'
+
+  /api/m4_11/complete_challenge:
+    post:
+      summary: 提交自我申報反思並結算 XP (經 M6.5 Gatekeeper)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - challenge_id
+                - user_feeling
+                - user_action_plan
+              properties:
+                challenge_id:
+                  type: string
+                user_feeling:
+                  type: string
+                  description: 完成時的內在體會與情緒
+                user_action_plan:
+                  type: string
+                  description: 下一步具體行動
+                actual_minutes:
+                  type: integer
+      responses:
+        '200':
+          description: 挑戰完成與 XP 派發成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  awarded_xp:
+                    type: integer
+                  transaction_id:
+                    type: string
+                  new_p_mastery:
+                    type: number
+
+components:
+  schemas:
+    ZPDChallenge:
+      type: object
+      required:
+        - id
+        - role_id
+        - title
+        - description
+        - task_type
+        - is_real_world
+        - difficulty
+        - skill_domain
+        - estimated_minutes
+        - xp_reward
+        - status
+        - zpd_zone
+        - scaffolding_hints
+        - expires_at
+      properties:
+        id:
+          type: string
+          example: zpd_8f3c7a10-2b1a
+        role_id:
+          type: string
+          example: role_csie
+        title:
+          type: string
+          example: "實作 Docker 自訂 Bridge 網路並隔離容器"
+        description:
+          type: string
+          example: "建立一個自訂 bridge 網路並將兩個容器掛載，驗證 ping 容器名稱能正確解析。"
+        task_type:
+          type: string
+          enum: [skill_stretch, restorative_serendipity]
+          example: skill_stretch
+        is_real_world:
+          type: boolean
+          example: false
+        difficulty:
+          type: string
+          enum: [comfort, just-manageable, stretch, restorative]
+          example: just-manageable
+        skill_domain:
+          type: string
+          example: infra
+        estimated_minutes:
+          type: integer
+          example: 25
+        xp_reward:
+          type: integer
+          example: 45
+        status:
+          type: string
+          enum: [generated, accepted, completed, expired, abandoned]
+          example: generated
+        zpd_zone:
+          type: string
+          example: core_zpd
+        scaffolding_hints:
+          type: array
+          items:
+            type: string
+          example: ["使用 `docker network create my-bridge`", "透過 `--network` 參數指定網路"]
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          example: "2026-10-20T04:00:00Z"

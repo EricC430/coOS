@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "coos-desktop",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@coos/desktop", "dev"],
+      "port": 1420
+    }
+  ]
+}

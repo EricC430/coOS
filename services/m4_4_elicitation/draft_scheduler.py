@@ -20,10 +20,8 @@ from datetime import date, timedelta
 from typing import Any
 
 from .gibbs_template import (
-    DaySignals,
-    GibbsCard,
-    build_gibbs_cards,
     build_gibbs_analysis,
+    build_gibbs_cards,
     friendly_app_name,
 )
 from .role_inference import RoleCandidate, build_candidates, infer_role
@@ -65,8 +63,11 @@ def _get_gemini_key() -> str:
 
 
 def _get_ai_local_host() -> str:
+    # config exposes get_settings(), not a module-level `settings`; the old
+    # `from config import settings` always raised and fell back to the default.
     try:
-        from config import settings
+        from config import get_settings
+        settings = get_settings()
         return getattr(settings, "ai_local_host", "http://192.168.0.79:11434") or "http://192.168.0.79:11434"
     except Exception:
         return "http://192.168.0.79:11434"
@@ -74,7 +75,8 @@ def _get_ai_local_host() -> str:
 
 def _get_gemma_model() -> str:
     try:
-        from config import settings
+        from config import get_settings
+        settings = get_settings()
         return getattr(settings, "gemma_model", "gemma-4-e4b-it-4bit") or "gemma-4-e4b-it-4bit"
     except Exception:
         return "gemma-4-e4b-it-4bit"
@@ -227,8 +229,9 @@ async def _compress_undigested_threads(
     """
     try:
         from m2_2_gemma.chat_compressor import ChatCompressor
-        from config import settings as _cfg
-        model = getattr(_cfg, "gemma_model", "gemma-4-e4b-it-4bit")
+        # LOOP-01 (2026-10-19): `from config import settings` raised ImportError here,
+        # so this catch-all never ran and no chat_digest was ever produced by cron.
+        model = _get_gemma_model()
     except Exception as e:
         logger.warning("[M4.4/M2.2.2] ChatCompressor import failed (non-fatal): %s", e)
         return

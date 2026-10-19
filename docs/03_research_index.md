@@ -164,6 +164,8 @@ class EchoModeController:
 - 反溯因推理 (Counter-Abductive Reasoning)
 - 心理幻覺 (Psychological Hallucination) — 過度推論的具體形式
 
+> **2026-10-19 偏離紀錄 (使用者拍板 Q2,見 `M5_ICEBERG_REDESIGN.md` §13)**:雲端 Neo4j、DGNN、霍克斯過程不再落地;**圖模型保留**,冰山以本地 SQLite 邊表儲存,並以 networkx 做記憶體圖分析 (核心渴望、推理路徑,見設計稿 §4.6 / §6.3)。D-ALP 降級為 nucleus/satellite 證據權重,反溯因保留為「強制競爭假設 + 挫敗分數」。
+
 **主要供應模組**:
 
 | 模組 | 引用點 |
@@ -764,6 +766,202 @@ SELECT id, content FROM m4_2_persona_memories WHERE vec_distance_cosine(embeddin
 
 ---
 
+## R20 — The Satir Model (薩提爾模式原典)
+
+**全名**: Satir, V., Banmen, J., Gerber, J., & Gomori, M. (1991). *The Satir Model: Family Therapy and Beyond*. Science and Behavior Books.
+
+**核心技術詞彙**:
+
+- 個人冰山 (Personal Iceberg) — 行為、應對、感受、感受的感受、觀點、期待、渴望、自我
+- 五種應對姿態 (Placating / Blaming / Super-reasonable / Irrelevant / Congruent)
+- 變化歷程 (Change Process) — 現狀 → 外來元素 → 混亂 → 整合 → 練習 → 新現狀
+- 轉化而非消除 (Transformation, not elimination) — 應對姿態曾是生存資源
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M5.1 | 冰山八層 enum 的原典定義 (R04 的圖譜化版本以此為準) |
+| M5.4 | 主題的 Satir 變化階段狀態機 |
+| M5.5 | mode 2 碰撞 = 外來元素;mode 4 肯定姿態的正向用意 |
+
+**章節索引**:
+
+- §個人冰山 (冰山各層定義)
+- §應對姿態 (五種姿態與一致性)
+- §變化歷程 (六階段與混亂期的承接)
+
+**Claude Code 引用範例**:
+
+```python
+# [R20: Satir Model §變化歷程] 混亂期禁止新的碰撞,只允許承接 (mode 4/5/12)
+if theme.satir_phase == SatirPhase.CHAOS:
+    allowed_modes = {4, 5, 12}
+```
+
+---
+
+## R21 — 矯正性情緒經驗 (Corrective Emotional Experience)
+
+**全名**: Alexander, F., & French, T. M. (1946). *Psychoanalytic Therapy: Principles and Application*. Ronald Press.
+
+**核心技術詞彙**:
+
+- 矯正性情緒經驗 — 在新的關係中經歷與過往預期不同的回應
+- 關係作為介入 (Relationship as intervention)
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M5.5 | mode 5:在關係中直接滿足渴望,而非要求使用者先自我覺察 |
+
+**章節索引**:
+
+- §核心概念 (矯正性情緒經驗的定義)
+
+**Claude Code 引用範例**:
+
+```python
+# [R21: 矯正性情緒經驗 §核心概念] 渴望被肯定的主題:肯定努力與過程,不以結果為條件
+```
+
+---
+
+## R22 — 外化 (Externalization, 敘事治療)
+
+**全名**: White, M., & Epston, D. (1990). *Narrative Means to Therapeutic Ends*. W. W. Norton.
+
+**核心技術詞彙**:
+
+- 外化對話 (Externalizing conversations) — 「問題才是問題,人不是問題」
+- 共同命名 (Co-naming the problem)
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M5.5 | mode 8:與使用者共同為模式命名,之後以名字溝通 |
+
+**章節索引**:
+
+- §外化對話 (命名與分離人和問題)
+
+**Claude Code 引用範例**:
+
+```python
+# [R22: 外化 §外化對話] 名字必須由使用者同意或提出,系統不可單方面命名
+```
+
+---
+
+## R23 — 行為實驗 (Behavioural Experiments)
+
+**全名**: Bennett-Levy, J., Butler, G., Fennell, M., Hackmann, A., Mueller, M., & Westbrook, D. (2004). *Oxford Guide to Behavioural Experiments in Cognitive Therapy*. Oxford University Press.
+
+**核心技術詞彙**:
+
+- 行為實驗 — 以具體行動檢驗一個信念的預測
+- 預測 → 行動 → 觀察 → 反思 四步
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M5.5 / M3.13 | mode 9:小實驗提議與遙測判定 |
+
+**章節索引**:
+
+- §實驗設計 (預測、行動、觀察、反思)
+
+**Claude Code 引用範例**:
+
+```python
+# [R23: 行為實驗 §實驗設計] 結果出來後由使用者反思,系統只提供觀察到的事實
+```
+
+---
+
+## R24 — 改變階段模型 (Stages of Change)
+
+**全名**: Prochaska, J. O., & DiClemente, C. C. (1983). Stages and processes of self-change of smoking: Toward an integrative model of change. *Journal of Consulting and Clinical Psychology, 51*(3), 390–395.
+
+**核心技術詞彙**:
+
+- 懵懂期 / 沉思期 / 準備期 / 行動期 / 維持期
+- 準備度 (Readiness) 決定介入類型
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M5.5 | readiness 評分與 mode 12 策略性留白 |
+
+**章節索引**:
+
+- §階段定義 (五階段與對應介入)
+
+**Claude Code 引用範例**:
+
+```python
+# [R24: 改變階段 §階段定義] 尚無 change talk (懵懂期) → 不提實驗,只做 mode 1/4/5
+```
+
+---
+
+## R25 — 生成效應 (Generation Effect)
+
+**全名**: Slamecka, N. J., & Graf, P. (1978). The generation effect: Delineation of a phenomenon. *Journal of Experimental Psychology: Human Learning and Memory, 4*(6), 592–604.
+
+**核心技術詞彙**:
+
+- 生成效應 — 自己產生的內容比被動閱讀的內容記得更牢
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M5.5 | mode 7 回聲與 mode 10 鞏固:讓使用者自己說出洞察與變化 |
+
+**章節索引**:
+
+- §實驗結果 (自我生成 vs 閱讀的記憶差異)
+
+**Claude Code 引用範例**:
+
+```python
+# [R25: 生成效應 §實驗結果] 鞏固用問句讓使用者自述變化,不由系統宣告「你成長了」
+```
+
+---
+
+## R26 — 社會學習理論:示範 (Modeling)
+
+**全名**: Bandura, A. (1977). *Social Learning Theory*. Prentice Hall.
+
+**核心技術詞彙**:
+
+- 觀察學習 (Observational learning)
+- 示範者 (Model) 的可信度與相似性
+
+**主要供應模組**:
+
+| 模組 | 引用點 |
+| ---- | ------ |
+| M5.5 / M4.2 | mode 6:專家以自己的 `iceberg_story` 示範一致與脆弱 |
+
+**章節索引**:
+
+- §觀察學習 (注意、保持、再現、動機四歷程)
+
+**Claude Code 引用範例**:
+
+```python
+# [R26: 示範學習 §觀察學習] 示範故事必須與 persona card 一致 (ARPM 稽核),否則可信度崩潰
+```
+
+---
+
 ## 跨論文交叉引用速查
 
 
@@ -774,7 +972,8 @@ SELECT id, content FROM m4_2_persona_memories WHERE vec_distance_cosine(embeddin
 | 偵測使用者狀態 | R02 (HMM) | R01 (BKT), R06 (Coping) |
 | Persona 對話設計 | R03 (Echo Mode) | R05 (ToM), R09 (BDI) |
 | 隱私資料壓縮上雲 | R07 (POST/Eguard) | R06 (差分隱私) |
-| 圖譜建模 | R04 (DGNN) | R06 (薩提爾分層) |
+| 冰山推論 | R04 (心理幻覺/反溯因) | R06 (應對姿態), R20 (原典) |
+| 冰山介入 | R20 (變化歷程) | R16 (MI), R21–R26 |
 | 日報草稿 | R08 (草稿與核准) | R10 (語音記錄) |
 | ZPD 任務生成 | R01 (ZONE) | R02 (隱性狀態) |
 | 防止 Persona 漂移 | R03 (ARPM) | R04 (NSVIF) |

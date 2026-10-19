@@ -24,6 +24,7 @@ from typing import Any
 
 from .emotion import detect_emotion
 from .project_detector import detect_and_upsert_project
+from .topic_detector import TopicAnchorResult, detect_topic_anchor
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,8 @@ class ObserverResult:
     goal_established: dict | None = None
     session_intention: str | None = None
     emotion_detected: str | None = None  # [決策] 當下情緒標籤
+    # v2.0: Topic Anchor (intent-anchored descriptive labels)
+    topic_anchor: TopicAnchorResult | None = None
     role_id: str = ""
     timed_out: bool = False
     elapsed_seconds: float = 0.0
@@ -106,15 +109,28 @@ async def _do_extraction(
     """執行所有萃取步驟。慢/失敗的子步驟不應拖垮整體（由上層 timeout 守護）。"""
     result = ObserverResult(role_id=role_id)
 
-    # 1. 主題標籤偵測 + upsert (Regex -> LLM fallback -> Eguard -> 去重 -> SSE)
-    #    [測試回饋] 傳入當前活躍專案，相同則不重複標記
-    result.project_name = await detect_and_upsert_project(
-        user_msg, role_id=role_id, db=db, eguard=eguard, sse=sse, gemma=gemma,
-        current_active_project=current_active_project,
-        source="chat",
-        expert_name=expert_name,
-        thread_id=thread_id,
-    )
+    # 1a. [v2.0] Topic Anchor detection (intent-anchored descriptive labels)
+    try:
+        result.topic_anchor = await detect_topic_anchor(
+            user_msg, role_id=role_id, db=db, eguard=eguard, sse=sse, gemma=gemma,
+            current_topic_id=None,
+            thread_id=thread_id,
+        )
+        if result.topic_anchor:
+            result.project_name = result.topic_anchor.label
+    except Exception as e:
+        logger.debug("[M4.6] topic_anchor detection failed, falling back: %s", e)
+        result.topic_anchor = None
+
+    # 1b. Fallback to legacy project_detector when topic_anchor didn't produce a result
+    if not result.topic_anchor:
+        result.project_name = await detect_and_upsert_project(
+            user_msg, role_id=role_id, db=db, eguard=eguard, sse=sse, gemma=gemma,
+            current_active_project=current_active_project,
+            source="chat",
+            expert_name=expert_name,
+            thread_id=thread_id,
+        )
 
     # 2. 意圖萃取
     result.extracted_intent = _extract_intent(user_msg)

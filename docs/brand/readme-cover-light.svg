@@ -1,0 +1,65 @@
+<svg viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg">
+  <title>coOS — README cover (light)</title>
+  <defs>
+    <linearGradient id="bgDark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#271A12"/>
+      <stop offset="100%" stop-color="#0C0805"/>
+    </linearGradient>
+    <linearGradient id="dial" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F3E4CC"/>
+      <stop offset="100%" stop-color="#E3C99E"/>
+    </linearGradient>
+    <linearGradient id="needleN" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F2A73D"/>
+      <stop offset="100%" stop-color="#D9722C"/>
+    </linearGradient>
+    <symbol id="markLight" viewBox="0 0 1024 1024">
+      <rect x="0" y="0" width="1024" height="1024" rx="192" fill="url(#bgDark)"/>
+      <circle cx="512" cy="512" r="366" fill="#1C120B"/>
+      <circle cx="512" cy="512" r="316" fill="url(#dial)"/>
+      <circle cx="512" cy="512" r="366" fill="none" stroke="#D9722C" stroke-width="10"/>
+      <path d="M 512 118 L 546 182 L 478 182 Z" fill="#F2A73D"/>
+      <g fill="#F3E4CC">
+        <rect x="492" y="838" width="40" height="56" rx="8"/>
+        <rect x="118" y="492" width="56" height="40" rx="8"/>
+        <rect x="850" y="492" width="56" height="40" rx="8"/>
+      </g>
+      <path d="M 512 258 L 610 512 L 512 512 Z" fill="url(#needleN)"/>
+      <path d="M 512 258 L 414 512 L 512 512 Z" fill="#9C5A22"/>
+      <path d="M 512 766 L 610 512 L 512 512 Z" fill="#3A2A1C"/>
+      <path d="M 512 766 L 414 512 L 512 512 Z" fill="#5C4530"/>
+      <circle cx="512" cy="512" r="34" fill="#1C120B"/>
+      <circle cx="512" cy="512" r="20" fill="#F2A73D"/>
+    </symbol>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="640" fill="#F4ECE2"/>
+
+  <!-- surface -->
+  <use href="#markLight" x="64" y="40" width="140" height="140"/>
+  <text x="222" y="176" font-family="Zilla Slab, Georgia, serif" font-weight="700" font-size="92" fill="#241811">coOS</text>
+  <text x="226" y="216" font-family="IBM Plex Sans, Arial, sans-serif" font-weight="400" font-size="25" fill="#7A5C42">多智能體 AI × 遊戲化 × 薩提爾冰山心理模型</text>
+
+  <rect x="0" y="258" width="1280" height="4" fill="#D9C3A6"/>
+
+  <!-- route: four architecture layers as waypoints -->
+  <g font-family="IBM Plex Mono, Consolas, monospace" font-size="22" fill="#3B2A1B">
+    <path d="M 78 326 L 88 316 L 98 326 L 88 336 Z" fill="#C2614A"/>
+    <text x="116" y="334">端側感知與介面（Tauri + React）</text>
+    <text x="1216" y="334" text-anchor="end" fill="#9C7C5B" opacity="0.9">01</text>
+
+    <path d="M 78 399 L 88 389 L 98 399 L 88 409 Z" fill="#C2614A" opacity="0.85"/>
+    <text x="116" y="407">邊緣推論（ai.local · Gemma 4 E4B）</text>
+    <text x="1216" y="407" text-anchor="end" fill="#9C7C5B" opacity="0.9">02</text>
+
+    <path d="M 78 472 L 88 462 L 98 472 L 88 482 Z" fill="#C2614A" opacity="0.7"/>
+    <text x="116" y="480">混合式多智能體（FastAPI · LangGraph）</text>
+    <text x="1216" y="480" text-anchor="end" fill="#9C7C5B" opacity="0.9">03</text>
+
+    <path d="M 78 545 L 88 535 L 98 545 L 88 555 Z" fill="#C2614A" opacity="0.55"/>
+    <text x="116" y="553">深層認知與動態圖譜（Neo4j GraphRAG）</text>
+    <text x="1216" y="553" text-anchor="end" fill="#9C7C5B" opacity="0.9">04</text>
+  </g>
+
+  <text x="1216" y="608" text-anchor="end" font-family="IBM Plex Mono, Consolas, monospace" font-size="18" fill="#9C7C5B" opacity="0.9">M0–M6 · MVP</text>
+</svg>
