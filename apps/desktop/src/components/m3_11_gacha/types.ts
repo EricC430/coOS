@@ -93,10 +93,17 @@ export interface DrawResponse {
 export interface ZPDChallenge {
   id: string;
   title: string;
-  difficulty: "just-manageable" | "stretch";
+  difficulty: "comfort" | "just-manageable" | "stretch" | "restorative" | string;
   xp_reward: number;
   estimated_minutes: number;
   description: string;
+  task_type?: "skill_stretch" | "restorative_serendipity" | string;
+  is_real_world?: boolean;
+  skill_domain?: string;
+  status?: string;
+  zpd_zone?: string;
+  scaffolding_hints?: string[];
+  expires_at?: string;
 }
 
 export interface HiddenAchievementEvent {

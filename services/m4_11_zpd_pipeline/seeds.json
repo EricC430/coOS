@@ -1,0 +1,359 @@
+[
+  {
+    "id": "seed_tech_001",
+    "title": "實作 Docker 自訂 Bridge 網路並隔離容器",
+    "description": "建立一個自訂 bridge 網路並將兩個容器掛載，驗證 ping 容器名稱能正確解析。",
+    "task_type": "skill_stretch",
+    "is_real_world": false,
+    "difficulty": "just-manageable",
+    "skill_domain": "infra",
+    "estimated_minutes": 25,
+    "xp_reward": 45,
+    "zpd_zone": "core_zpd",
+    "scaffolding_hints": [
+      "使用 `docker network create my-bridge` 建立網路",
+      "透過 `--network my-bridge` 指定容器網路連線",
+      "使用 `ping <container_name>` 驗證內建 DNS 解析"
+    ]
+  },
+  {
+    "id": "seed_tech_002",
+    "title": "使用 Python asyncio 實作非同步重試裝飾器",
+    "description": "撰寫一個 async decorator，當被包裝的協程拋出特定例外時，以指數退避重試最多 3 次。",
+    "task_type": "skill_stretch",
+    "is_real_world": false,
+    "difficulty": "just-manageable",
+    "skill_domain": "backend",
+    "estimated_minutes": 30,
+    "xp_reward": 50,
+    "zpd_zone": "core_zpd",
+    "scaffolding_hints": [
+      "使用 `functools.wraps` 保留原始函式元資料",
+      "使用 `asyncio.sleep(base_delay * 2 ** attempt)` 進行退避延遲",
+      "捕獲指定 Exception 並在超出重試次數後重新拋出"
+    ]
+  },
+  {
+    "id": "seed_tech_003",
+    "title": "撰寫 SQLite EXPLAIN QUERY PLAN 分析慢查詢索引",
+    "description": "針對包含複合查詢的資料表執行 EXPLAIN QUERY PLAN，識別全表掃描並建立最適覆蓋索引。",
+    "task_type": "skill_stretch",
+    "is_real_world": false,
+    "difficulty": "comfort",
+    "skill_domain": "database",
+    "estimated_minutes": 15,
+    "xp_reward": 35,
+    "zpd_zone": "core_zpd",
+    "scaffolding_hints": [
+      "執行 `EXPLAIN QUERY PLAN SELECT ...` 觀察 SCAN vs SEARCH",
+      "為 WHERE 與 ORDER BY 共同涉及的欄位建立複合索引",
+      "再次執行確認輸出轉變為 USING INDEX"
+    ]
+  },
+  {
+    "id": "seed_tech_004",
+    "title": "在 Rust 中為自訂型別實作 Iterator Trait",
+    "description": "建立一個簡單的自訂集合或範圍結構體，並手動實作 Iterator trait 與 next() 方法。",
+    "task_type": "skill_stretch",
+    "is_real_world": false,
+    "difficulty": "stretch",
+    "skill_domain": "systems",
+    "estimated_minutes": 35,
+    "xp_reward": 65,
+    "zpd_zone": "upper_stretch",
+    "scaffolding_hints": [
+      "定義 `impl Iterator for MyCollection`",
+      "指定 `type Item = ...` 關聯型別",
+      "在 `next(&mut self) -> Option<Self::Item>` 中維護內部游標狀態"
+    ]
+  },
+  {
+    "id": "seed_tech_005",
+    "title": "實作前端 React 虛擬清單（Virtual Windowing）原型",
+    "description": "在不依賴第三方套件的情況下，根據滾動 offset 只渲染可視區域前後的 10 筆項目。",
+    "task_type": "skill_stretch",
+    "is_real_world": false,
+    "difficulty": "stretch",
+    "skill_domain": "frontend",
+    "estimated_minutes": 40,
+    "xp_reward": 70,
+    "zpd_zone": "upper_stretch",
+    "scaffolding_hints": [
+      "利用容器的 `scrollTop` 與固定項目高度 `itemHeight` 計算 `startIndex`",
+      "計算 `endIndex = startIndex + visibleCount`",
+      "透過 paddingTop / transform 補償未渲染項目的空白高度"
+    ]
+  },
+  {
+    "id": "seed_tech_006",
+    "title": "撰寫 GitHub Actions Workflow 執行自動化 Lint 與測試",
+    "description": "設定 `.github/workflows/ci.yml`，在 pull_request 觸發時自動運行 Python 虛擬環境與 pytest。",
+    "task_type": "skill_stretch",
+    "is_real_world": false,
+    "difficulty": "comfort",
+    "skill_domain": "devops",
+    "estimated_minutes": 20,
+    "xp_reward": 40,
+    "zpd_zone": "core_zpd",
+    "scaffolding_hints": [
+      "使用 `actions/checkout@v4` 與 `actions/setup-python@v5`",
+      "配置 `cache: 'pip'` 或 uv 快取以加速 CI 構建",
+      "執行 `pytest testing/` 並設定非零狀態碼中斷"
+    ]
+  },
+  {
+    "id": "seed_real_001",
+    "title": "脫離螢幕的 15 分鐘感官放空漫步",
+    "description": "放下手機與筆電，走出室外漫步 15 分鐘。刻意觀察 3 種自然界的顏色與 2 種平時忽略的環境聲音。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "restoration",
+    "estimated_minutes": 15,
+    "xp_reward": 40,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "請將手機留在桌上或切換至勿擾模式",
+      "注意力疲勞時，綠色植物與微風能啟動柔和專注（Soft Fascination）",
+      "回到位子上記錄下最讓你平靜的一個感官瞬間"
+    ]
+  },
+  {
+    "id": "seed_real_002",
+    "title": "為自己專注手沖一杯咖啡或沏一壺原葉茶",
+    "description": "暫停敲擊鍵盤，專注於水流、溫度與茶香的物理變化，完整體驗 10 分鐘的味覺沈澱儀式。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "restoration",
+    "estimated_minutes": 15,
+    "xp_reward": 35,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "專心觀察熱水注入時咖啡粉的悶蒸膨脹或茶葉展開過程",
+      "深深吸一口香氣，感受呼吸節奏自然放慢",
+      "品嚐第一口，覺察微苦之後的回甘感受"
+    ]
+  },
+  {
+    "id": "seed_real_003",
+    "title": "微探險：走一條從未走過的街角巷弄",
+    "description": "外出時刻意選擇平時從未拐進去的小巷或岔路，步行 15 分鐘，發現一家店面或一幢有趣的建築。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "exploration",
+    "estimated_minutes": 20,
+    "xp_reward": 45,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "不需要目的地，隨直覺選擇第一個岔路左轉或右轉",
+      "觀察沿途的招牌、盆栽或貓咪的生活痕跡",
+      "記下這條街給你帶來的驚喜氛圍"
+    ]
+  },
+  {
+    "id": "seed_real_004",
+    "title": "親手料理一道簡單的溫暖料理",
+    "description": "動手切菜、下鍋煎一顆蛋或煮一碗熱湯。透過雙手的觸感與烹飪的香氣重獲實體控制感。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "restoration",
+    "estimated_minutes": 20,
+    "xp_reward": 45,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "專注在食材切開時的聲響與刀鋒觸感",
+      "感受鍋氣與調味料融合的溫度與香氣",
+      "不看手機，細嚼慢嚥享用自己的勞動成果"
+    ]
+  },
+  {
+    "id": "seed_real_005",
+    "title": "物理書寫：在紙上用原子筆手寫 5 行感受",
+    "description": "拿出一張實體紙與筆，隨意寫下腦中浮現的隻字片語、當前的情緒或塗鴉，體驗筆尖劃過紙面的摩擦感。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "restoration",
+    "estimated_minutes": 10,
+    "xp_reward": 30,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "不需在乎字跡整齊或語法通順，單純宣洩大腦工作記憶",
+      "手寫的微小摩擦力有助於迷走神經放鬆",
+      "寫完後可以折成紙飛機或平整夾入書本中"
+    ]
+  },
+  {
+    "id": "seed_real_006",
+    "title": "探索住家或工作地周遭的一家獨立小書店或咖啡店",
+    "description": "步行前往附近一家未曾光顧過的小店，進去瀏覽書架 15 分鐘，翻開一本不屬於你平時領域的書。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "exploration",
+    "estimated_minutes": 20,
+    "xp_reward": 50,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "挑選一封面的書籍，隨機翻開第 42 頁閱讀三段話",
+      "向店員微笑或點一杯招牌飲品",
+      "感受不同空間的氣息帶給心靈的抽離感"
+    ]
+  },
+  {
+    "id": "seed_real_007",
+    "title": "桌面物理極簡化：整理工作區域與清潔螢幕",
+    "description": "用濕紙巾將鍵盤、滑鼠、螢幕與桌面徹底擦拭乾淨，將不必要的紙張與雜物歸位。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "restoration",
+    "estimated_minutes": 12,
+    "xp_reward": 30,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "物理空間的清爽能直接降低外在視覺雜訊造成的認知負擔",
+      "擦拭螢幕灰塵時享受表面重新光亮的視覺愉悅",
+      "桌面只留下目前真正需要的一杯水與一項工具"
+    ]
+  },
+  {
+    "id": "seed_real_008",
+    "title": "伸展肩頸：執行 5 組深層伸展與深呼吸",
+    "description": "起身站立，將雙手向後交扣展開胸腔，進行 5 次緩慢深長的腹式呼吸，放鬆緊繃的斜方肌。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "restoration",
+    "estimated_minutes": 10,
+    "xp_reward": 30,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "吸氣 4 秒、屏息 2 秒、緩慢吐氣 6 秒",
+      "感受肩膀在每一次吐氣時自然下沉",
+      "輕柔左右旋轉頭頸部各 3 圈"
+    ]
+  },
+  {
+    "id": "seed_real_009",
+    "title": "給綠色植物澆水並仔細觀察新芽生長",
+    "description": "走向窗邊或陽台，為盆栽輕輕澆水，細看每一片葉脈的紋理與新冒出的小葉子。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "restoration",
+    "estimated_minutes": 10,
+    "xp_reward": 30,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "觀察泥土吸水時顏色變深的過程",
+      "用指尖輕撫葉片表面，感受植物的生命力",
+      "呼吸泥土散發出的淡淡草木香氣"
+    ]
+  },
+  {
+    "id": "seed_real_010",
+    "title": "聆聽一張未曾聽過的古典或環境音樂專輯",
+    "description": "戴上耳機，播放一段德布西的月光或自然雨聲白噪音，閉上眼睛單純聆聽 15 分鐘。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "restoration",
+    "estimated_minutes": 15,
+    "xp_reward": 35,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "不進行任何多工操作，僅專注於音樂聲波的起伏與空間感",
+      "覺察思緒若飄走，溫柔地將注意力帶回琴音或流水聲",
+      "讓緊繃的額頭與下顎肌肉完全放鬆"
+    ]
+  },
+  {
+    "id": "seed_real_011",
+    "title": "給久未聯絡的好友發一條真誠的問候訊息",
+    "description": "想起一位很久沒見面的朋友或前同事，傳送一條不帶求助或工作目的的溫暖問候。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "exploration",
+    "estimated_minutes": 10,
+    "xp_reward": 35,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "分享一張最近看到的有趣照片或單純說一聲「最近過得好嗎？」",
+      "不期待對方立刻回覆，重在表達真摯的情感連結",
+      "人際暖意能顯著平衡技術孤島帶來的孤立感"
+    ]
+  },
+  {
+    "id": "seed_real_012",
+    "title": "窗邊日光浴：沐浴在陽光下閉目靜坐 10 分鐘",
+    "description": "尋找一處有陽光灑落的窗邊或長椅，讓溫暖的光線曬在臉龐與手臂上，閉目小憩。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "restoration",
+    "estimated_minutes": 10,
+    "xp_reward": 30,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "感受太陽的熱度穿透皮膚",
+      "日光有助於調節褪黑激素與多巴胺分泌",
+      "靜靜聽風吹過樹葉的沙沙聲"
+    ]
+  },
+  {
+    "id": "seed_real_013",
+    "title": "微手工：折一隻精緻的日式摺紙鶴",
+    "description": "裁切一張正方形便條紙，依照摺紙步驟折出一隻紙鶴，感受紙張摺痕對稱的幾何秩序。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "restoration",
+    "estimated_minutes": 12,
+    "xp_reward": 35,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "按壓每一個邊角使其服貼工整",
+      "將手指的精細動作轉化為內在的平靜沉著",
+      "將折好的紙鶴放在螢幕旁作為溫馨陪伴"
+    ]
+  },
+  {
+    "id": "seed_real_014",
+    "title": "赤足踩踏：感受地板或草地的直接接觸",
+    "description": "脫下鞋襪，光腳在木地板或戶外乾淨草地上慢慢走動 5 分鐘，體驗大地的扎根感（Grounding）。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "restoration",
+    "estimated_minutes": 10,
+    "xp_reward": 30,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "注意腳底重心由腳跟移至腳尖的重力轉移",
+      "感受不同材質帶來的微涼與粗細觸感",
+      "釋放大腦中的靜態疲勞能量"
+    ]
+  },
+  {
+    "id": "seed_real_015",
+    "title": "造訪一家傳統市場或花店挑選一束鮮花",
+    "description": "走出舒適圈，到附近的傳統市場或街角花店，挑選一枝喜歡的花朵或小盆栽帶回座位。",
+    "task_type": "restorative_serendipity",
+    "is_real_world": true,
+    "difficulty": "restorative",
+    "skill_domain": "exploration",
+    "estimated_minutes": 20,
+    "xp_reward": 45,
+    "zpd_zone": "restorative_haven",
+    "scaffolding_hints": [
+      "感受市井生活濃郁的煙火氣息與人聲喧鬧",
+      "挑選一朵最吸引你目光的花瓣色澤",
+      "將其插在玻璃杯中，為工作桌增添一抹自然生機"
+    ]
+  }
+]

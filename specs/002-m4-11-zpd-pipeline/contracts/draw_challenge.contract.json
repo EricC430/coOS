@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DrawChallengeResponse",
+  "type": "object",
+  "required": [
+    "id",
+    "role_id",
+    "title",
+    "description",
+    "task_type",
+    "is_real_world",
+    "difficulty",
+    "skill_domain",
+    "estimated_minutes",
+    "xp_reward",
+    "status",
+    "zpd_zone",
+    "scaffolding_hints",
+    "expires_at"
+  ],
+  "properties": {
+    "id": { "type": "string" },
+    "role_id": { "type": "string" },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "task_type": { "type": "string", "enum": ["skill_stretch", "restorative_serendipity"] },
+    "is_real_world": { "type": "boolean" },
+    "difficulty": { "type": "string", "enum": ["comfort", "just-manageable", "stretch", "restorative"] },
+    "skill_domain": { "type": "string" },
+    "estimated_minutes": { "type": "integer", "minimum": 10, "maximum": 60 },
+    "xp_reward": { "type": "integer", "minimum": 10, "maximum": 200 },
+    "status": { "type": "string", "enum": ["generated", "accepted", "completed", "expired", "abandoned"] },
+    "zpd_zone": { "type": "string" },
+    "scaffolding_hints": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "accepted_at": { "type": ["string", "null"], "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" }
+  }
+}

@@ -201,6 +201,20 @@ class TestEarnedXPSettlement:
         assert result.success is False
         assert result.error_code == "GATEKEEPER_001"
 
+    def test_xp_blocked_feeling_only(self, store, user):
+        """[R08: 微摩擦力 §四.2] [RISK-01] user_feeling filled but user_action_plan
+        empty -> no XP, no ledger entry (LOOP-03)."""
+        r = FakeReflection(
+            is_draft=False, is_reviewed=True, user_feeling="OK", user_action_plan="  "
+        )
+        store.add_reflection(r)
+        gk = make_gatekeeper(store)
+        result = gk.settle_earned_xp(r.id, user.id, 50)
+        assert result.success is False
+        assert result.error_reason == "missing_user_action_plan"
+        assert user.current_xp == 0
+        assert r.xp_settled is False
+
     def test_reflection_not_found(self, store, user):
         """AC: non-existent reflection returns GATEKEEPER_000."""
         gk = make_gatekeeper(store)

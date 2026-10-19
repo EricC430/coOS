@@ -46,3 +46,9 @@ Thumbs.db
 # VS Code workspace file (個人設定，不 commit)
 coOS.code-workspace
 docs/dev_logs/*.jsonl
+
+# Temporary scratch / debug outputs
+temp_prev_session/
+corruptions.txt
+debug_report.txt
+Claude outputs/
